@@ -117,6 +117,9 @@ class HumanoidSRLTest(VecTask):
         self.prev_potentials = self.potentials.clone()
 
     def create_sim(self):
+        '''
+        创建仿真环境
+        '''
         self.up_axis_idx = 2 # index of up axis: Y=1, Z=2
         self.sim = super().create_sim(self.device_id, self.graphics_device_id, self.physics_engine, self.sim_params)
 
@@ -136,6 +139,12 @@ class HumanoidSRLTest(VecTask):
         self.gym.add_ground(self.sim, plane_params)
 
     def _create_envs(self, num_envs, spacing, num_per_row):
+        '''
+        创建仿真环境 添加agents
+        num_envs: 环境个数
+        spacing:
+        num_per_row: 每行的agents个数 
+        '''
         lower = gymapi.Vec3(-spacing, -spacing, 0.0)
         upper = gymapi.Vec3(spacing, spacing, spacing)
 
@@ -186,7 +195,7 @@ class HumanoidSRLTest(VecTask):
         self.dof_limits_lower = []
         self.dof_limits_upper = []
 
-        for i in range(self.num_envs):
+        for i in range(self.num_envs): # num_envs来自于yaml文件中numEnvs
             # create env instance
             env_ptr = self.gym.create_env(
                 self.sim, lower, upper, num_per_row
@@ -382,13 +391,16 @@ def compute_humanoid_observations(obs_buf, root_states, targets, potentials, inv
                                   basis_vec0, basis_vec1):
     # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, Tensor, Tensor, float, float, float, Tensor, Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]
 
-    torso_position = root_states[:, 0:3]
-    torso_rotation = root_states[:, 3:7]
-    velocity = root_states[:, 7:10]
-    ang_velocity = root_states[:, 10:13]
+    # root_state: root张量
+    # 每个root的状态使用13个与GymRigidBodyState布局相同的浮点数表示：
+    # 3个浮点数表示位置，4个浮点数代表四元数，3个浮数表示线速度，3个浮动数表示角速度。
+    torso_position = root_states[:, 0:3]  # 位置
+    torso_rotation = root_states[:, 3:7]  # 四元数
+    velocity = root_states[:, 7:10]  # 线速度 
+    ang_velocity = root_states[:, 10:13]  # 角速度
 
     to_target = targets - torso_position
-    to_target[:, 2] = 0
+    to_target[:, 2] = 0   # 朝向向量
 
     prev_potentials_new = potentials.clone()
     potentials = -torch.norm(to_target, p=2, dim=-1) / dt
