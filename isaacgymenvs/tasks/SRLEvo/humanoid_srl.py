@@ -148,7 +148,7 @@ class HumanoidSRLTest(VecTask):
         lower = gymapi.Vec3(-spacing, -spacing, 0.0)
         upper = gymapi.Vec3(spacing, spacing, spacing)
 
-        asset_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../assets')
+        asset_root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '../../../assets')
         asset_file = "mjcf/nv_humanoid_srl_test.xml"
 
         if "asset" in self.cfg["env"]:
@@ -168,14 +168,14 @@ class HumanoidSRLTest(VecTask):
         # Note - for this asset we are loading the actuator info from the MJCF
         actuator_props = self.gym.get_asset_actuator_properties(humanoid_asset)
         motor_efforts = [prop.motor_effort for prop in actuator_props]
-
+        print(f"actuator prop:{actuator_props}")
         # create force sensors at the feet
         right_foot_idx = self.gym.find_asset_rigid_body_index(humanoid_asset, "right_foot")
         left_foot_idx = self.gym.find_asset_rigid_body_index(humanoid_asset, "left_foot")
         sensor_pose = gymapi.Transform()
         self.gym.create_asset_force_sensor(humanoid_asset, right_foot_idx, sensor_pose)
         self.gym.create_asset_force_sensor(humanoid_asset, left_foot_idx, sensor_pose)
-
+        
         self.max_motor_effort = max(motor_efforts)
         self.motor_efforts = to_torch(motor_efforts, device=self.device)
 
