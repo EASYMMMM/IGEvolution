@@ -148,7 +148,7 @@ class HumanoidSRLTest(VecTask):
         lower = gymapi.Vec3(-spacing, -spacing, 0.0)
         upper = gymapi.Vec3(spacing, spacing, spacing)
 
-        asset_root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '../../../assets')
+        asset_root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '../../assets')
         asset_file = "mjcf/nv_humanoid_srl_test.xml"
 
         if "asset" in self.cfg["env"]:
@@ -263,7 +263,7 @@ class HumanoidSRLTest(VecTask):
         # Randomization can happen only at reset time, since it can reset actor positions on GPU
         if self.randomize:
             self.apply_randomizations(self.randomization_params)
-        print(f'env_ids:{env_ids}    num_dof:{self.num_dof}')
+
         positions = torch_rand_float(-0.2, 0.2, (len(env_ids), self.num_dof), device=self.device)
         velocities = torch_rand_float(-0.1, 0.1, (len(env_ids), self.num_dof), device=self.device)
 
