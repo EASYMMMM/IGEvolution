@@ -64,8 +64,8 @@ class HumanoidSRLTest(VecTask):
 
         self.max_episode_length = self.cfg["env"]["episodeLength"]
 
-        self.cfg["env"]["numObservations"] = 140
-        self.cfg["env"]["numActions"] = 29
+        self.cfg["env"]["numObservations"] = 140 # humanoid 基础obs：108
+        self.cfg["env"]["numActions"] = 29  # humanoid 基础dof：21
 
         super().__init__(config=self.cfg, rl_device=rl_device, sim_device=sim_device, graphics_device_id=graphics_device_id, headless=headless, virtual_screen_capture=virtual_screen_capture, force_render=force_render)
 
@@ -103,9 +103,10 @@ class HumanoidSRLTest(VecTask):
         self.initial_dof_vel = torch.zeros_like(self.dof_vel, device=self.device, dtype=torch.float)
 
         # initialize some data used later on
+        # # index of up axis: Y=1, Z=2
         self.up_vec = to_torch(get_axis_params(1., self.up_axis_idx), device=self.device).repeat((self.num_envs, 1))
         self.heading_vec = to_torch([1, 0, 0], device=self.device).repeat((self.num_envs, 1))
-        self.inv_start_rot = quat_conjugate(self.start_rotation).repeat((self.num_envs, 1))
+        self.inv_start_rot = quat_conjugate(self.start_rotation).repeat((self.num_envs, 1))  # 初始状态四元数的共轭
 
         self.basis_vec0 = self.heading_vec.clone()
         self.basis_vec1 = self.up_vec.clone()
@@ -170,7 +171,7 @@ class HumanoidSRLTest(VecTask):
         motor_efforts = [prop.motor_effort for prop in actuator_props]
         print(f"actuator prop:{actuator_props}")
         # create force sensors at the feet
-        right_foot_idx = self.gym.find_asset_rigid_body_index(humanoid_asset, "right_foot")
+        right_foot_idx = self.gym.find_asset_rigid_body_index(humanoid_asset, "right_foot")  # Gets the index of a named rigid body in the asset’s body array
         left_foot_idx = self.gym.find_asset_rigid_body_index(humanoid_asset, "left_foot")
         sensor_pose = gymapi.Transform()
         self.gym.create_asset_force_sensor(humanoid_asset, right_foot_idx, sensor_pose)
@@ -197,19 +198,29 @@ class HumanoidSRLTest(VecTask):
 
         for i in range(self.num_envs): # num_envs来自于yaml文件中numEnvs
             # create env instance
-            env_ptr = self.gym.create_env(
-                self.sim, lower, upper, num_per_row
-            )
-            handle = self.gym.create_actor(env_ptr, humanoid_asset, start_pose, "humanoid", i, 0, 0)
+            env_ptr = self.gym.create_env(self.sim, # Simulation Handle
+                                            lower,  # lower bounds of environment space
+                                            upper,  # upper bounds of environment space
+                                            num_per_row # Number of environments to tile in a row
+                                            )
+            handle = self.gym.create_actor(env_ptr,  # Environment Handle
+                                           humanoid_asset, # Asset Handle
+                                           start_pose, # transform of where the actor will be initially placed
+                                           "humanoid", # name of the actor
+                                           i, # collision group that actor will be part of. The actor will not collide with anything outside of the same collisionGroup
+                                           0, # bitwise filter for elements in the same collisionGroup to mask off collision
+                                           0 ) # segmentation ID used in segmentation camera sensors 
 
-            self.gym.enable_actor_dof_force_sensors(env_ptr, handle)
+            self.gym.enable_actor_dof_force_sensors(env_ptr, handle) # Enables DOF force collection for the actor’s degrees of freedom.
+            print(f"get_actor_actuator_count:{self.gym.get_actor_actuator_count(self.sim,handle)}" )
+            print(f"get_actor_dof_count   :{self.gym.get_actor_dof_count(self.sim,handle)}" )
 
             for j in range(self.num_bodies):
                 self.gym.set_rigid_body_color(
                     env_ptr, handle, j, gymapi.MESH_VISUAL, gymapi.Vec3(0.97, 0.38, 0.06))
 
             self.envs.append(env_ptr)
-            self.humanoid_handles.append(handle)
+            self.humanoid_handles.append(handle) # actor 句柄
 
         dof_prop = self.gym.get_actor_dof_properties(env_ptr, handle)
         for j in range(self.num_dof):
@@ -246,18 +257,31 @@ class HumanoidSRLTest(VecTask):
         )
 
     def compute_observations(self):
-        self.gym.refresh_dof_state_tensor(self.sim)
-        self.gym.refresh_actor_root_state_tensor(self.sim)
+        self.gym.refresh_dof_state_tensor(self.sim) # Updates DOF state buffer
+        self.gym.refresh_actor_root_state_tensor(self.sim) # Updates actor root state buffer
 
-        self.gym.refresh_force_sensor_tensor(self.sim)
+        self.gym.refresh_force_sensor_tensor(self.sim) # Updates buffer state for force sensors tensor
 
-        self.gym.refresh_dof_force_tensor(self.sim)
+        self.gym.refresh_dof_force_tensor(self.sim) # Updates buffer state for DOF forces
         self.obs_buf[:], self.potentials[:], self.prev_potentials[:], self.up_vec[:], self.heading_vec[:] = compute_humanoid_observations(
-            self.obs_buf, self.root_states, self.targets, self.potentials,
-            self.inv_start_rot, self.dof_pos, self.dof_vel, self.dof_force_tensor,
-            self.dof_limits_lower, self.dof_limits_upper, self.dof_vel_scale,
-            self.vec_sensor_tensor, self.actions, self.dt, self.contact_force_scale, self.angular_velocity_scale,
-            self.basis_vec0, self.basis_vec1)
+                                    self.obs_buf, 
+                                    self.root_states,  
+                                    self.targets, 
+                                    self.potentials,
+                                    self.inv_start_rot, 
+                                    self.dof_pos, 
+                                    self.dof_vel, 
+                                    self.dof_force_tensor,
+                                    self.dof_limits_lower, 
+                                    self.dof_limits_upper, 
+                                    self.dof_vel_scale,
+                                    self.vec_sensor_tensor, 
+                                    self.actions, 
+                                    self.dt, 
+                                    self.contact_force_scale, 
+                                    self.angular_velocity_scale,
+                                    self.basis_vec0, 
+                                    self.basis_vec1)
 
     def reset_idx(self, env_ids):
         # Randomization can happen only at reset time, since it can reset actor positions on GPU
@@ -351,8 +375,10 @@ def compute_humanoid_reward(
     # type: (Tensor, Tensor, Tensor, Tensor, float, float, Tensor, Tensor, float, float, float, float, Tensor, float, float, float) -> Tuple[Tensor, Tensor]
 
     # reward from the direction headed
-    heading_weight_tensor = torch.ones_like(obs_buf[:, 11]) * heading_weight
-    heading_reward = torch.where(obs_buf[:, 11] > 0.8, heading_weight_tensor, heading_weight * obs_buf[:, 11] / 0.8)
+    # 如果 obs_buf[:, 11] 中的元素大于 0.8，则 heading_reward 对应位置的值为 heading_weight_tensor 对应位置的值。
+    # 否则，heading_reward 线性插值，根据 obs_buf[:, 11] 的值在 [0, 0.8] 范围内的比例进行插值。
+    heading_weight_tensor = torch.ones_like(obs_buf[:, 11]) * heading_weight  # heading_proj
+    heading_reward = torch.where(obs_buf[:, 11] > 0.8, heading_weight_tensor, heading_weight * obs_buf[:, 11] / 0.8) 
 
     # reward for being upright
     up_reward = torch.zeros_like(heading_reward)
@@ -389,7 +415,8 @@ def compute_humanoid_observations(obs_buf, root_states, targets, potentials, inv
                                   dof_force, dof_limits_lower, dof_limits_upper, dof_vel_scale,
                                   sensor_force_torques, actions, dt, contact_force_scale, angular_velocity_scale,
                                   basis_vec0, basis_vec1):
-    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, Tensor, Tensor, float, float, float, Tensor, Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]
+    # Input (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, Tensor, Tensor, float, float, float, Tensor, Tensor) 
+    # Output  Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]
 
     # root_state: root张量
     # 每个root的状态使用13个与GymRigidBodyState布局相同的浮点数表示：
@@ -399,7 +426,7 @@ def compute_humanoid_observations(obs_buf, root_states, targets, potentials, inv
     velocity = root_states[:, 7:10]  # 线速度 
     ang_velocity = root_states[:, 10:13]  # 角速度
 
-    to_target = targets - torso_position
+    to_target = targets - torso_position  # targets: [1000,0,0]
     to_target[:, 2] = 0   # 朝向向量
 
     prev_potentials_new = potentials.clone()
@@ -416,7 +443,7 @@ def compute_humanoid_observations(obs_buf, root_states, targets, potentials, inv
     angle_to_target = normalize_angle(angle_to_target).unsqueeze(-1)
     dof_pos_scaled = unscale(dof_pos, dof_limits_lower, dof_limits_upper)
 
-    # obs_buf shapes: 1, 3, 3, 1, 1, 1, 1, 1, num_dofs (21), num_dofs (21), 6, num_acts (21)
+    # obs_buf shapes: 1, 3, 3, 1, 1, 1, 1, 1, num_dofs (21), num_dofs (21), num_dofs (21), 6, num_acts (21)
     obs = torch.cat((torso_position[:, 2].view(-1, 1), vel_loc, angvel_loc * angular_velocity_scale,
                      yaw, roll, angle_to_target, up_proj.unsqueeze(-1), heading_proj.unsqueeze(-1),
                      dof_pos_scaled, dof_vel * dof_vel_scale, dof_force * contact_force_scale,
