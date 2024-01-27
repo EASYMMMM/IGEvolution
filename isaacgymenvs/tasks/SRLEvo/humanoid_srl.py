@@ -212,8 +212,8 @@ class HumanoidSRLTest(VecTask):
                                            0 ) # segmentation ID used in segmentation camera sensors 
 
             self.gym.enable_actor_dof_force_sensors(env_ptr, handle) # Enables DOF force collection for the actor’s degrees of freedom.
-            print(f"get_actor_actuator_count:{self.gym.get_actor_actuator_count(self.sim,handle)}" )
-            print(f"get_actor_dof_count   :{self.gym.get_actor_dof_count(self.sim,handle)}" )
+            #print(f"get_actor_actuator_count:{self.gym.get_actor_actuator_count(self.sim,handle)}" )
+            #print(f"get_actor_dof_count   :{self.gym.get_actor_dof_count(self.sim,handle)}" )
 
             for j in range(self.num_bodies):
                 self.gym.set_rigid_body_color(
@@ -415,8 +415,7 @@ def compute_humanoid_observations(obs_buf, root_states, targets, potentials, inv
                                   dof_force, dof_limits_lower, dof_limits_upper, dof_vel_scale,
                                   sensor_force_torques, actions, dt, contact_force_scale, angular_velocity_scale,
                                   basis_vec0, basis_vec1):
-    # Input (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, Tensor, Tensor, float, float, float, Tensor, Tensor) 
-    # Output  Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]
+    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, Tensor, Tensor, float, float, float, Tensor, Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]
 
     # root_state: root张量
     # 每个root的状态使用13个与GymRigidBodyState布局相同的浮点数表示：
