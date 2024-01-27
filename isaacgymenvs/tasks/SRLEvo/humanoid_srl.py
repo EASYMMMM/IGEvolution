@@ -169,7 +169,7 @@ class HumanoidSRLTest(VecTask):
         # Note - for this asset we are loading the actuator info from the MJCF
         actuator_props = self.gym.get_asset_actuator_properties(humanoid_asset)
         motor_efforts = [prop.motor_effort for prop in actuator_props]
-        print(f"actuator prop:{actuator_props}")
+        # print(f"actuator prop:{actuator_props}")
         # create force sensors at the feet
         right_foot_idx = self.gym.find_asset_rigid_body_index(humanoid_asset, "right_foot")  # Gets the index of a named rigid body in the asset’s body array
         left_foot_idx = self.gym.find_asset_rigid_body_index(humanoid_asset, "left_foot")
@@ -253,7 +253,8 @@ class HumanoidSRLTest(VecTask):
             self.motor_efforts,
             self.termination_height,
             self.death_cost,
-            self.max_episode_length
+            self.max_episode_length,
+            self.num_dof
         )
 
     def compute_observations(self):
@@ -370,9 +371,10 @@ def compute_humanoid_reward(
     motor_efforts,
     termination_height,
     death_cost,
-    max_episode_length
+    max_episode_length,
+    num_dof
 ):
-    # type: (Tensor, Tensor, Tensor, Tensor, float, float, Tensor, Tensor, float, float, float, float, Tensor, float, float, float) -> Tuple[Tensor, Tensor]
+    # type: (Tensor, Tensor, Tensor, Tensor, float, float, Tensor, Tensor, float, float, float, float, Tensor, float, float, float, int) -> Tuple[Tensor, Tensor]
 
     # reward from the direction headed
     # 如果 obs_buf[:, 11] 中的元素大于 0.8，则 heading_reward 对应位置的值为 heading_weight_tensor 对应位置的值。
@@ -388,10 +390,10 @@ def compute_humanoid_reward(
 
     # energy cost reward
     motor_effort_ratio = motor_efforts / max_motor_effort
-    scaled_cost = joints_at_limit_cost_scale * (torch.abs(obs_buf[:, 12:33]) - 0.98) / 0.02
-    dof_at_limit_cost = torch.sum((torch.abs(obs_buf[:, 12:33]) > 0.98) * scaled_cost * motor_effort_ratio[0:21].unsqueeze(0), dim=-1)
+    scaled_cost = joints_at_limit_cost_scale * (torch.abs(obs_buf[:, 12:(12+num_dof)]) - 0.98) / 0.02
+    dof_at_limit_cost = torch.sum((torch.abs(obs_buf[:, 12:(12+num_dof)]) > 0.98) * scaled_cost * motor_effort_ratio[0:num_dof].unsqueeze(0), dim=-1)
 
-    electricity_cost = torch.sum(torch.abs(actions[:,0:21] * obs_buf[:, 33:54]) * motor_effort_ratio[0:21].unsqueeze(0), dim=-1)
+    electricity_cost = torch.sum(torch.abs(actions[:,0:num_dof] * obs_buf[:, (12+num_dof):(12+num_dof*2)]) * motor_effort_ratio[0:num_dof].unsqueeze(0), dim=-1) # dof_vel
 
     # reward for duration of being alive
     alive_reward = torch.ones_like(potentials) * 2.0
@@ -401,6 +403,7 @@ def compute_humanoid_reward(
         actions_cost_scale * actions_cost - energy_cost_scale * electricity_cost - dof_at_limit_cost
 
     # adjust reward for fallen agents
+    # 判断是否摔倒
     total_reward = torch.where(obs_buf[:, 0] < termination_height, torch.ones_like(total_reward) * death_cost, total_reward)
 
     # reset agents
