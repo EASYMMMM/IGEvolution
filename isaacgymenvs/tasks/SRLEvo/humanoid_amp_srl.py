@@ -36,7 +36,7 @@ from gym import spaces
 from isaacgym import gymapi
 from isaacgym import gymtorch
 
-from humanoid_amp_srl_base import HumanoidAMPSRLBase, dof_to_obs
+from isaacgymenvs.tasks.SRLEvo.humanoid_amp_srl_base import HumanoidAMPSRLBase, dof_to_obs
 from isaacgymenvs.tasks.amp.utils_amp import gym_util
 from isaacgymenvs.tasks.amp.utils_amp.motion_lib import MotionLib
 
@@ -46,7 +46,7 @@ from isaacgymenvs.utils.torch_jit_utils import quat_mul, to_torch, calc_heading_
 NUM_AMP_OBS_PER_STEP = 13 + 52 + 28 + 12 # [root_h, root_rot, root_vel, root_ang_vel, dof_pos, dof_vel, key_body_pos]
 
 
-class HumanoidAMPSRLTest(HumanoidAMPBase):
+class HumanoidAMPSRLTest(HumanoidAMPSRLBase):
 
     class StateInit(Enum):
         Default = 0
@@ -81,7 +81,7 @@ class HumanoidAMPSRLTest(HumanoidAMPBase):
         self._hist_amp_obs_buf = self._amp_obs_buf[:, 1:] # s_t+1  torch.Size([num_envs, 1, 105])
         
         self._amp_obs_demo_buf = None
-
+        
         return
 
     def post_physics_step(self):
