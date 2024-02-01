@@ -57,7 +57,7 @@ from .industreal.industreal_task_pegs_insert import IndustRealTaskPegsInsert
 from .industreal.industreal_task_gears_insert import IndustRealTaskGearsInsert
 
 from .SRLEvo.humanoid_srl import HumanoidSRLTest
-
+from .SRLEvo.humanoid_amp_srl import HumanoidAMPSRLTest
 
 def resolve_allegro_kuka(cfg, *args, **kwargs):
     subtask_name: str = cfg["env"]["subtask"]
@@ -114,4 +114,5 @@ isaacgym_task_map = {
     "ShadowHand": ShadowHand,
     "Trifinger": Trifinger,
     "HumanoidSRLTest":HumanoidSRLTest,
+    "HumanoidAMPSRLTest":HumanoidAMPSRLTest,
 }
