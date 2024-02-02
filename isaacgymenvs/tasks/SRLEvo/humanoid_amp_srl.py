@@ -55,6 +55,9 @@ class HumanoidAMPSRLTest(HumanoidAMPSRLBase):
         Hybrid = 3
 
     def __init__(self, cfg, rl_device, sim_device, graphics_device_id, headless, virtual_screen_capture, force_render):
+        print("============================ ")
+        print('HUMANOID AMP SRL TEST')
+        print("============================ ")
         self.cfg = cfg
 
         state_init = cfg["env"]["stateInit"]
@@ -81,7 +84,7 @@ class HumanoidAMPSRLTest(HumanoidAMPSRLBase):
         self._hist_amp_obs_buf = self._amp_obs_buf[:, 1:] # s_t+1  torch.Size([num_envs, 1, 105])
         
         self._amp_obs_demo_buf = None
-        
+
         return
 
     def post_physics_step(self):

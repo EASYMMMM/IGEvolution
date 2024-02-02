@@ -55,6 +55,9 @@ class HumanoidAMP(HumanoidAMPBase):
         Hybrid = 3
 
     def __init__(self, cfg, rl_device, sim_device, graphics_device_id, headless, virtual_screen_capture, force_render):
+        print("============================ ")
+        print('HUMANOID AMP')
+        print("============================ ")
         self.cfg = cfg
 
         state_init = cfg["env"]["stateInit"]
@@ -137,6 +140,11 @@ class HumanoidAMP(HumanoidAMPBase):
         return
 
     def _load_motion(self, motion_file):
+        print("================================")
+        print("self.num_dof:")
+        print(self.num_dof)
+        print("self._key_body_ids.cpu().numpy():")
+        print(self._key_body_ids.cpu().numpy())
         self._motion_lib = MotionLib(motion_file=motion_file, 
                                      num_dofs=self.num_dof,
                                      key_body_ids=self._key_body_ids.cpu().numpy(), 
