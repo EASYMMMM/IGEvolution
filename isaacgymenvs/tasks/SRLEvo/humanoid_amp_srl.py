@@ -332,5 +332,31 @@ def build_amp_observations(root_states, dof_pos, dof_vel, key_body_pos, local_ro
     
     dof_obs = dof_to_obs(dof_pos)
 
-    obs = torch.cat((root_h, root_rot_obs, local_root_vel, local_root_ang_vel, dof_obs, dof_vel, flat_local_key_pos), dim=-1)
+    '''
+    print(f'root_h size{root_h.shape}')
+    print(f'root_rot_obs size{root_rot_obs.shape}')
+    print(f'local_root_vel size{local_root_vel.shape}')
+    print(f'local_root_ang_vel size{local_root_ang_vel.shape}')
+    print(f'dof_obs size{dof_obs.shape}')
+    print(f'dof_vel size{dof_vel.shape}')
+    print(f'flat_local_key_pos size{flat_local_key_pos.shape}')
+
+    root_h size[1024, 1]
+    root_rot_obs size[1024, 6]
+    local_root_vel size[1024, 3]
+    local_root_ang_vel size[1024, 3]
+    dof_obs size[1024, 52]
+    dof_vel size[1024, 36]
+    flat_local_key_pos size[1024, 12]
+
+    origin
+    root_h size[1024, 1]
+    root_rot_obs size[1024, 6]
+    local_root_vel size[1024, 3]
+    local_root_ang_vel size[1024, 3]
+    dof_obs size[1024, 52]
+    dof_vel size[1024, 28]
+    flat_local_key_pos size[1024, 12]
+    '''
+    obs = torch.cat((root_h, root_rot_obs, local_root_vel, local_root_ang_vel, dof_obs, dof_vel[:,0:28], flat_local_key_pos), dim=-1)
     return obs
