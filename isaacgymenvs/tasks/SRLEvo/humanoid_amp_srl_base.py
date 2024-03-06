@@ -179,7 +179,7 @@ class HumanoidAMPSRLBase(VecTask):
         if "asset" in self.cfg["env"]:
             #asset_root = self.cfg["env"]["asset"].get("assetRoot", asset_root)
             asset_file = self.cfg["env"]["asset"].get("assetFileName", asset_file)
-
+            print('Asset file name:'+asset_file)
         asset_options = gymapi.AssetOptions()
         asset_options.angular_damping = 0.01
         asset_options.max_angular_velocity = 100.0
