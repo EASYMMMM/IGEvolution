@@ -45,7 +45,8 @@ NUM_ACTIONS = 28 + 8
 
 
 KEY_BODY_NAMES = ["right_hand", "left_hand", "right_foot", "left_foot"]
-
+SRL_CONTACT_BODY_NAMES = ['SRL_geomroot', 'SRL_geomleg2', 'SRL_geomshin11', 'SRL_geomshin12', 'SRL_geomleg1', 'SRL_geomshin1', 'SRL_geomshin2']
+ 
 class HumanoidAMPSRLBase(VecTask):
 
     def __init__(self, config, rl_device, sim_device, graphics_device_id, headless, virtual_screen_capture, force_render):
@@ -63,7 +64,8 @@ class HumanoidAMPSRLBase(VecTask):
 
         self.max_episode_length = self.cfg["env"]["episodeLength"]
         self._local_root_obs = self.cfg["env"]["localRootObs"]
-        self._contact_bodies = self.cfg["env"]["contactBodies"]
+        # self._contact_bodies = self.cfg["env"]["contactBodies"]
+        self._contact_bodies = self.cfg["env"]["contactBodies"] + SRL_CONTACT_BODY_NAMES
         self._termination_height = self.cfg["env"]["terminationHeight"]
         self._enable_early_termination = self.cfg["env"]["enableEarlyTermination"]
 
@@ -79,7 +81,7 @@ class HumanoidAMPSRLBase(VecTask):
         actor_root_state = self.gym.acquire_actor_root_state_tensor(self.sim)
         dof_state_tensor = self.gym.acquire_dof_state_tensor(self.sim)
         sensor_tensor = self.gym.acquire_force_sensor_tensor(self.sim)
-        rigid_body_state = self.gym.acquire_rigid_body_state_tensor(self.sim)
+        rigid_body_state = self.gym.acquire_rigid_body_state_tensor(self.sim) #  State for each rigid body contains position([0:3]), rotation([3:7]), linear velocity([7:10]), and angular velocity([10:13])
         contact_force_tensor = self.gym.acquire_net_contact_force_tensor(self.sim)
 
         sensors_per_env = 2
@@ -411,7 +413,7 @@ class HumanoidAMPSRLBase(VecTask):
         body_ids = []
         for body_name in self._contact_bodies:
             body_id = self.gym.find_actor_rigid_body_handle(env_ptr, actor_handle, body_name)
-            assert(body_id != -1)
+            assert body_id != -1, f'No agent-body named: {body_name}'
             body_ids.append(body_id)
 
         body_ids = to_torch(body_ids, device=self.device, dtype=torch.long)
@@ -540,11 +542,13 @@ def compute_humanoid_reset(reset_buf, progress_buf, contact_buf, contact_body_id
     # type: (Tensor, Tensor, Tensor, Tensor, Tensor, float, bool, float) -> Tuple[Tensor, Tensor]
     terminated = torch.zeros_like(reset_buf)
 
+    # 提前终止
     if (enable_early_termination):
+        # contact_buf: shape[self.num_envs, self.num_bodies, 3](acquire_net_contact_force_tensor)
         masked_contact_buf = contact_buf.clone()
         masked_contact_buf[:, contact_body_ids, :] = 0
-        fall_contact = torch.any(masked_contact_buf > 0.1, dim=-1)
-        fall_contact = torch.any(fall_contact, dim=-1)
+        fall_contact = torch.any(masked_contact_buf > 0.1, dim=-1) # 在每个env中，判断是否有body发生碰撞
+        fall_contact = torch.any(fall_contact, dim=-1) # 找出发生碰撞的env
 
         body_height = rigid_body_pos[..., 2]
         fall_height = body_height < termination_height

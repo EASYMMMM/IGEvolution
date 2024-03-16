@@ -150,9 +150,9 @@ def launch_rlg_hydra(cfg: DictConfig):
         'env_creator': lambda **kwargs: create_isaacgym_env(**kwargs),
     })
 
-    ige_env_cls = isaacgym_task_map[cfg.task_name]
+    ige_env_cls = isaacgym_task_map[cfg.task_name] # 环境class
     dict_cls = ige_env_cls.dict_obs_cls if hasattr(ige_env_cls, 'dict_obs_cls') and ige_env_cls.dict_obs_cls else False
-
+    # 检查env环境中是否定义了dict_obs_cls=True
     if dict_cls:
         
         obs_spec = {}
@@ -167,6 +167,7 @@ def launch_rlg_hydra(cfg: DictConfig):
 
         vecenv.register('RLGPU', lambda config_name, num_actors, **kwargs: RLGPUEnv(config_name, num_actors, **kwargs))
 
+    # 处理rl_games训练用到的train.cfg配置文件
     rlg_config_dict = omegaconf_to_dict(cfg.train)
     rlg_config_dict = preprocess_train_config(cfg, rlg_config_dict)
 

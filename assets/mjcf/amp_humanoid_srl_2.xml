@@ -141,29 +141,29 @@
       </body>
       
 		<body name="SRLroot" pos="-.07 0 0.05" quat="0.0 0.0 0.0 1.0">
-			<geom name="geomroot" pos="0 0 0" size="0.02 0.095 0.095" type="box"/>
+			<geom name="SRL_geomroot" pos="0 0 0" size="0.02 0.095 0.095" type="box"/>
 			<body name="leg2" pos="0.02 0.0475 0" quat="1.0 0.0 0.0 0.0">
-				<geom fromto="0 0 0 0.1 0 0" name="geomleg2" size="0.03" type="capsule"/>
+				<geom fromto="0 0 0 0.1 0 0" name="SRL_geomleg2" size="0.03" type="capsule"/>
 				<joint axis="0 0 1" name="SRLjoint_joint11" pos="0 0 0" range="-45 45" type="hinge"/>
 				<joint axis="0 1 0" name="SRLjoint_joint12" pos="0 0 0" range="-45 45" type="hinge"/>
 				<body name="shin11" pos="0.1 0 0" quat="0.70711 0.0 0.70711 0.0">
-					<geom fromto="0 0 0 0.68 0 0"  name="geomshin11" size="0.03" type="capsule"/>
+					<geom fromto="0 0 0 0.68 0 0"  name="SRL_geomshin11" size="0.03" type="capsule"/>
 					<joint axis="0 1 0" name="SRLjoint_joint13" pos="0 0 0" range="-45 45" type="hinge"/>
 					<body name="shin12" pos="0.68 0 0" quat="0.70711 0.0 -0.70711 0.0">
-						<geom fromto="0 0 0 0.18 0 0" name="geomshin12" size="0.03" type="capsule"/>
+						<geom fromto="0 0 0 0.18 0 0" name="SRL_geomshin12" size="0.03" type="capsule"/>
 						<joint axis="0 1 0" name="SRLjoint_joint14" pos="0 0 0" range="-45 45" type="hinge"/>
 					</body>
 				</body>
 			</body>
 			<body name="leg1" pos="0.02 -0.0475 0" quat="1.0 0.0 0.0 0.0">
-				<geom fromto="0 0 0 0.1 0 0" name="geomleg1" size="0.03" type="capsule"/>
+				<geom fromto="0 0 0 0.1 0 0" name="SRL_geomleg1" size="0.03" type="capsule"/>
 				<joint axis="0 0 1" name="SRLjoint_joint01" pos="0 0 0" range="-45 45" type="hinge"/>
 				<joint axis="0 1 0" name="SRLjoint_joint02" pos="0 0 0" range="-45 45" type="hinge"/>
 				<body name="shin1" pos="0.1 0 0" quat="0.70711 0.0 0.70711 0.0">
-					<geom fromto="0 0 0 0.68 0 0" name="geomshin1" size="0.03" type="capsule"/>
+					<geom fromto="0 0 0 0.68 0 0" name="SRL_geomshin1" size="0.03" type="capsule"/>
 					<joint axis="0 1 0" name="SRLjoint_joint1" pos="0 0 0" range="-45 45" type="hinge"/>
 					<body name="shin2" pos="0.68 0 0" quat="0.70711 0.0 -0.70711 0.0">
-						<geom fromto="0 0 0 0.18 0 0" name="geomshin2" size="0.03" type="capsule"/>
+						<geom fromto="0 0 0 0.18 0 0" name="SRL_geomshin2" size="0.03" type="capsule"/>
 						<joint axis="0 1 0" name="SRLjoint_joint2" pos="0 0 0" range="-45 45" type="hinge"/>
 					</body>
 				</body>
