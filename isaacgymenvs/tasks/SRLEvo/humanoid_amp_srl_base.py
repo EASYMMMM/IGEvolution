@@ -45,7 +45,7 @@ NUM_ACTIONS = 28 + 8
 
 
 KEY_BODY_NAMES = ["right_hand", "left_hand", "right_foot", "left_foot"]
-SRL_CONTACT_BODY_NAMES = ['SRL_geomroot', 'SRL_geomleg2', 'SRL_geomshin11', 'SRL_geomshin12', 'SRL_geomleg1', 'SRL_geomshin1', 'SRL_geomshin2']
+SRL_CONTACT_BODY_NAMES = ['SRL_root', 'SRL_leg2', 'SRL_shin11', 'SRL_shin12', 'SRL_leg1', 'SRL_shin1', 'SRL_shin2']
  
 class HumanoidAMPSRLBase(VecTask):
 
