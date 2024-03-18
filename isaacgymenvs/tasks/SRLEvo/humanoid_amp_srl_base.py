@@ -536,7 +536,7 @@ def compute_humanoid_reward(obs_buf):
     reward = torch.ones_like(obs_buf[:, 0])
     return reward
 
-@torch.jit.script
+#@torch.jit.script
 def compute_humanoid_reset(reset_buf, progress_buf, contact_buf, contact_body_ids, rigid_body_pos,
                            max_episode_length, enable_early_termination, termination_height):
     # type: (Tensor, Tensor, Tensor, Tensor, Tensor, float, bool, float) -> Tuple[Tensor, Tensor]

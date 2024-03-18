@@ -19,7 +19,7 @@ env:
   numAMPObsSteps: 2
 
   localRootObs: False
-  contactBodies: ["right_foot", "left_foot"]
+  contactBodies: ["right_foot", "left_foot","right_shin","left_shin"]
   terminationHeight: 0.5
   enableEarlyTermination: True
 

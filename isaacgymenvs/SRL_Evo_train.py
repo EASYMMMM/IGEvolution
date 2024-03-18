@@ -200,7 +200,7 @@ def launch_rlg_hydra(cfg: DictConfig):
     runner.load(rlg_config_dict)
     runner.reset()
 
-    # dump config dict
+    # dump config dict 
     if not cfg.test:
         experiment_dir = os.path.join('runs', cfg.train.params.config.name + 
         '_{date:%d-%H-%M-%S}'.format(date=datetime.now()))
