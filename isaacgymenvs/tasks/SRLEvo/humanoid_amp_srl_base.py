@@ -536,7 +536,7 @@ def compute_humanoid_reward(obs_buf):
     reward = torch.ones_like(obs_buf[:, 0])
     return reward
 
-#@torch.jit.script
+@torch.jit.script
 def compute_humanoid_reset(reset_buf, progress_buf, contact_buf, contact_body_ids, rigid_body_pos,
                            max_episode_length, enable_early_termination, termination_height):
     # type: (Tensor, Tensor, Tensor, Tensor, Tensor, float, bool, float) -> Tuple[Tensor, Tensor]
@@ -551,9 +551,9 @@ def compute_humanoid_reset(reset_buf, progress_buf, contact_buf, contact_body_id
         fall_contact = torch.any(fall_contact, dim=-1) # 找出发生碰撞的env
 
         body_height = rigid_body_pos[..., 2]
-        fall_height = body_height < termination_height
-        fall_height[:, contact_body_ids] = False
-        fall_height = torch.any(fall_height, dim=-1)
+        fall_height = body_height < termination_height # 在每个env中，判断是否有body低于阈值高度
+        fall_height[:, contact_body_ids] = False 
+        fall_height = torch.any(fall_height, dim=-1) # 找出低于阈值高度的env
 
         has_fallen = torch.logical_and(fall_contact, fall_height)
 
