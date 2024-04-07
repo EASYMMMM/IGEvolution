@@ -2,7 +2,7 @@ params:
   seed: ${...seed}
 
   algo:
-    name: amp_continuous
+    name: srl_continuous
 
   model:
     name: continuous_amp
