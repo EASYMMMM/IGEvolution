@@ -58,7 +58,7 @@ class SRLBuilder(network_builder.A2CBuilder):
 
             # mlp_input_shape = self._calc_input_size(input_shape, self.actor_cnn)
             # 直接使用输入形状初始化MLP，不经过CNN层的处理
-            mlp_input_shape = input_shape
+            mlp_input_shape = input_shape[0]
 
             in_mlp_shape = mlp_input_shape
             if len(self.units) == 0:
