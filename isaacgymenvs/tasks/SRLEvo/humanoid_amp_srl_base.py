@@ -298,7 +298,7 @@ class HumanoidAMPSRLBase(VecTask):
         return
 
     def _compute_reward(self, actions):
-        self.rew_buf[:] = compute_humanoid_reward(self.obs_buf)
+        self.rew_buf[:] = compute_humanoid_reward(self.obs_buf, self.dof_force_tensor)
         return
 
     def _compute_reset(self):
@@ -531,8 +531,8 @@ def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, l
     return obs
 
 @torch.jit.script
-def compute_humanoid_reward(obs_buf):
-    # type: (Tensor) -> Tensor
+def compute_humanoid_reward(obs_buf, dof_force_tensor):
+    # type: (Tensor, Tensor) -> Tensor
     reward = torch.ones_like(obs_buf[:, 0])
     velocity_reward = obs_buf[:,7] # vx
     r = 0*reward+velocity_reward

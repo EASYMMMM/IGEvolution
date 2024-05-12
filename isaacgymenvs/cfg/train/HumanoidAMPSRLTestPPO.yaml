@@ -5,10 +5,10 @@ params:
     name: srl_continuous
 
   model:
-    name: continuous_amp
+    name: continuous_srl
 
   network:
-    name: amp
+    name: srl
     separate: True
 
     space:

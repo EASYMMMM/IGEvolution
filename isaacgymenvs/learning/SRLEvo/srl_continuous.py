@@ -26,6 +26,7 @@ class SRLAgent(common_agent.CommonAgent):
     def __init__(self, base_name, params):
         super().__init__(base_name, params)
 
+        # 观测值标准化
         if self.normalize_value:
             self.value_mean_std = self.central_value_net.model.value_mean_std if self.has_central_value else self.model.value_mean_std
         if self._normalize_amp_input:
@@ -63,6 +64,7 @@ class SRLAgent(common_agent.CommonAgent):
         return
 
     def play_steps(self):
+        #执行一轮完整的经验收集过程 
         self.set_eval()
 
         epinfos = []
@@ -182,6 +184,8 @@ class SRLAgent(common_agent.CommonAgent):
         for _ in range(0, self.mini_epochs_num):
             ep_kls = []
             for i in range(len(self.dataset)):
+                # 调用 train_actor_critic 方法执行一次训练步骤
+                # train_actor_critic方法中，调用了calc_gradients
                 curr_train_info = self.train_actor_critic(self.dataset[i])
                 
                 if self.schedule_type == 'legacy':
@@ -355,6 +359,7 @@ class SRLAgent(common_agent.CommonAgent):
         return
 
     def _build_net_config(self):
+        # 在Common_Agent中定义所有网络：self.model = self.network.build(net_config)
         config = super()._build_net_config()
         config['amp_input_shape'] = self._amp_observation_space.shape
         return config
