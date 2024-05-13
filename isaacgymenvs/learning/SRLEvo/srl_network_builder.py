@@ -127,8 +127,8 @@ class SRLBuilder(network_builder.A2CBuilder):
             dones = obs_dict.get('dones', None)
             bptt_len = obs_dict.get('bptt_len', 0)
 
-            a_out = self.actor_mlp(a_out)
-            c_out = self.critic_mlp(c_out)
+            a_out = self.actor_mlp(obs)
+            c_out = self.critic_mlp(obs)
                         
             value = self.value_act(self.value(c_out))
 
@@ -149,9 +149,9 @@ class SRLBuilder(network_builder.A2CBuilder):
             return
 
         def eval_critic(self, obs):
-            c_out = self.critic_cnn(obs)
-            c_out = c_out.contiguous().view(c_out.size(0), -1)
-            c_out = self.critic_mlp(c_out)              
+            #c_out = self.critic_cnn(obs)
+            #c_out = c_out.contiguous().view(c_out.size(0), -1)
+            c_out = self.critic_mlp(obs)              
             value = self.value_act(self.value(c_out))
             return value
 
