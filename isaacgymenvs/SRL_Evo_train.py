@@ -97,7 +97,7 @@ def launch_rlg_hydra(cfg: DictConfig):
     from isaacgymenvs.learning import amp_players
     from isaacgymenvs.learning import amp_models
     from isaacgymenvs.learning import amp_network_builder
-    from isaacgymenvs.learning.SRLEvo import srl_continuous,srl_models,srl_network_builder
+    from isaacgymenvs.learning.SRLEvo import srl_continuous,srl_models,srl_network_builder,srl_players
     import isaacgymenvs
 
 
@@ -194,6 +194,7 @@ def launch_rlg_hydra(cfg: DictConfig):
         model_builder.register_network('amp', lambda **kwargs : amp_network_builder.AMPBuilder())
         # SRL 
         runner.algo_factory.register_builder('srl_continuous', lambda **kwargs : srl_continuous.SRLAgent(**kwargs))
+        runner.player_factory.register_builder('amp_continuous', lambda **kwargs : srl_players.SRLPlayerContinuous(**kwargs))
         model_builder.register_model('continuous_srl', lambda network, **kwargs : srl_models.ModelSRLContinuous(network))
         model_builder.register_network('srl', lambda **kwargs : srl_network_builder.SRLBuilder())
 
