@@ -224,6 +224,10 @@ class SRLAgent(common_agent.CommonAgent):
 
         return train_info
 
+    def train_actor_critic(self, input_dict):
+        self.calc_gradients(input_dict)
+        return self.train_result
+        
     def calc_gradients(self, input_dict):
         self.set_train()
 
