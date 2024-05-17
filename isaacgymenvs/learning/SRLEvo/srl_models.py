@@ -28,7 +28,11 @@
 
 import torch.nn as nn
 from rl_games.algos_torch.models import ModelA2CContinuousLogStd
-
+from rl_games.common.extensions.distributions import CategoricalMasked
+from torch.distributions import Categorical
+import torch.nn as nn
+import torch
+import torch.nn.functional as F
 
 class ModelSRLContinuous(ModelA2CContinuousLogStd):
     def __init__(self, network):
@@ -36,13 +40,13 @@ class ModelSRLContinuous(ModelA2CContinuousLogStd):
         return
 
     def build(self, config):
-        net = self.network_builder.build('srl', **config)
+        net = self.network_builder.build('amp_humanoid', **config) # 使用网络构建器构建网络
         for name, _ in net.named_parameters():
             print(name)
 
         obs_shape = config['input_shape']
-        normalize_value = config.get('normalize_value', False)
-        normalize_input = config.get('normalize_input', False)
+        normalize_value = config.get('normalize_value', False) # True
+        normalize_input = config.get('normalize_input', False) # True
         value_size = config.get('value_size', 1)
 
         return self.Network(net, obs_shape=obs_shape,
@@ -56,19 +60,50 @@ class ModelSRLContinuous(ModelA2CContinuousLogStd):
 
         def forward(self, input_dict):
             is_train = input_dict.get('is_train', True)
-            result = super().forward(input_dict)
+            # result = super().forward(input_dict)
 
+            # super().forward
+            is_train = input_dict.get('is_train', True) # 获取训练状态
+            prev_actions = input_dict.get('prev_actions', None) # 获取之前的动作
+            input_dict['obs'] = self.norm_obs(input_dict['obs']) # 标准化观测输入
+            mu, logstd, value, states = self.a2c_network(input_dict)
+            sigma = torch.exp(logstd) # 计算sigma
+            distr = torch.distributions.Normal(mu, sigma, validate_args=False) # 创建正态分布
+            if is_train:
+                entropy = distr.entropy().sum(dim=-1) # 计算熵
+                prev_neglogp = self.neglogp(prev_actions, mu, sigma, logstd) # 计算之前动作的负对数概率
+                result = {
+                    'prev_neglogp' : torch.squeeze(prev_neglogp),
+                    'values' : value,
+                    'entropy' : entropy,
+                    'rnn_states' : states,
+                    'mus' : mu,
+                    'sigmas' : sigma
+                }                
+            else: # 如果不是训练状态
+                selected_action = distr.sample()
+                neglogp = self.neglogp(selected_action, mu, sigma, logstd) # 计算选定动作的负对数概率
+                result = {
+                    'neglogpacs' : torch.squeeze(neglogp),
+                    'values' : self.denorm_value(value),
+                    'actions' : selected_action,
+                    'rnn_states' : states,
+                    'mus' : mu,
+                    'sigmas' : sigma
+                }
+
+            # AMP
             if (is_train):
-                amp_obs = input_dict['amp_obs']
-                disc_agent_logit = self.a2c_network.eval_disc(amp_obs)
+                amp_obs = input_dict['amp_obs'] # 获取AMP观测输入
+                disc_agent_logit = self.a2c_network.eval_disc(amp_obs) # 评估AMP对抗性网络
                 result["disc_agent_logit"] = disc_agent_logit
 
-                amp_obs_replay = input_dict['amp_obs_replay']
-                disc_agent_replay_logit = self.a2c_network.eval_disc(amp_obs_replay)
+                amp_obs_replay = input_dict['amp_obs_replay'] # 获取AMP重放观测输入
+                disc_agent_replay_logit = self.a2c_network.eval_disc(amp_obs_replay) # 评估AMP对抗性网络
                 result["disc_agent_replay_logit"] = disc_agent_replay_logit
 
-                amp_demo_obs = input_dict['amp_obs_demo']
-                disc_demo_logit = self.a2c_network.eval_disc(amp_demo_obs)
+                amp_demo_obs = input_dict['amp_obs_demo']  # 获取AMP示范观测输入
+                disc_demo_logit = self.a2c_network.eval_disc(amp_demo_obs) # 评估AMP对抗性网络
                 result["disc_demo_logit"] = disc_demo_logit
 
             return result

@@ -14,21 +14,69 @@ from torch import optim
 import torch 
 from torch import nn
 import os
-
+from rl_games.algos_torch import central_value
 import isaacgymenvs.learning.replay_buffer as replay_buffer
 import isaacgymenvs.learning.common_agent as common_agent 
-
+from .. import amp_datasets as amp_datasets
 from tensorboardX import SummaryWriter
 
 
 class SRLAgent(common_agent.CommonAgent):
 
     def __init__(self, base_name, params):
-        super().__init__(base_name, params)
+        # super().__init__(base_name, params)
+
+        # CommonAgent.__init__
+        a2c_common.A2CBase.__init__(self, base_name, params)
+
+        config = params['config']
+        self._load_config_params(config)
+
+        self.is_discrete = False
+        self._setup_action_space()
+        self.bounds_loss_coef = config.get('bounds_loss_coef', None)
+        self.clip_actions = config.get('clip_actions', True)
+        self.network_path = self.nn_dir 
+        
+        net_config = self._build_net_config()  # 构建网络配置
+        self.model = self.network.build(net_config)
+        self.model.to(self.ppo_device)
+        self.states = None
+
+        self.init_rnn_from_model(self.model)
+        self.last_lr = float(self.last_lr)
+
+        # 初始化优化器
+        self.optimizer = optim.Adam(self.model.parameters(), float(self.last_lr), eps=1e-08, weight_decay=self.weight_decay)
+
+        # if self.has_central_value:
+        #     cv_config = {
+        #         'state_shape' : torch_ext.shape_whc_to_cwh(self.state_shape), 
+        #         'value_size' : self.value_size,
+        #         'ppo_device' : self.ppo_device, 
+        #         'num_agents' : self.num_agents, 
+        #         'num_steps' : self.horizon_length, 
+        #         'num_actors' : self.num_actors, 
+        #         'num_actions' : self.actions_num, 
+        #         'seq_len' : self.seq_len, 
+        #         'model' : self.central_value_config['network'],
+        #         'config' : self.central_value_config, 
+        #         'writter' : self.writer,
+        #         'multi_gpu' : self.multi_gpu
+        #     }
+        #     self.central_value_net = central_value.CentralValueTrain(**cv_config).to(self.ppo_device)
+
+        self.use_experimental_cv = self.config.get('use_experimental_cv', True)
+        #self.dataset = amp_datasets.AMPDataset(self.batch_size, self.minibatch_size, self.is_discrete, self.is_rnn, self.ppo_device, self.seq_len)
+        self.dataset = amp_datasets.AMPDataset(self.batch_size, self.minibatch_size, self.is_discrete, self.is_rnn, self.ppo_device, 4)
+        self.algo_observer.after_init(self)
+        
 
         # 观测值标准化
         if self.normalize_value:
-            self.value_mean_std = self.central_value_net.model.value_mean_std if self.has_central_value else self.model.value_mean_std
+            # self.value_mean_std = self.central_value_net.model.value_mean_std if self.has_central_value else self.model.value_mean_std
+            self.value_mean_std =  self.model.value_mean_std
+
         if self._normalize_amp_input:
             self._amp_input_mean_std = RunningMeanStd(self._amp_observation_space.shape).to(self.ppo_device)
 
@@ -36,7 +84,7 @@ class SRLAgent(common_agent.CommonAgent):
 
     def init_tensors(self):
         super().init_tensors()
-        self._build_amp_buffers()
+        self._build_amp_buffers() # 构建 AMP 缓冲区
         return
     
     def set_eval(self):
@@ -48,7 +96,7 @@ class SRLAgent(common_agent.CommonAgent):
     def set_train(self):
         super().set_train()
         if self._normalize_amp_input:
-            self._amp_input_mean_std.train()
+            self._amp_input_mean_std.train()  # 设置 AMP 输入标准化为训练模式
         return
 
     def get_stats_weights(self):
@@ -71,21 +119,24 @@ class SRLAgent(common_agent.CommonAgent):
         update_list = self.update_list
 
         for n in range(self.horizon_length):
-            self.obs, done_env_ids = self._env_reset_done()
+            self.obs, done_env_ids = self._env_reset_done() # 重置环境
             self.experience_buffer.update_data('obses', n, self.obs['obs'])
 
-            if self.use_action_masks:
-                masks = self.vec_env.get_action_masks()
-                res_dict = self.get_masked_action_values(self.obs, masks)
-            else:
-                res_dict = self.get_action_values(self.obs)
+            # if self.use_action_masks:
+            #     masks = self.vec_env.get_action_masks() 
+            #     res_dict = self.get_masked_action_values(self.obs, masks)
+            # else:
+            #     res_dict = self.get_action_values(self.obs) # 获取动作值
 
-            for k in update_list:
+            res_dict = self.get_action_values(self.obs) # 获取动作值
+
+            for k in update_list: # 更新经验缓冲区
                 self.experience_buffer.update_data(k, n, res_dict[k]) 
 
-            if self.has_central_value:
-                self.experience_buffer.update_data('states', n, self.obs['states'])
-
+            # if self.has_central_value:
+            #     self.experience_buffer.update_data('states', n, self.obs['states'])
+            
+            # 执行动作并获取环境反馈
             self.obs, rewards, self.dones, infos = self.env_step(res_dict['actions'])
             shaped_rewards = self.rewards_shaper(rewards)
             self.experience_buffer.update_data('rewards', n, shaped_rewards)
@@ -95,7 +146,7 @@ class SRLAgent(common_agent.CommonAgent):
 
             terminated = infos['terminate'].float()
             terminated = terminated.unsqueeze(-1)
-            next_vals = self._eval_critic(self.obs)
+            next_vals = self._eval_critic(self.obs)  # 评估下一个状态的价值
             next_vals *= (1.0 - terminated)
             self.experience_buffer.update_data('next_values', n, next_vals)
 
@@ -116,20 +167,20 @@ class SRLAgent(common_agent.CommonAgent):
             if (self.vec_env.env.viewer and (n == (self.horizon_length - 1))):
                 self._amp_debug(infos)
 
-        mb_fdones = self.experience_buffer.tensor_dict['dones'].float()
-        mb_values = self.experience_buffer.tensor_dict['values']
-        mb_next_values = self.experience_buffer.tensor_dict['next_values']
+        mb_fdones = self.experience_buffer.tensor_dict['dones'].float()  # 获取完成标志
+        mb_values = self.experience_buffer.tensor_dict['values'] # 获取价值
+        mb_next_values = self.experience_buffer.tensor_dict['next_values'] # 获取下一个价值
 
-        mb_rewards = self.experience_buffer.tensor_dict['rewards']
-        mb_amp_obs = self.experience_buffer.tensor_dict['amp_obs']
-        amp_rewards = self._calc_amp_rewards(mb_amp_obs)
-        mb_rewards = self._combine_rewards(mb_rewards, amp_rewards)
+        mb_rewards = self.experience_buffer.tensor_dict['rewards'] # 获取奖励
+        mb_amp_obs = self.experience_buffer.tensor_dict['amp_obs'] # 获取 AMP 观测
+        amp_rewards = self._calc_amp_rewards(mb_amp_obs) # 计算 AMP 奖励
+        mb_rewards = self._combine_rewards(mb_rewards, amp_rewards) # 合并奖励
 
-        mb_advs = self.discount_values(mb_fdones, mb_values, mb_rewards, mb_next_values)
-        mb_returns = mb_advs + mb_values
+        mb_advs = self.discount_values(mb_fdones, mb_values, mb_rewards, mb_next_values) # 折扣价值
+        mb_returns = mb_advs + mb_values # 价值 = 当前价值+未来折扣价值
 
-        batch_dict = self.experience_buffer.get_transformed_list(a2c_common.swap_and_flatten01, self.tensor_list)
-        batch_dict['returns'] = a2c_common.swap_and_flatten01(mb_returns)
+        batch_dict = self.experience_buffer.get_transformed_list(a2c_common.swap_and_flatten01, self.tensor_list) # 获取转换后的批次字典
+        batch_dict['returns'] = a2c_common.swap_and_flatten01(mb_returns) # 设置返回值
         batch_dict['played_frames'] = self.batch_size
 
         for k, v in amp_rewards.items():
@@ -139,7 +190,7 @@ class SRLAgent(common_agent.CommonAgent):
 
     def prepare_dataset(self, batch_dict):
         super().prepare_dataset(batch_dict)
-        self.dataset.values_dict['amp_obs'] = batch_dict['amp_obs']
+        self.dataset.values_dict['amp_obs'] = batch_dict['amp_obs'] # 设置 AMP 观测
         self.dataset.values_dict['amp_obs_demo'] = batch_dict['amp_obs_demo']
         self.dataset.values_dict['amp_obs_replay'] = batch_dict['amp_obs_replay']
         return
@@ -147,39 +198,41 @@ class SRLAgent(common_agent.CommonAgent):
     def train_epoch(self):
         play_time_start = time.time()
         with torch.no_grad():
-            if self.is_rnn:
-                batch_dict = self.play_steps_rnn()
-            else:
-                batch_dict = self.play_steps() 
+            # 进行仿真
+            # if self.is_rnn:
+            #     batch_dict = self.play_steps_rnn()
+            # else:
+            #     batch_dict = self.play_steps() 
+            batch_dict = self.play_steps() 
 
         play_time_end = time.time()
         update_time_start = time.time()
         rnn_masks = batch_dict.get('rnn_masks', None)
         
-        self._update_amp_demos()
+        self._update_amp_demos() # 更新 AMP 示范
         num_obs_samples = batch_dict['amp_obs'].shape[0]
         amp_obs_demo = self._amp_obs_demo_buffer.sample(num_obs_samples)['amp_obs']
         batch_dict['amp_obs_demo'] = amp_obs_demo
 
         if (self._amp_replay_buffer.get_total_count() == 0):
-            batch_dict['amp_obs_replay'] = batch_dict['amp_obs']
+            batch_dict['amp_obs_replay'] = batch_dict['amp_obs'] # 设置 AMP 重放观测
         else:
             batch_dict['amp_obs_replay'] = self._amp_replay_buffer.sample(num_obs_samples)['amp_obs']
 
-        self.set_train()
+        self.set_train()  # 设置为训练模式
 
-        self.curr_frames = batch_dict.pop('played_frames')
-        self.prepare_dataset(batch_dict)
+        self.curr_frames = batch_dict.pop('played_frames') #当前帧数
+        self.prepare_dataset(batch_dict) # 准备数据集
         self.algo_observer.after_steps()
 
-        if self.has_central_value:
-            self.train_central_value()
+        # if self.has_central_value:
+        #     self.train_central_value()
 
         train_info = None
 
-        if self.is_rnn:
-            frames_mask_ratio = rnn_masks.sum().item() / (rnn_masks.nelement())
-            print(frames_mask_ratio)
+        # if self.is_rnn:
+        #     frames_mask_ratio = rnn_masks.sum().item() / (rnn_masks.nelement())
+        #     print(frames_mask_ratio)
 
         for _ in range(0, self.mini_epochs_num):
             ep_kls = []
@@ -215,12 +268,12 @@ class SRLAgent(common_agent.CommonAgent):
         update_time = update_time_end - update_time_start
         total_time = update_time_end - play_time_start
 
-        self._store_replay_amp_obs(batch_dict['amp_obs'])
+        self._store_replay_amp_obs(batch_dict['amp_obs']) # 存储 AMP 重放观测
 
         train_info['play_time'] = play_time
         train_info['update_time'] = update_time
         train_info['total_time'] = total_time
-        self._record_train_batch_info(batch_dict, train_info)
+        self._record_train_batch_info(batch_dict, train_info) # 记录训练批次信息
 
         return train_info
 
@@ -231,29 +284,29 @@ class SRLAgent(common_agent.CommonAgent):
     def calc_gradients(self, input_dict):
         self.set_train()
 
-        value_preds_batch = input_dict['old_values']
-        old_action_log_probs_batch = input_dict['old_logp_actions']
-        advantage = input_dict['advantages']
-        old_mu_batch = input_dict['mu']
-        old_sigma_batch = input_dict['sigma']
-        return_batch = input_dict['returns']
-        actions_batch = input_dict['actions']
-        obs_batch = input_dict['obs']
-        obs_batch = self._preproc_obs(obs_batch)
+        value_preds_batch = input_dict['old_values'] # 获取旧的值函数预测
+        old_action_log_probs_batch = input_dict['old_logp_actions'] # 获取旧的动作对数概率
+        advantage = input_dict['advantages'] # 获取优势
+        old_mu_batch = input_dict['mu'] # 获取旧的均值
+        old_sigma_batch = input_dict['sigma'] # 获取旧的标准差
+        return_batch = input_dict['returns']  # 获取返回值
+        actions_batch = input_dict['actions']  # 获取动作
+        obs_batch = input_dict['obs'] # 获取观测
+        obs_batch = self._preproc_obs(obs_batch) # 预处理观测
 
-        amp_obs = input_dict['amp_obs'][0:self._amp_minibatch_size]
-        amp_obs = self._preproc_amp_obs(amp_obs)
-        amp_obs_replay = input_dict['amp_obs_replay'][0:self._amp_minibatch_size]
-        amp_obs_replay = self._preproc_amp_obs(amp_obs_replay)
+        amp_obs = input_dict['amp_obs'][0:self._amp_minibatch_size] # 获取 AMP 观测
+        amp_obs = self._preproc_amp_obs(amp_obs) # 预处理 AMP 观测
+        amp_obs_replay = input_dict['amp_obs_replay'][0:self._amp_minibatch_size] # 获取 AMP 重放观测
+        amp_obs_replay = self._preproc_amp_obs(amp_obs_replay) # 预处理 AMP 重放观测
 
-        amp_obs_demo = input_dict['amp_obs_demo'][0:self._amp_minibatch_size]
-        amp_obs_demo = self._preproc_amp_obs(amp_obs_demo)
-        amp_obs_demo.requires_grad_(True)
+        amp_obs_demo = input_dict['amp_obs_demo'][0:self._amp_minibatch_size]  # 获取 AMP 示范观测
+        amp_obs_demo = self._preproc_amp_obs(amp_obs_demo) # 预处理 AMP 示范观测
+        amp_obs_demo.requires_grad_(True)  # 设置 AMP 示范观测需要梯度
 
-        lr = self.last_lr
-        kl = 1.0
-        lr_mul = 1.0
-        curr_e_clip = lr_mul * self.e_clip
+        lr = self.last_lr 
+        kl = 1.0  # 初始化 KL 散度
+        lr_mul = 1.0 # 初始化学习率倍乘因子
+        curr_e_clip = lr_mul * self.e_clip # 计算当前的裁剪阈值
 
         batch_dict = {
             'is_train': True,
@@ -271,39 +324,52 @@ class SRLAgent(common_agent.CommonAgent):
             batch_dict['seq_length'] = self.seq_len
 
         with torch.cuda.amp.autocast(enabled=self.mixed_precision):
-            res_dict = self.model(batch_dict)
-            action_log_probs = res_dict['prev_neglogp']
-            values = res_dict['values']
-            entropy = res_dict['entropy']
-            mu = res_dict['mus']
-            sigma = res_dict['sigmas']
-            disc_agent_logit = res_dict['disc_agent_logit']
-            disc_agent_replay_logit = res_dict['disc_agent_replay_logit']
-            disc_demo_logit = res_dict['disc_demo_logit']
+            res_dict = self.model(batch_dict) # 通过模型计算结果
+            action_log_probs = res_dict['prev_neglogp']  # 获取动作的对数概率
+            values = res_dict['values'] # 获取值函数输出
+            entropy = res_dict['entropy'] # 获取熵
+            mu = res_dict['mus'] # 获取动作均值
+            sigma = res_dict['sigmas'] # 获取动作标准差
+            disc_agent_logit = res_dict['disc_agent_logit'] # 获取对抗网络输出（代理）
+            disc_agent_replay_logit = res_dict['disc_agent_replay_logit'] # 获取对抗网络输出（重放）
+            disc_demo_logit = res_dict['disc_demo_logit'] # 获取对抗网络输出（示范）
 
+            # 计算 actor 损失
             a_info = self._actor_loss(old_action_log_probs_batch, action_log_probs, advantage, curr_e_clip)
             a_loss = a_info['actor_loss']
 
+            # 计算 critic 损失
             c_info = self._critic_loss(value_preds_batch, values, curr_e_clip, return_batch, self.clip_value)
             c_loss = c_info['critic_loss']
 
+            # 计算边界损失
             b_loss = self.bound_loss(mu)
 
+            # 应用掩码并计算损失
             losses, sum_mask = torch_ext.apply_masks([a_loss.unsqueeze(1), c_loss, entropy.unsqueeze(1), b_loss.unsqueeze(1)], rnn_masks)
             a_loss, c_loss, entropy, b_loss = losses[0], losses[1], losses[2], losses[3]
             
+            # 计算对抗网络损失
             disc_agent_cat_logit = torch.cat([disc_agent_logit, disc_agent_replay_logit], dim=0)
             disc_info = self._disc_loss(disc_agent_cat_logit, disc_demo_logit, amp_obs_demo)
             disc_loss = disc_info['disc_loss']
 
+            # 计算总损失
             loss = a_loss + self.critic_coef * c_loss - self.entropy_coef * entropy + self.bounds_loss_coef * b_loss \
                  + self._disc_coef * disc_loss
             
+            # 梯度清零
             if self.multi_gpu:
                 self.optimizer.zero_grad()
             else:
                 for param in self.model.parameters():
                     param.grad = None
+
+        # 反向传播和梯度裁剪
+        # 缩放损失值，以提高计算精度。然后调用 .backward() 方法进行反向传播，计算每个参数的梯度。
+        # self.scaler.scale(loss).backward()  # 1. 缩放损失并进行反向传播，计算梯度
+        # self.scaler.step(self.optimizer)    # 2. 调用优化器的 step 方法，更新模型参数，并处理梯度的取消缩放
+        # self.scaler.update()                # 3. 更新缩放因子，根据训练情况调整缩放因子以适应下一次迭代
 
         self.scaler.scale(loss).backward()
         #TODO: Refactor this ugliest code of the year
@@ -323,7 +389,8 @@ class SRLAgent(common_agent.CommonAgent):
         else:
             self.scaler.step(self.optimizer)
             self.scaler.update()
-
+        
+        # 计算 KL 散度
         with torch.no_grad():
             reduce_kl = not self.is_rnn
             kl_dist = torch_ext.policy_kl(mu.detach(), sigma.detach(), old_mu_batch, old_sigma_batch, reduce_kl)
@@ -342,6 +409,49 @@ class SRLAgent(common_agent.CommonAgent):
         self.train_result.update(disc_info)
 
         return
+
+    def _actor_loss(self, old_action_log_probs_batch, action_log_probs, advantage, curr_e_clip):
+        clip_frac = None
+        if (self.ppo):
+            # 计算新旧策略概率比 r_t(theta)
+            ratio = torch.exp(old_action_log_probs_batch - action_log_probs)
+            # 未裁剪的目标函数 surr1
+            surr1 = advantage * ratio
+            # 裁剪后的目标函数 surr2
+            surr2 = advantage * torch.clamp(ratio, 1.0 - curr_e_clip,
+                                    1.0 + curr_e_clip)
+            # 选择 surr1 和 surr2 的最小值
+            a_loss = torch.max(-surr1, -surr2)
+
+            clipped = torch.abs(ratio - 1.0) > curr_e_clip
+            clip_frac = torch.mean(clipped.float())
+            clip_frac = clip_frac.detach()
+        else:
+            a_loss = (action_log_probs * advantage)
+    
+        info = {
+            'actor_loss': a_loss,
+            'actor_clip_frac': clip_frac
+        }
+        return info
+
+    def _critic_loss(self, value_preds_batch, values, curr_e_clip, return_batch, clip_value):
+        if clip_value:
+            # 裁剪后的值函数预测
+            value_pred_clipped = value_preds_batch + \
+                    (values - value_preds_batch).clamp(-curr_e_clip, curr_e_clip)
+            # 未裁剪的值函数损失
+            value_losses = (values - return_batch)**2 
+            # 选择未裁剪和裁剪后的值函数损失的最大值
+            value_losses_clipped = (value_pred_clipped - return_batch)**2
+            c_loss = torch.max(value_losses, value_losses_clipped)
+        else:
+            c_loss = (return_batch - values)**2
+
+        info = {
+            'critic_loss': c_loss
+        }
+        return info
 
     def _load_config_params(self, config):
         super()._load_config_params(config)
@@ -444,9 +554,9 @@ class SRLAgent(common_agent.CommonAgent):
             if self.global_rank == 0:
                 scaled_time = sum_time
                 scaled_play_time = train_info['play_time']
-                curr_frames = self.curr_frames
-                self.frame += curr_frames
-                if self.print_stats:
+                curr_frames = self.curr_frames # 获取当前帧数
+                self.frame += curr_frames # 更新总帧数
+                if self.print_stats: 
                     fps_step = curr_frames / scaled_play_time
                     fps_total = curr_frames / scaled_time
                     print(f'fps step: {fps_step:.1f} fps total: {fps_total:.1f}')

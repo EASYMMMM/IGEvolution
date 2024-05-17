@@ -38,7 +38,7 @@ import numpy as np
 DISC_LOGIT_INIT_SCALE = 1.0
 
 
-class SRLBuilder(network_builder.A2CBuilder):
+class HumanoidBuilder(network_builder.A2CBuilder):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         return
@@ -85,13 +85,16 @@ class SRLBuilder(network_builder.A2CBuilder):
             self.value_act = self.activations_factory.create(self.value_activation)
 
             # 根据动作空间类型，创建适当的输出层
+            # mu和sigma用于表示策略网络的输出，特别是用于连续动作空间中的动作均值和
+            # 标准差。这些参数定义了一个高斯分布，策略网络通过从该分布中采样来生成动
+            # 作。
             self.mu = torch.nn.Linear(out_size, actions_num)
-            self.mu_act = self.activations_factory.create(self.space_config['mu_activation']) 
+            self.mu_act = self.activations_factory.create(self.space_config['mu_activation'])  # None 无激活函数 线性输出
             mu_init = self.init_factory.create(**self.space_config['mu_init'])
-            self.sigma_act = self.activations_factory.create(self.space_config['sigma_activation']) 
+            self.sigma_act = self.activations_factory.create(self.space_config['sigma_activation'])  # None 无激活函数 线性输出
             sigma_init = self.init_factory.create(**self.space_config['sigma_init'])
 
-            if self.fixed_sigma:
+            if self.fixed_sigma: # True 表示 sigma 不通过网络学习
                 self.sigma = nn.Parameter(torch.zeros(actions_num, requires_grad=True, dtype=torch.float32), requires_grad=True)
             else:
                 self.sigma = torch.nn.Linear(out_size, actions_num)
@@ -131,9 +134,10 @@ class SRLBuilder(network_builder.A2CBuilder):
             c_out = self.critic_mlp(obs)
                         
             value = self.value_act(self.value(c_out))
-
+            
+            # 在前向传播过程中，mu和sigma用于计算动作的均值和标准差：
             mu = self.mu_act(self.mu(a_out))
-            if self.fixed_sigma:
+            if self.fixed_sigma: # sigma 为常量值
                 sigma = mu * 0.0 + self.sigma_act(self.sigma)
             else:
                 sigma = self.sigma_act(self.sigma(a_out))
@@ -227,5 +231,5 @@ class SRLBuilder(network_builder.A2CBuilder):
             return       
 
     def build(self, name, **kwargs):
-        net = SRLBuilder.Network(self.params, **kwargs)
+        net = HumanoidBuilder.Network(self.params, **kwargs)
         return net
