@@ -21,6 +21,7 @@ import isaacgymenvs.learning.common_agent as common_agent
 from .. import amp_datasets as amp_datasets
 from tensorboardX import SummaryWriter
 from rl_games.common import datasets
+from gym.spaces.box import Box
 
 class SRLAgent(common_agent.CommonAgent):
 
@@ -98,9 +99,9 @@ class SRLAgent(common_agent.CommonAgent):
             'use_action_masks' : self.use_action_masks
         }
         env_info = self.env_info
-        env_info['action_space'] = 28
+        env_info['action_space'] = Box(-1,1,(28,1))
         self.experience_buffer = ExperienceBuffer(env_info, algo_info, self.ppo_device)
-        env_info['action_space'] = 8
+        env_info['action_space'] = Box(-1,1,(8,1))
         self.experience_buffer_srl = ExperienceBuffer(env_info, algo_info, self.ppo_device)
         return
     
