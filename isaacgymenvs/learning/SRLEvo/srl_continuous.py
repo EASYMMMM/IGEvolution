@@ -46,7 +46,7 @@ class SRLAgent(common_agent.CommonAgent):
         self.model_srl.to(self.ppo_device)
         self.states = None
 
-        #self.init_rnn_from_model(self.model)
+        self.init_rnn_from_model(self.model)
         self.last_lr = float(self.last_lr)
         self.last_lr_srl = float(self.last_lr)
 

@@ -44,13 +44,13 @@ class ModelSRLContinuous(ModelA2CContinuousLogStd):
             raise ValueError("Invalid role. Must be 'humanoid' or 'srl'")
          # 分别为humanoid和srl构建网络
         if role == 'humanoid':
-            net = self.network_builder.build('amp_humanoid', **config) # 使用网络构建器构建网络
+            net = self.network_builder.build('amp_humanoid',role=role, **config) # 使用网络构建器构建网络
             print('====== Humanoid Netwrok ======')
             for name, _ in net.named_parameters():
                 print(name)
             print('==============================')
         elif role == 'srl':
-            net = self.network_builder.build('srl', **config) # 使用网络构建器构建网络     
+            net = self.network_builder.build('srl',role=role, **config) # 使用网络构建器构建网络     
             print('======== SRL Netwrok =========')
             for name, _ in net.named_parameters():
                 print(name)
@@ -60,7 +60,7 @@ class ModelSRLContinuous(ModelA2CContinuousLogStd):
         normalize_input = config.get('normalize_input', False) # True
         value_size = config.get('value_size', 1)
 
-        return self.Network(net, obs_shape=obs_shape,
+        return self.Network(net, role=role,obs_shape=obs_shape,
             normalize_value=normalize_value, normalize_input=normalize_input, value_size=value_size)
 
 
