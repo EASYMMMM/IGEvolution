@@ -40,9 +40,9 @@ class SRLAgent(common_agent.CommonAgent):
         self.network_path = self.nn_dir 
         
         net_config = self._build_net_config()  # 构建网络配置
-        self.model = self.network.build(net_config,'humanoid')
+        self.model = self.network.build(net_config,role='humanoid')
         self.model.to(self.ppo_device)
-        self.model_srl = self.network.build(net_config,'srl')
+        self.model_srl = self.network.build(net_config,role='srl')
         self.model_srl.to(self.ppo_device)
         self.states = None
 

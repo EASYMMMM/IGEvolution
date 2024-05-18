@@ -39,18 +39,18 @@ class ModelSRLContinuous(ModelA2CContinuousLogStd):
         super().__init__(network)
         return
 
-    def build(self, config, role:str='humanoid'):
+    def build(self, config, role:str=None):
         if role not in ['humanoid', 'srl']:
             raise ValueError("Invalid role. Must be 'humanoid' or 'srl'")
          # 分别为humanoid和srl构建网络
         if role == 'humanoid':
-            net = self.network_builder.build('amp_humanoid',role=role, **config) # 使用网络构建器构建网络
+            net = self.network_builder.build('amp_humanoid',  **config) # 使用网络构建器构建网络
             print('====== Humanoid Netwrok ======')
             for name, _ in net.named_parameters():
                 print(name)
             print('==============================')
         elif role == 'srl':
-            net = self.network_builder.build('srl',role=role, **config) # 使用网络构建器构建网络     
+            net = self.network_builder.build('srl',  **config) # 使用网络构建器构建网络     
             print('======== SRL Netwrok =========')
             for name, _ in net.named_parameters():
                 print(name)
@@ -107,7 +107,7 @@ class ModelSRLContinuous(ModelA2CContinuousLogStd):
                 }
 
             # AMP
-            if (is_train):
+            if (is_train) and self.role=='humanoid':
                 amp_obs = input_dict['amp_obs'] # 获取AMP观测输入
                 disc_agent_logit = self.a2c_network.eval_disc(amp_obs) # 评估AMP对抗性网络
                 result["disc_agent_logit"] = disc_agent_logit
