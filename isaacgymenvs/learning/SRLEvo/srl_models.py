@@ -33,7 +33,7 @@ from torch.distributions import Categorical
 import torch.nn as nn
 import torch
 import torch.nn.functional as F
-
+import srl_network_builder 
 class ModelSRLContinuous(ModelA2CContinuousLogStd):
     def __init__(self, network):
         super().__init__(network)
@@ -44,13 +44,15 @@ class ModelSRLContinuous(ModelA2CContinuousLogStd):
             raise ValueError("Invalid role. Must be 'humanoid' or 'srl'")
          # 分别为humanoid和srl构建网络
         if role == 'humanoid':
-            net = self.network_builder.build('amp_humanoid',  **config) # 使用网络构建器构建网络
+            # net = self.network_builder.build('amp_humanoid',  **config) # 使用网络构建器构建网络
+            net = srl_network_builder.HumanoidBuilder(**config)
             print('====== Humanoid Netwrok ======')
             for name, _ in net.named_parameters():
                 print(name)
             print('==============================')
         elif role == 'srl':
-            net = self.network_builder.build('srl',  **config) # 使用网络构建器构建网络     
+            # net = self.network_builder.build('srl',  **config) # 使用网络构建器构建网络     
+            net = srl_network_builder.SRLBuilder(**config)
             print('======== SRL Netwrok =========')
             for name, _ in net.named_parameters():
                 print(name)
