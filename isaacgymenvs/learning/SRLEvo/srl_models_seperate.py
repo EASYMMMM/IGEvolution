@@ -39,71 +39,95 @@ class ModelSRLContinuous(ModelA2CContinuousLogStd):
         super().__init__(network)
         return
 
-    def build(self, config, role:str='humanoid'):
-        if role not in ['humanoid', 'srl']:
-            raise ValueError("Invalid role. Must be 'humanoid' or 'srl'")
-         # 分别为humanoid和srl构建网络
-        if role == 'humanoid':
-            net = self.network_builder.build('amp_humanoid', **config) # 使用网络构建器构建网络
-            print('====== Humanoid Netwrok ======')
-            for name, _ in net.named_parameters():
-                print(name)
-            print('==============================')
-        elif role == 'srl':
-            net = self.network_builder.build('srl', **config) # 使用网络构建器构建网络     
-            print('======== SRL Netwrok =========')
-            for name, _ in net.named_parameters():
-                print(name)
-            print('==============================')
+    def build(self, config):
+        # 分别为humanoid和srl构建网络
+        net = self.network_builder.build('amp_humanoid', **config) # 使用网络构建器构建网络
+        srl_net = self.network_builder.build('srl', **config) # 使用网络构建器构建网络
+        print('====== Humanoid Netwrok ======')
+        for name, _ in net.named_parameters():
+            print(name)
+        print('==============================')
+        print('======== SRL Netwrok =========')
+        for name, _ in srl_net.named_parameters():
+            print(name)
+        print('==============================')
+
         obs_shape = config['input_shape']
         normalize_value = config.get('normalize_value', False) # True
         normalize_input = config.get('normalize_input', False) # True
         value_size = config.get('value_size', 1)
 
-        return self.Network(net, obs_shape=obs_shape,
+        return self.Network(net, srl_net, obs_shape=obs_shape,
             normalize_value=normalize_value, normalize_input=normalize_input, value_size=value_size)
 
 
     class Network(ModelA2CContinuousLogStd.Network):
-        def __init__(self, a2c_network, role:str, **kwargs):
+        def __init__(self, a2c_network, srl_network, **kwargs):
             super().__init__(a2c_network, **kwargs)
-            self.role = role
+            self.srl_network = srl_network
             return
 
         def forward(self, input_dict):
             is_train = input_dict.get('is_train', True)
             # result = super().forward(input_dict)
+
+            is_train = input_dict.get('is_train', True) # 获取训练状态
             
             prev_actions = input_dict.get('prev_actions', None) # 获取之前的动作
             input_dict['obs'] = self.norm_obs(input_dict['obs']) # 标准化观测输入
             
+            # humanoid 控制器
             mu, logstd, value, states = self.a2c_network(input_dict)
             sigma = torch.exp(logstd) # 计算sigma
             distr = torch.distributions.Normal(mu, sigma, validate_args=False) # 创建正态分布
-                  
+            # srl控制器
+            mu_srl, logstd_srl, value_srl, states_srl = self.srl_network(input_dict)
+            sigma_srl = torch.exp(logstd_srl) # 计算sigma
+            distr_srl = torch.distributions.Normal(mu_srl, sigma_srl, validate_args=False) # 创建正态分布
+            
             if is_train:
                 entropy = distr.entropy().sum(dim=-1)
+                entropy_srl = distr_srl.entropy().sum(dim=-1)
                 prev_neglogp = self.neglogp(prev_actions, mu, sigma, logstd)
+                prev_neglogp_srl = self.neglogp(prev_actions, mu_srl, sigma_srl, logstd_srl)
                 result = {
+                    # humanoid
                     'prev_neglogp' : torch.squeeze(prev_neglogp),
                     'values' : value,
                     'entropy' : entropy,
                     'rnn_states' : states,
                     'mus' : mu,
                     'sigmas' : sigma,
+                    # srl
+                    'prev_neglogp_srl' : torch.squeeze(prev_neglogp_srl),
+                    'values_srl' : value_srl,
+                    'entropy_srl' : entropy_srl,
+                    'rnn_states_srl' : states_srl,
+                    'mus_srl' : mu_srl,
+                    'sigmas_srl' : sigma_srl
                 }                               
             else: # eval
                 # 分别计算humanoid和srl，并拼接
                 selected_action = distr.sample()
+                selected_action_srl = distr_srl.sample()
+                combined_action = torch.cat((selected_action, selected_action_srl), dim=-1)
                 # 计算选定动作的负对数概率
                 neglogp = self.neglogp(selected_action, mu, sigma, logstd) 
+                neglogp_srl = self.neglogp(selected_action_srl, mu_srl, sigma_srl, logstd_srl)
                 result = {
-                    'actions' : selected_action,
+                    'actions' : combined_action,
+                    # humanoid
                     'neglogpacs' : torch.squeeze(neglogp),
                     'values' : self.denorm_value(value), 
                     'rnn_states' : states,
                     'mus' : mu,
                     'sigmas' : sigma,
+                    # srl
+                    'neglogpacs_srl': torch.squeeze(neglogp_srl),
+                    'values_srl' : self.denorm_value(value_srl), 
+                    'rnn_states' : states_srl,
+                    'mus' : mu_srl,
+                    'sigmas' : sigma_srl,
                 }
 
             # AMP

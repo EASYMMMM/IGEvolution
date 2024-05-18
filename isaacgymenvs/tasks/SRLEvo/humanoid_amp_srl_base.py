@@ -41,7 +41,7 @@ from ..base.vec_task import VecTask
 DOF_BODY_IDS = [1, 2, 3, 4, 6, 7, 9, 10, 11, 12, 13, 14]
 DOF_OFFSETS = [0, 3, 6, 9, 10, 13, 14, 17, 18, 21, 24, 25, 28]
 NUM_OBS = 13 + 52 + 28 + 12 + 8 #TODO： 单纯humanoid为103 SRL暂设为8 [root_h, root_rot, root_vel, root_ang_vel, dof_pos, dof_vel, key_body_pos]
-NUM_ACTIONS = 28 + 8
+NUM_ACTIONS = 28 + 8   # Actions humanoid (Dof=28) + SRL
 
 
 KEY_BODY_NAMES = ["right_hand", "left_hand", "right_foot", "left_foot"]

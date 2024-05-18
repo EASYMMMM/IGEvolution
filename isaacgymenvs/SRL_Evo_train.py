@@ -34,7 +34,6 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 from omegaconf import DictConfig, OmegaConf
 
-from isaacgymenvs.learning.SRLEvo import humanoid_network_builder
 
 def preprocess_train_config(cfg, config_dict):
     """
@@ -99,6 +98,7 @@ def launch_rlg_hydra(cfg: DictConfig):
     from isaacgymenvs.learning import amp_models
     from isaacgymenvs.learning import amp_network_builder
     from isaacgymenvs.learning.SRLEvo import srl_continuous,srl_models,srl_players
+    from isaacgymenvs.learning.SRLEvo import srl_network_builder
     import isaacgymenvs
 
 
@@ -197,8 +197,8 @@ def launch_rlg_hydra(cfg: DictConfig):
         runner.algo_factory.register_builder('srl_continuous', lambda **kwargs : srl_continuous.SRLAgent(**kwargs))
         runner.player_factory.register_builder('srl_continuous', lambda **kwargs : srl_players.SRLPlayerContinuous(**kwargs))
         model_builder.register_model('continuous_srl', lambda network, **kwargs : srl_models.ModelSRLContinuous(network))
-        model_builder.register_network('amp_humanoid', lambda **kwargs : humanoid_network_builder.HumanoidBuilder())
-
+        model_builder.register_network('amp_humanoid', lambda **kwargs : srl_network_builder.HumanoidBuilder())
+        model_builder.register_network('srl', lambda **kwargs : srl_network_builder.SRLBuilder())
         return runner
 
     # convert CLI arguments into dictionary

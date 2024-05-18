@@ -45,7 +45,7 @@ class HumanoidBuilder(network_builder.A2CBuilder):
 
     class Network(network_builder.A2CBuilder.Network):
         def __init__(self, params, **kwargs):
-            actions_num = kwargs.pop('actions_num') # 获取动作数量
+            actions_num = kwargs.pop('actions_num_humanoid') # 获取动作数量
             input_shape = kwargs.pop('input_shape') # 获取输入形状
             self.value_size = kwargs.pop('value_size', 1) # 获取价值输出的大小，默认为1
             self.num_seqs = num_seqs = kwargs.pop('num_seqs', 1)
@@ -232,4 +232,109 @@ class HumanoidBuilder(network_builder.A2CBuilder):
 
     def build(self, name, **kwargs):
         net = HumanoidBuilder.Network(self.params, **kwargs)
+        return net
+
+
+class SRLBuilder(network_builder.A2CBuilder):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        return
+
+    class Network(network_builder.A2CBuilder.Network):
+        def __init__(self, params, **kwargs):
+            actions_num = kwargs.pop('actions_num_srl') # 获取动作数量
+            input_shape = kwargs.pop('input_shape') # 获取输入形状
+            self.value_size = kwargs.pop('value_size', 1) # 获取价值输出的大小，默认为1
+            self.num_seqs = num_seqs = kwargs.pop('num_seqs', 1)
+
+            NetworkBuilder.BaseNetwork.__init__(self)
+            self.load(params) # 载入参数设置
+            self.actor_mlp = nn.Sequential()
+            self.critic_mlp = nn.Sequential()
+            
+
+            # mlp_input_shape = self._calc_input_size(input_shape, self.actor_cnn)
+            # 直接使用输入形状初始化MLP，不经过CNN层的处理
+            mlp_input_shape = input_shape[0]
+
+            in_mlp_shape = mlp_input_shape
+            if len(self.units) == 0:
+                out_size = mlp_input_shape
+            else:
+                out_size = self.units[-1]
+
+            # 设置MLP层参数
+            mlp_args = {
+                'input_size' : in_mlp_shape, 
+                'units' : self.units, 
+                'activation' : self.activation, 
+                'norm_func_name' : self.normalization,
+                'dense_func' : torch.nn.Linear,
+                'd2rl' : self.is_d2rl,
+                'norm_only_first_layer' : self.norm_only_first_layer
+            }
+            self.actor_mlp = self._build_mlp(**mlp_args)
+            if self.separate:
+                self.critic_mlp = self._build_mlp(**mlp_args)
+            
+            # 创建值输出层
+            self.value = self._build_value_layer(out_size, self.value_size)
+            self.value_act = self.activations_factory.create(self.value_activation)
+
+            # 根据动作空间类型，创建适当的输出层
+            # 连续动作：mu+sigma
+            self.mu = torch.nn.Linear(out_size, actions_num)
+            self.mu_act = self.activations_factory.create(self.space_config['mu_activation'])  # None 无激活函数 线性输出
+            mu_init = self.init_factory.create(**self.space_config['mu_init'])
+            self.sigma_act = self.activations_factory.create(self.space_config['sigma_activation'])  # None 无激活函数 线性输出
+            sigma_init = self.init_factory.create(**self.space_config['sigma_init'])
+
+            if self.fixed_sigma: # True 表示 sigma 不通过网络学习
+                self.sigma = nn.Parameter(torch.zeros(actions_num, requires_grad=True, dtype=torch.float32), requires_grad=True)
+            else:
+                self.sigma = torch.nn.Linear(out_size, actions_num)
+
+            mlp_init = self.init_factory.create(**self.initializer)
+
+            for m in self.modules():         
+                if isinstance(m, nn.Linear):
+                    mlp_init(m.weight)
+                    if getattr(m, "bias", None) is not None:
+                        torch.nn.init.zeros_(m.bias)    
+
+            if self.is_continuous:
+                mu_init(self.mu.weight)
+                if self.fixed_sigma:
+                    sigma_init(self.sigma)
+                else:
+                    sigma_init(self.sigma.weight)  
+
+            return
+
+        def forward(self, obs_dict):
+            obs = obs_dict['obs']
+            states = obs_dict.get('rnn_states', None)
+            dones = obs_dict.get('dones', None)
+            bptt_len = obs_dict.get('bptt_len', 0)
+
+            a_out = self.actor_mlp(obs)
+            c_out = self.critic_mlp(obs)
+                        
+            value = self.value_act(self.value(c_out))
+            
+            # 在前向传播过程中，mu和sigma用于计算动作的均值和标准差：
+            mu = self.mu_act(self.mu(a_out))
+            if self.fixed_sigma: # sigma 为常量值
+                sigma = mu * 0.0 + self.sigma_act(self.sigma)
+            else:
+                sigma = self.sigma_act(self.sigma(a_out))
+
+            return mu, sigma, value, states
+    
+        def load(self, params):
+            super().load(params)
+            return
+
+    def build(self, name, **kwargs):
+        net = SRLBuilder.Network(self.params, **kwargs)
         return net
