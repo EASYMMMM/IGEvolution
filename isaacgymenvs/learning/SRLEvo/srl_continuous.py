@@ -91,7 +91,7 @@ class SRLAgent(common_agent.CommonAgent):
 
     def init_tensors(self):
         super().init_tensors()
-        self._build_amp_buffers() # 构建 AMP 缓冲区
+
         algo_info = {
             'num_actors' : self.num_actors,
             'horizon_length' : self.horizon_length,
@@ -108,7 +108,7 @@ class SRLAgent(common_agent.CommonAgent):
         self.experience_buffer_srl.tensor_dict['next_obses'] = torch.zeros_like(self.experience_buffer_srl.tensor_dict['obses'])
         self.experience_buffer_srl.tensor_dict['next_values'] = torch.zeros_like(self.experience_buffer_srl.tensor_dict['values'])
 
-        
+        self._build_amp_buffers() # 构建 AMP 缓冲区        
         return
     
     def set_eval(self):
@@ -193,7 +193,6 @@ class SRLAgent(common_agent.CommonAgent):
             self.experience_buffer_srl.update_data('rewards', n, shaped_rewards)
             self.experience_buffer_srl.update_data('next_obses', n, self.obs['obs'])
             self.experience_buffer_srl.update_data('dones', n, self.dones)
-            self.experience_buffer_srl.update_data('amp_obs', n, infos['amp_obs'])
 
 
             terminated = infos['terminate'].float()
