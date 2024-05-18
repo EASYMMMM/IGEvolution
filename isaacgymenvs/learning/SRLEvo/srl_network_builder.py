@@ -336,5 +336,8 @@ class SRLBuilder(network_builder.A2CBuilder):
             return
 
     def build(self, name, **kwargs):
-        net = SRLBuilder.Network(self.params, **kwargs)
+        if name == 'srl':
+            net = SRLBuilder.Network(self.params, **kwargs)
+        if name == 'humanoid':
+            net = HumanoidBuilder.Network(self.params, **kwargs)
         return net
