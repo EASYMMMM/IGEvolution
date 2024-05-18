@@ -103,6 +103,12 @@ class SRLAgent(common_agent.CommonAgent):
         self.experience_buffer = ExperienceBuffer(env_info, algo_info, self.ppo_device)
         env_info['action_space'] = Box(-1,1,(8,1))
         self.experience_buffer_srl = ExperienceBuffer(env_info, algo_info, self.ppo_device)
+        self.experience_buffer.tensor_dict['next_obses'] = torch.zeros_like(self.experience_buffer.tensor_dict['obses'])
+        self.experience_buffer.tensor_dict['next_values'] = torch.zeros_like(self.experience_buffer.tensor_dict['values'])
+        self.experience_buffer_srl.tensor_dict['next_obses'] = torch.zeros_like(self.experience_buffer_srl.tensor_dict['obses'])
+        self.experience_buffer_srl.tensor_dict['next_values'] = torch.zeros_like(self.experience_buffer_srl.tensor_dict['values'])
+
+        
         return
     
     def set_eval(self):
