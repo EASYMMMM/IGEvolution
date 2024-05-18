@@ -97,7 +97,11 @@ class SRLAgent(common_agent.CommonAgent):
             'has_central_value' : self.has_central_value,
             'use_action_masks' : self.use_action_masks
         }
-        self.experience_buffer_srl = ExperienceBuffer(self.env_info, algo_info, self.ppo_device)
+        env_info = self.env_info
+        env_info['action_space'] = 28
+        self.experience_buffer = ExperienceBuffer(env_info, algo_info, self.ppo_device)
+        env_info['action_space'] = 8
+        self.experience_buffer_srl = ExperienceBuffer(env_info, algo_info, self.ppo_device)
         return
     
     def set_eval(self):
