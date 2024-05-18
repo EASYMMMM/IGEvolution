@@ -420,10 +420,14 @@ class SRLAgent(common_agent.CommonAgent):
             
             # 计算 actor 损失
             a_info = self._actor_loss(old_action_log_probs_batch, action_log_probs, advantage, curr_e_clip)
+            a_info['actor_loss_srl'] = a_info['actor_loss']
+            del a_info['actor_loss']
             a_loss = a_info['actor_loss_srl']
 
             # 计算 critic 损失
             c_info = self._critic_loss(value_preds_batch, values, curr_e_clip, return_batch, self.clip_value)
+            c_info['critic_loss_srl'] = c_info['critic_loss']
+            del c_info['critic_loss']
             c_loss = c_info['critic_loss_srl']
 
             # 计算边界损失
