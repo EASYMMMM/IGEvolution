@@ -481,13 +481,14 @@ class SRLAgent(common_agent.CommonAgent):
             if self.is_rnn:
                 kl_dist = (kl_dist * rnn_masks).sum() / rnn_masks.numel()  #/ sum_mask
                     
-        self.train_result = {
+        srl_train_result = {
             'entropy_srl': entropy,
             'kl_srl': kl_dist,
             'last_lr_srl': self.last_lr, 
             'lr_mul_srl': lr_mul, 
             'b_loss_srl': b_loss
         }
+        self.train_result.update(srl_train_result)
         self.train_result.update(a_info)
         self.train_result.update(c_info)
 

@@ -42,6 +42,7 @@ ImportError: libpython3.7m.so.1.0: cannot open shared object file: No such file 
 需要`sudo apt install libpython3.7`
 
 或者`export LD_LIBRARY_PATH=/home/ps/anaconda3/envs/rlgpu/lib`
+`export LD_LIBRARY_PATH=/home/ps/anaconda3/envs/Mrlgpu/lib`
 
 尝试一下就行 大概率后者设置路径有效
 
