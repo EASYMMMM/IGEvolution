@@ -471,7 +471,7 @@ class SRLAgent(common_agent.CommonAgent):
                 self.scaler_srl.step(self.optimizer_srl)
                 self.scaler_srl.update()    
         else:
-            self.scalescaler_srlr.step(self.optimizer_srl)
+            self.scaler_srl.step(self.optimizer_srl)
             self.scaler_srl.update()
         
         # 计算 KL 散度

@@ -198,3 +198,40 @@ python train.py task=HumanoidAMP ++task.env.motion_file=amp_humanoid_run.npy exp
 •2. 对现有的AI设计机器人方法进一步改进，与人形结合，进一步考虑实际意义
 
 •3. 离散+连续庞大空间的高效搜索
+
+
+
+
+(base) ps@ps:~$ ip addr show
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+    inet 127.0.0.1/8 scope host lo
+       valid_lft forever preferred_lft forever
+    inet6 ::1/128 scope host 
+       valid_lft forever preferred_lft forever
+2: enp4s0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc fq_codel state UP group default qlen 1000
+    link/ether 74:56:3c:77:09:19 brd ff:ff:ff:ff:ff:ff
+    inet 10.5.28.91/22 brd 10.5.31.255 scope global dynamic noprefixroute enp4s0
+       valid_lft 481480sec preferred_lft 481480sec
+    inet6 2400:dd01:1032:8:18a8:eb80:8210:e8a9/64 scope global temporary dynamic 
+       valid_lft 567821sec preferred_lft 49362sec
+    inet6 2400:dd01:1032:8::205/128 scope global dynamic noprefixroute 
+       valid_lft 225622sec preferred_lft 52822sec
+    inet6 2400:dd01:1032:8:9510:fca9:21ae:85e0/64 scope global temporary deprecated dynamic 
+       valid_lft 481482sec preferred_lft 0sec
+    inet6 2400:dd01:1032:8:50fc:bb27:e6e9:caac/64 scope global dynamic mngtmpaddr noprefixroute 
+       valid_lft 2591673sec preferred_lft 604473sec
+    inet6 fe80::c8b5:fba8:61a5:f1ca/64 scope link noprefixroute 
+       valid_lft forever preferred_lft forever
+3: tailscale0: <POINTOPOINT,MULTICAST,NOARP,UP,LOWER_UP> mtu 1280 qdisc fq_codel state UNKNOWN group default qlen 500
+    link/none 
+    inet 100.73.14.81/32 scope global tailscale0
+       valid_lft forever preferred_lft forever
+    inet6 fd7a:115c:a1e0::2ec9:e51/128 scope global 
+       valid_lft forever preferred_lft forever
+    inet6 fe80::ea2b:f783:d778:8c1c/64 scope link stable-privacy 
+       valid_lft forever preferred_lft forever
+4: docker0: <NO-CARRIER,BROADCAST,MULTICAST,UP> mtu 1500 qdisc noqueue state DOWN group default 
+    link/ether 02:42:e8:ea:a3:88 brd ff:ff:ff:ff:ff:ff
+    inet 172.17.0.1/16 brd 172.17.255.255 scope global docker0
+       valid_lft forever preferred_lft foreverv
