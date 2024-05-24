@@ -29,9 +29,10 @@
 import torch 
 
 from rl_games.algos_torch import torch_ext
+from rl_games.algos_torch.players import rescale_actions
 from rl_games.algos_torch.running_mean_std import RunningMeanStd
 from rl_games.common.player import BasePlayer
-
+from rl_games.common.tr_helpers import unsqueeze_obs
 import isaacgymenvs.learning.common_player as common_player
 
 
@@ -43,8 +44,10 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
         self._normalize_amp_input = config.get('normalize_amp_input', True)
         self._disc_reward_scale = config['disc_reward_scale']
         self._print_disc_prediction = config.get('print_disc_prediction', False)
-        
+        self.actions_num_humanoid = config.get('actions_num_humanoid')
         super().__init__(params)
+
+        
         return
 
     def restore(self, fn):
@@ -55,12 +58,53 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
         return
     
     def _build_net(self, config):
-        super()._build_net(config)
+        #super()._build_net(config)
+        self.model = self.network.build(config,role='humanoid')
+        self.model.to(self.device)
+        self.model_srl = self.network.build(config,role='srl')
+        self.model_srl.to(self.device)
+
+        self.model.eval()
+        self.model_srl.eval()
+        self.is_rnn = self.model.is_rnn()
 
         if self._normalize_amp_input:
             self._amp_input_mean_std = RunningMeanStd(config['amp_input_shape']).to(self.device)
             self._amp_input_mean_std.eval()
         return
+
+    def get_action(self, obs_dict, is_deterministic = False):
+        obs = obs_dict['obs']
+        if self.has_batch_dimension == False:
+            obs = unsqueeze_obs(obs)
+        obs = self._preproc_obs(obs)
+        input_dict = {
+            'is_train': False,
+            'prev_actions': None, 
+            'obs' : obs,
+            'rnn_states' : self.states
+        }
+        with torch.no_grad():
+            res_dict = self.model(input_dict)
+            res_dict_srl = self.model_srl(input_dict)
+        mu_humanoid = res_dict['mus']
+        action_humanoid = res_dict['actions']
+        mu_srl = res_dict_srl['mus']
+        action_srl = res_dict_srl['actions']
+        mu = torch.cat((mu_humanoid,mu_srl),1)
+        action = torch.cat((action_humanoid, action_srl),1)
+        self.states = res_dict['rnn_states']
+        if is_deterministic:
+            current_action = mu
+        else:
+            current_action = action
+        if self.has_batch_dimension == False:
+            current_action = torch.squeeze(current_action.detach())
+
+        if self.clip_actions:
+            return rescale_actions(self.actions_low, self.actions_high, torch.clamp(current_action, -1.0, 1.0))
+        else:
+            return current_action
 
     def _post_step(self, info):
         super()._post_step(info)
@@ -74,7 +118,9 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
             config['amp_input_shape'] = self.env.amp_observation_space.shape
         else:
             config['amp_input_shape'] = self.env_info['amp_observation_space']
-
+        config['actions_num_humanoid'] = self.actions_num_humanoid
+        self.actions_num_srl = - self.actions_num_humanoid + self.actions_num
+        config['actions_num_srl'] = self.actions_num_srl
         return config
 
     def _amp_debug(self, info):

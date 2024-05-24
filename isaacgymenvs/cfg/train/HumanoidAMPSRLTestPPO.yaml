@@ -65,7 +65,7 @@ params:
     score_to_win: 20000
     max_epochs: ${resolve_default:5000,${....max_iterations}}
     save_best_after: 100
-    save_frequency: 500
+    save_frequency: 1000
     print_stats: True
     grad_norm: 1.0
     entropy_coef: 0.0
@@ -92,3 +92,6 @@ params:
 
     task_reward_w: 0.0
     disc_reward_w: 1.0
+
+    actions_num_humanoid: 28
+    actions_num_srl: 8
