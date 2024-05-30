@@ -458,18 +458,11 @@ class SRLAgent(common_agent.CommonAgent):
         self.scaler_srl.scale(loss).backward()
         #TODO: Refactor this ugliest code of the year
         if self.truncate_grads:
-            if self.multi_gpu:
-                self.optimizer_srl.synchronize()
-                self.scaler_srl.unscale_(self.optimizer_srl)
-                nn.utils.clip_grad_norm_(self.model_srl.parameters(), self.grad_norm)
-                with self.optimizer_srl.skip_synchronize():
-                    self.scaler_srl.step(self.optimizer_srl)
-                    self.scaler_srl.update()
-            else:
-                self.scaler_srl.unscale_(self.optimizer_srl)
-                nn.utils.clip_grad_norm_(self.model_srl.parameters(), self.grad_norm)
-                self.scaler_srl.step(self.optimizer_srl)
-                self.scaler_srl.update()    
+            # multiGPU 相关代码已删除
+            self.scaler_srl.unscale_(self.optimizer_srl)
+            nn.utils.clip_grad_norm_(self.model_srl.parameters(), self.grad_norm)
+            self.scaler_srl.step(self.optimizer_srl)
+            self.scaler_srl.update()    
         else:
             self.scaler_srl.step(self.optimizer_srl)
             self.scaler_srl.update()
@@ -583,18 +576,11 @@ class SRLAgent(common_agent.CommonAgent):
         self.scaler.scale(loss).backward()
         #TODO: Refactor this ugliest code of the year
         if self.truncate_grads:
-            if self.multi_gpu:
-                self.optimizer.synchronize()
-                self.scaler.unscale_(self.optimizer)
-                nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_norm)
-                with self.optimizer.skip_synchronize():
-                    self.scaler.step(self.optimizer)
-                    self.scaler.update()
-            else:
-                self.scaler.unscale_(self.optimizer)
-                nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_norm)
-                self.scaler.step(self.optimizer)
-                self.scaler.update()    
+            # multiGPU相关代码已删除
+            self.scaler.unscale_(self.optimizer)
+            nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_norm)
+            self.scaler.step(self.optimizer)
+            self.scaler.update()    
         else:
             self.scaler.step(self.optimizer)
             self.scaler.update()
