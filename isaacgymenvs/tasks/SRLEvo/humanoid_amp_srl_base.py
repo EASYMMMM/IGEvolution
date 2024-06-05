@@ -298,8 +298,6 @@ class HumanoidAMPSRLBase(VecTask):
         return
 
     def _compute_reward(self, actions):
-        torque_cost = 0.01 * torch.sum(actions ** 2, dim=1)  # 惩罚力矩的平方和
-        print(torque_cost)
         self.rew_buf[:] = compute_humanoid_reward(self.obs_buf, self.dof_force_tensor, actions)
         return
 
@@ -548,7 +546,7 @@ def compute_humanoid_reward(obs_buf, dof_force_tensor, action):
     velocity_reward = obs_buf[:,7] # vx
 
     # 力矩使用惩罚（假设action代表施加的力矩）
-    torque_cost = 0.01 * torch.sum(action ** 2, dim=1)  # 惩罚力矩的平方和
+    torque_cost = 0.1 * torch.sum(action ** 2, dim=1)  # 惩罚力矩的平方和
 
     #r = 0*reward + velocity_reward - torque_cost
     r = 0*reward - torque_cost
