@@ -298,7 +298,9 @@ class HumanoidAMPSRLBase(VecTask):
         return
 
     def _compute_reward(self, actions):
-        self.rew_buf[:] = compute_humanoid_reward(self.obs_buf, self.dof_force_tensor)
+        torque_cost = 0.01 * torch.sum(actions ** 2, dim=1)  # 惩罚力矩的平方和
+        print(torque_cost)
+        self.rew_buf[:] = compute_humanoid_reward(self.obs_buf, self.dof_force_tensor, actions)
         return
 
     def _compute_reset(self):
@@ -530,12 +532,26 @@ def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, l
     obs = torch.cat((root_h, root_rot_obs, local_root_vel, local_root_ang_vel, dof_obs, dof_vel, flat_local_key_pos), dim=-1)
     return obs
 
+# @torch.jit.script
+# def compute_humanoid_reward(obs_buf, dof_force_tensor):
+#     # type: (Tensor, Tensor) -> Tensor
+#     reward = torch.ones_like(obs_buf[:, 0])
+#     velocity_reward = obs_buf[:,7] # vx
+#     r = 0*reward+velocity_reward
+#     return r
+
+# 计算任务奖励函数
 @torch.jit.script
-def compute_humanoid_reward(obs_buf, dof_force_tensor):
-    # type: (Tensor, Tensor) -> Tensor
+def compute_humanoid_reward(obs_buf, dof_force_tensor, action):
+    # type: (Tensor, Tensor, Tensor) -> Tensor
     reward = torch.ones_like(obs_buf[:, 0])
     velocity_reward = obs_buf[:,7] # vx
-    r = 0*reward+velocity_reward
+
+    # 力矩使用惩罚（假设action代表施加的力矩）
+    torque_cost = 0.01 * torch.sum(action ** 2, dim=1)  # 惩罚力矩的平方和
+
+    #r = 0*reward + velocity_reward - torque_cost
+    r = 0*reward - torque_cost
     return r
 
 @torch.jit.script
