@@ -545,8 +545,12 @@ def compute_humanoid_reward(obs_buf, dof_force_tensor, action):
     reward = torch.ones_like(obs_buf[:, 0])
     velocity_reward = obs_buf[:,7] # vx
 
+    torque_usage =  torch.sum(action[:,:28] ** 2, dim=1)
     # 力矩使用惩罚（假设action代表施加的力矩）
-    torque_cost = 0.1 * torch.sum(action[:,:28] ** 2, dim=1)  # 惩罚力矩的平方和
+    # torque_cost = 0.1 *  torque_usage # 惩罚力矩的平方和
+
+    # 指数衰减
+    torque_cost = torch.exp(-0.1 * torque_usage)  # 指数衰减，0.1为衰减系数
 
     #r = 0*reward + velocity_reward - torque_cost
     r = 0*reward - torque_cost
