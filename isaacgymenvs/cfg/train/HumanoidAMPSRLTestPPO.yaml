@@ -24,7 +24,7 @@ params:
         learn_sigma: False
 
     mlp:
-      units: [1024, 512]
+      units: [512, 256]
       activation: relu
       d2rl: False
 
@@ -59,7 +59,7 @@ params:
     normalize_advantage: True
     gamma: 0.99
     tau: 0.95
-    learning_rate: 5e-5
+    learning_rate: 3e-5
     lr_schedule: constant
     kl_threshold: 0.008
     score_to_win: 20000
