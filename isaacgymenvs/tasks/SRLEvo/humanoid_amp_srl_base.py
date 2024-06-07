@@ -550,10 +550,10 @@ def compute_humanoid_reward(obs_buf, dof_force_tensor, action):
     # torque_cost = 0.1 *  torque_usage # 惩罚力矩的平方和
 
     # v1.2.2指数衰减
-    torque_cost = torch.exp(-0.1 * torque_usage)  # 指数衰减，0.1为衰减系数
+    torque_reward = torch.exp(-0.1 * torque_usage)  # 指数衰减，0.1为衰减系数
 
     #r = 0*reward + velocity_reward - torque_cost
-    r = 0*reward + torque_cost
+    r = 0*reward + 1*velocity_reward + 0*torque_reward
     return r
 
 @torch.jit.script

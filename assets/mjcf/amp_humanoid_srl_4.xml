@@ -1,4 +1,4 @@
-<!-- 背后腿状SRL 较长 带角度(60) -->
+<!-- 背后腿状SRL 在3的基础上增长 带角度(45) -->
 <mujoco model="humanoid">
 
   <statistic extent="2" center="0 0 1"/>
@@ -145,26 +145,26 @@
 		<body name="SRL_root" pos="-.07 0 0.05" quat="0.0 0.0 0.0 1.0">
 			<geom   name="SRL_geom_root" pos="0 0 0" size="0.02 0.095 0.095" type="box"/>
 			<body name="SRL_leg2" pos="0.02 0.0475 0" quat="1.0 0.0 0.0 0.0">
-				<geom fromto="0 0 0 0.1 0 0"   name="SRL_geom_leg2" size="0.03" type="capsule"/>
+				<geom fromto="0 0 0 0.2 0 0"   name="SRL_geom_leg2" size="0.03" type="capsule"/>
 				<joint axis="0 0 1" name="SRL_joint_joint11" pos="0 0 0" range="-45 45" type="hinge"/>
 				<joint axis="0 1 0" name="SRL_joint_joint12" pos="0 0 0" range="-45 45" type="hinge"/>
-				<body name="SRL_shin11" pos="0.1 0 0" quat="0.86603 0.0 0.5 0.0">
-					<geom fromto="0 0 0 0.9 0 0"   name="SRL_geom_shin11" size="0.03" type="capsule"/>
+				<body name="SRL_shin11" pos="0.2 0 0" quat="0.92388 0.0 0.38268 0.0">
+					<geom fromto="0 0 0 1.1 0 0"   name="SRL_geom_shin11" size="0.03" type="capsule"/>
 					<joint axis="0 1 0" name="SRL_joint_joint13" pos="0 0 0" range="-45 45" type="hinge"/>
-					<body name="SRL_shin12" pos="0.9 0 0" quat="0.70711 0.0 -0.70711 0.0">
+					<body name="SRL_shin12" pos="1.1 0 0" quat="0.70711 0.0 -0.70711 0.0">
 						<geom fromto="0 0 0 0.18 0 0"   name="SRL_geom_shin12" size="0.03" type="capsule"/>
 						<joint axis="0 1 0" name="SRL_joint_joint14" pos="0 0 0" range="-45 45" type="hinge"/>
 					</body>
 				</body>
 			</body>
 			<body name="SRL_leg1" pos="0.02 -0.0475 0" quat="1.0 0.0 0.0 0.0">
-				<geom fromto="0 0 0 0.1 0 0"   name="SRL_geom_leg1" size="0.03" type="capsule"/>
+				<geom fromto="0 0 0 0.2 0 0"   name="SRL_geom_leg1" size="0.03" type="capsule"/>
 				<joint axis="0 0 1" name="SRL_joint_joint01" pos="0 0 0" range="-45 45" type="hinge"/>
 				<joint axis="0 1 0" name="SRL_joint_joint02" pos="0 0 0" range="-45 45" type="hinge"/>
-				<body name="SRL_shin1" pos="0.1 0 0" quat="0.86603 0.0 0.5 0.0">
-					<geom fromto="0 0 0 0.9 0 0"   name="SRL_geom_shin1" size="0.03" type="capsule"/>
+				<body name="SRL_shin1" pos="0.2 0 0" quat="0.92388 0.0 0.38268 0.0">
+					<geom fromto="0 0 0 1.1 0 0"   name="SRL_geom_shin1" size="0.03" type="capsule"/>
 					<joint axis="0 1 0" name="SRL_joint_joint1" pos="0 0 0" range="-45 45" type="hinge"/>
-					<body name="SRL_shin2" pos="0.9 0 0" quat="0.70711 0.0 -0.70711 0.0">
+					<body name="SRL_shin2" pos="1.1 0 0" quat="0.70711 0.0 -0.70711 0.0">
 						<geom fromto="0 0 0 0.18 0 0"   name="SRL_geom_shin2" size="0.03" type="capsule"/>
 						<joint axis="0 1 0" name="SRL_joint_joint2" pos="0 0 0" range="-45 45" type="hinge"/>
 					</body>
