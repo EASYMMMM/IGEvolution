@@ -189,6 +189,8 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                         # 当第一个环境完成两个episode时，绘制动作曲线
                         if episode_count_env0 == 1:
                             self.plot_actions(actions_env0)
+                        if episode_count_env0 == 5:
+                            self.action0_ave(actions_env0)
 
                     if self.is_rnn:
                         for s in self.states:
@@ -221,7 +223,8 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
 
         return
 
-    def calculate_statistics(self, actions_env0):
+    def action0_ave(self, actions_env0):
+        # 计算输出动作的均值和方差
         # 转换成Numpy数组以方便计算
         actions_env0 = np.array(actions_env0)  # shape: (5, num_steps, num_joints)
 
