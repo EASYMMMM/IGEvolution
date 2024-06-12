@@ -221,20 +221,44 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
 
         return
 
-    def plot_actions(self, actions_env0):
+    def plot_actions(self, actions_env0, ):
+        joint_names = self.env.get_joint_names()
+        humanoid_draw_list = ['right_hip_x', 'right_hip_y', 'right_hip_z',
+                     'right_knee', 'right_ankle_x', 'right_ankle_y', 'right_ankle_z', 
+                     'left_hip_x', 'left_hip_y', 'left_hip_z', 
+                     'left_knee', 'left_ankle_x', 'left_ankle_y', 'left_ankle_z',] 
         # 获取关节名称，假设它们可以通过某个函数获得
-        joint_names = self.env.dof_names
         
-        plt.figure(figsize=(12, 8))
+        # 创建一个字典，键是关节名称，值是关节的索引
+        joint_indices = {name: i for i, name in enumerate(joint_names)}
+        
+        # 确定需要绘制的关节的索引
+        indices_to_draw = [joint_indices[name] for name in humanoid_draw_list if name in joint_indices]
+
+        plt.figure(num=1,figsize=(12, 8))
         for episode_index, actions in enumerate(actions_env0):
-            for joint_index in range(actions[0].shape[0]):
-                plt.subplot(len(actions_env0), 1, episode_index + 1)
+            plt.subplot(len(actions_env0), 1, episode_index + 1)
+            for joint_index in indices_to_draw:
                 plt.plot([action[joint_index] for action in actions], label=f'{joint_names[joint_index]}')
                 plt.title(f'Episode {episode_index + 1} Actions')
                 plt.xlabel('Time Step')
                 plt.ylabel('Action Value')
                 plt.legend()
-        
+        plt.tight_layout()
+        plt.show()
+
+        srl_draw_list = [name for name in joint_names if 'SRL' in name]
+        # 确定需要绘制的关节的索引
+        indices_to_draw = [joint_indices[name] for name in srl_draw_list if name in joint_indices]
+        plt.figure(num=2,figsize=(12, 8))
+        for episode_index, actions in enumerate(actions_env0):
+            plt.subplot(len(actions_env0), 1, episode_index + 1)
+            for joint_index in indices_to_draw:
+                plt.plot([action[joint_index] for action in actions], label=f'{joint_names[joint_index]}')
+                plt.title(f'Episode {episode_index + 1} Actions')
+                plt.xlabel('Time Step')
+                plt.ylabel('Action Value')
+                plt.legend()
         plt.tight_layout()
         plt.show()
 
