@@ -35,6 +35,8 @@ from rl_games.common.player import BasePlayer
 from rl_games.common.tr_helpers import unsqueeze_obs
 import isaacgymenvs.learning.common_player as common_player
 
+import matplotlib.pyplot as plt
+
 
 class SRLPlayerContinuous(common_player.CommonPlayer):
 
@@ -105,6 +107,135 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
             return rescale_actions(self.actions_low, self.actions_high, torch.clamp(current_action, -1.0, 1.0))
         else:
             return current_action
+        
+    def run(self):
+        n_games = self.games_num
+        render = self.render_env
+        n_game_life = self.n_game_life
+        is_determenistic = self.is_deterministic
+        sum_rewards = 0
+        sum_steps = 0
+        sum_game_res = 0
+        n_games = n_games * n_game_life
+        games_played = 0
+        has_masks = False
+        has_masks_func = getattr(self.env, "has_action_mask", None) is not None
+
+        op_agent = getattr(self.env, "create_agent", None)
+        if op_agent:
+            agent_inited = True
+
+        if has_masks_func:
+            has_masks = self.env.has_action_mask()
+
+        # 存储第一个环境的动作数据
+        actions_env0 = []
+        episode_count_env0 = 0
+
+        need_init_rnn = self.is_rnn
+        for _ in range(n_games):
+            if games_played >= n_games:
+                break
+
+            obs_dict = self.env_reset(self.env)
+            batch_size = 1
+            batch_size = self.get_batch_size(obs_dict['obs'], batch_size)
+
+            if need_init_rnn:
+                self.init_rnn()
+                need_init_rnn = False
+
+            cr = torch.zeros(batch_size, dtype=torch.float32)
+            steps = torch.zeros(batch_size, dtype=torch.float32)
+
+            print_game_res = False
+
+            episode_actions = []
+
+            for n in range(self.max_steps):
+                obs_dict, done_env_ids = self._env_reset_done()
+
+                if has_masks:
+                    masks = self.env.get_action_mask()
+                    action = self.get_masked_action(obs_dict, masks, is_determenistic)
+                else:
+                    action = self.get_action(obs_dict, is_determenistic)
+                obs_dict, r, done, info =  self.env_step(self.env, action)
+                cr += r
+                steps += 1
+  
+                self._post_step(info)
+                
+                # 只记录第一个环境的动作
+                episode_actions.append(action[0].cpu().numpy())  # 假设动作输出是Tensor
+                
+                if render:
+                    self.env.render(mode = 'human')
+                    time.sleep(self.render_sleep)
+
+                all_done_indices = done.nonzero(as_tuple=False)
+                done_indices = all_done_indices[::self.num_agents]
+                done_count = len(done_indices)
+                games_played += done_count
+
+                if done_count > 0:
+                    if 0 in done_env_ids:
+                        done = True
+                        actions_env0.append(episode_actions)
+                        episode_count_env0 += 1
+                        games_played += 1
+
+                        # 当第一个环境完成两个episode时，绘制动作曲线
+                        if episode_count_env0 == 2:
+                            self.plot_actions(actions_env0)
+
+                    if self.is_rnn:
+                        for s in self.states:
+                            s[:,all_done_indices,:] = s[:,all_done_indices,:] * 0.0
+
+                    cur_rewards = cr[done_indices].sum().item()
+                    cur_steps = steps[done_indices].sum().item()
+
+                    cr = cr * (1.0 - done.float())
+                    steps = steps * (1.0 - done.float())
+                    sum_rewards += cur_rewards
+                    sum_steps += cur_steps
+
+                    game_res = 0.0
+                    if self.print_stats:
+                        if print_game_res:
+                            print('reward:', cur_rewards/done_count, 'steps:', cur_steps/done_count, 'w:', game_res)
+                        else:
+                            print('reward:', cur_rewards/done_count, 'steps:', cur_steps/done_count)
+
+                    sum_game_res += game_res
+                    if batch_size//self.num_agents == 1 or games_played >= n_games:
+                        break
+
+        print(sum_rewards)
+        if print_game_res:
+            print('av reward:', sum_rewards / games_played * n_game_life, 'av steps:', sum_steps / games_played * n_game_life, 'winrate:', sum_game_res / games_played * n_game_life)
+        else:
+            print('av reward:', sum_rewards / games_played * n_game_life, 'av steps:', sum_steps / games_played * n_game_life)
+
+        return
+
+    def plot_actions(self, actions_env0):
+        # 获取关节名称，假设它们可以通过某个函数获得
+        joint_names = self.env.dof_names
+        
+        plt.figure(figsize=(12, 8))
+        for episode_index, actions in enumerate(actions_env0):
+            for joint_index in range(actions[0].shape[0]):
+                plt.subplot(len(actions_env0), 1, episode_index + 1)
+                plt.plot([action[joint_index] for action in actions], label=f'{joint_names[joint_index]}')
+                plt.title(f'Episode {episode_index + 1} Actions')
+                plt.xlabel('Time Step')
+                plt.ylabel('Action Value')
+                plt.legend()
+        
+        plt.tight_layout()
+        plt.show()
 
     def _post_step(self, info):
         super()._post_step(info)

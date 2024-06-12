@@ -188,6 +188,9 @@ class HumanoidAMPSRLBase(VecTask):
         asset_options.default_dof_drive_mode = gymapi.DOF_MODE_NONE
         humanoid_asset = self.gym.load_asset(self.sim, asset_root, asset_file, asset_options)
 
+        # Add actuator list
+        self._dof_names = self.gym.get_asset_dof_names(humanoid_asset)
+
         actuator_props = self.gym.get_asset_actuator_properties(humanoid_asset)
         motor_efforts = [prop.motor_effort for prop in actuator_props]
         

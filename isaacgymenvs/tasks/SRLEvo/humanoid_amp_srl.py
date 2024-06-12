@@ -74,6 +74,10 @@ class HumanoidAMPSRLTest(HumanoidAMPSRLBase):
         return self.num_amp_obs
 
     @property
+    def dof_names(self):
+        return self._dof_names
+
+    @property
     def amp_observation_space(self):
         return self._amp_obs_space
 
