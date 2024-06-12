@@ -34,7 +34,7 @@ from rl_games.algos_torch.running_mean_std import RunningMeanStd
 from rl_games.common.player import BasePlayer
 from rl_games.common.tr_helpers import unsqueeze_obs
 import isaacgymenvs.learning.common_player as common_player
-
+import numpy as np
 import matplotlib.pyplot as plt
 
 
@@ -181,7 +181,7 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
 
                 if done_count > 0:
                     if 0 in done_indices:
-                        print('ENV 0 END')
+                        print('Env-0 end ')
                         actions_env0.append(episode_actions)
                         episode_count_env0 += 1
                         games_played += 1
@@ -221,6 +221,20 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
 
         return
 
+    def calculate_statistics(self, actions_env0):
+        # 转换成Numpy数组以方便计算
+        actions_env0 = np.array(actions_env0)  # shape: (5, num_steps, num_joints)
+
+        # 计算平均值和方差
+        mean_actions = np.mean(actions_env0, axis=(0, 1))  # 平均值
+        var_actions = np.var(actions_env0, axis=(0, 1))  # 方差
+
+        joint_names = self.env.dof_names
+
+        # 输出结果
+        for index, (mean, var) in enumerate(zip(mean_actions, var_actions)):
+            print(f"Joint {joint_names[index]}: Mean = {mean:.5f}, Variance = {var:.5f}")
+            
     def plot_actions(self, actions_env0, ):
         joint_names = self.env.dof_names
         draw_list = [ ['right_hip_x', 'right_hip_y', 'right_hip_z',
