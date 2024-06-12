@@ -133,6 +133,7 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
         episode_count_env0 = 0
 
         need_init_rnn = self.is_rnn
+        print('Start Playing')
         for _ in range(n_games):
             if games_played >= n_games:
                 break
@@ -179,8 +180,8 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                 games_played += done_count
 
                 if done_count > 0:
-                    if 0 in done_env_ids:
-                        done = True
+                    if 0 in done_indices:
+                        print('ENV 0 END')
                         actions_env0.append(episode_actions)
                         episode_count_env0 += 1
                         games_played += 1
