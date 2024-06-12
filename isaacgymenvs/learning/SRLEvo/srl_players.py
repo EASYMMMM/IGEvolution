@@ -222,7 +222,7 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
         return
 
     def plot_actions(self, actions_env0, ):
-        joint_names = self.env.get_joint_names()
+        joint_names = self.env.dof_names
         humanoid_draw_list = ['right_hip_x', 'right_hip_y', 'right_hip_z',
                      'right_knee', 'right_ankle_x', 'right_ankle_y', 'right_ankle_z', 
                      'left_hip_x', 'left_hip_y', 'left_hip_z', 
