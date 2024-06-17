@@ -189,7 +189,7 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                         # 当第一个环境完成两个episode时，绘制动作曲线
                         if episode_count_env0 == 1:
                             self.plot_actions(actions_env0)
-                        if episode_count_env0 == 5:
+                        if episode_count_env0 == 3:
                             self.action0_ave(actions_env0)
 
                     if self.is_rnn:
@@ -259,7 +259,8 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
             for episode_index, actions in enumerate(actions_env0):
                 plt.subplot(len(actions_env0), 1, episode_index + 1)
                 for joint_index in indices_to_draw:
-                    action_ave = actions[joint_index].sum().item() / len(actions[joint_index])
+                    t = actions[joint_index]
+                    action_ave = t.sum().item() / len(actions[joint_index])
                     plt.plot([action[joint_index] for action in actions], label=f'{joint_names[joint_index]} ave={action_ave:.5f}')
                     plt.title(f'Episode {episode_index + 1} Actions')
                     plt.xlabel('Time Step')
@@ -269,19 +270,6 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
             plt.show()
 
         
-        # # 确定需要绘制的关节的索引
-        # indices_to_draw = [joint_indices[name] for name in srl_draw_list if name in joint_indices]
-        # plt.figure(num=2,figsize=(12, 8))
-        # for episode_index, actions in enumerate(actions_env0):
-        #     plt.subplot(len(actions_env0), 1, episode_index + 1)
-        #     for joint_index in indices_to_draw:
-        #         plt.plot([action[joint_index] for action in actions], label=f'{joint_names[joint_index]}')
-        #         plt.title(f'Episode {episode_index + 1} Actions')
-        #         plt.xlabel('Time Step')
-        #         plt.ylabel('Action Value')
-        #         plt.legend()
-        # plt.tight_layout()
-        # plt.show()
 
     def _post_step(self, info):
         super()._post_step(info)
