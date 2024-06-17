@@ -21,4 +21,4 @@ rewards = compute_reward(actions)
 print(actions[1,:15])
 print(rewards.shape)  # 验证最终得到的尺寸是否是（16）
 
-python SRL_Evo_train.py task=HumanoidAMPSRLTest experiment=SRL_walk_v1.2.3 task.env.asset.assetFileName='mjcf/amp_humanoid_srl_4.xml' headless=True  wandb_activate=True  train.params.config.task_reward_w=1; python SRL_Evo_train.py task=HumanoidAMPSRLTest experiment=SRL_walk_v1.2.3 task.env.asset.assetFileName='mjcf/amp_humanoid_srl_4.xml' headless=True  wandb_activate=True  train.params.config.task_reward_w=0.1; python SRL_Evo_train.py task=HumanoidAMPSRLTest experiment=SRL_walk_v1.2.3 task.env.asset.assetFileName='mjcf/amp_humanoid_srl_4.xml' headless=True  wandb_activate=True  train.params.config.task_reward_w=0;
+python SRL_Evo_train.py task=HumanoidAMPSRLTest experiment=test task.env.asset.assetFileName='mjcf/amp_humanoid_srl_4.xml' headless=True    train.params.config.learning_rate=3e-5  train.params.config.task_reward_w=1
