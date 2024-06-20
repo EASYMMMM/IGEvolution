@@ -196,15 +196,16 @@ class SRLAgent(common_agent.CommonAgent):
             # srl reward
             rewards_srl = infos["srl_rewards"]
 
-            shaped_rewards = self.rewards_shaper(rewards)
             # humanoid buffer
+            shaped_rewards = self.rewards_shaper(rewards)  # DefaultRewardsShaper
             self.experience_buffer.update_data('rewards', n, shaped_rewards)
             self.experience_buffer.update_data('next_obses', n, self.obs['obs'])
             self.experience_buffer.update_data('dones', n, self.dones)
             self.experience_buffer.update_data('amp_obs', n, infos['amp_obs'])
             
             # srl buffer
-            self.experience_buffer_srl.update_data('rewards', n, rewards_srl)
+            shaped_rewards_srl = self.rewards_shaper(rewards_srl)
+            self.experience_buffer_srl.update_data('rewards', n, shaped_rewards_srl)
             self.experience_buffer_srl.update_data('next_obses', n, self.obs['obs'])
             self.experience_buffer_srl.update_data('dones', n, self.dones)
 
