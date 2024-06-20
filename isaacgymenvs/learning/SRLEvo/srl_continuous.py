@@ -78,6 +78,9 @@ class SRLAgent(common_agent.CommonAgent):
         self.algo_observer.after_init(self)
         self.scaler_srl = torch.cuda.amp.GradScaler(enabled=self.mixed_precision)
 
+        self.game_rewards_srl = torch_ext.AverageMeter(self.value_size, self.games_to_track).to(self.ppo_device)
+        self.game_rewards_amp = torch_ext.AverageMeter(self.value_size, self.games_to_track).to(self.ppo_device)
+
         # 观测值标准化
         if self.normalize_value:
             # self.value_mean_std = self.central_value_net.model.value_mean_std if self.has_central_value else self.model.value_mean_std
@@ -102,6 +105,10 @@ class SRLAgent(common_agent.CommonAgent):
         env_info['action_space'] = Box(-1,1,(28,1))
         self.experience_buffer = ExperienceBuffer(env_info, algo_info, self.ppo_device)
         env_info['action_space'] = Box(-1,1,(8,1))
+        
+        self.current_rewards_srl = torch.zeros_like(self.current_rewards,dtype=torch.float32, device=self.ppo_device)
+        self.current_rewards_amp = torch.zeros_like(self.current_rewards,dtype=torch.float32, device=self.ppo_device)
+
         self.experience_buffer_srl = ExperienceBuffer(env_info, algo_info, self.ppo_device)
         self.experience_buffer.tensor_dict['next_obses'] = torch.zeros_like(self.experience_buffer.tensor_dict['obses'])
         self.experience_buffer.tensor_dict['next_values'] = torch.zeros_like(self.experience_buffer.tensor_dict['values'])
@@ -180,45 +187,72 @@ class SRLAgent(common_agent.CommonAgent):
             # if self.has_central_value:
             #     self.experience_buffer.update_data('states', n, self.obs['states'])
             
-            # 执行动作并获取环境反馈
+            # action拼接
             conbined_action = torch.cat((res_dict['actions'], res_dict_srl['actions']), dim=-1)
+            
             #self.obs, rewards, self.dones, infos = self.env_step(res_dict['actions'])
             self.obs, rewards, self.dones, infos = self.env_step(conbined_action)
+            
+            # srl reward
+            rewards_srl = infos["srl_rewards"]
 
             shaped_rewards = self.rewards_shaper(rewards)
+            # humanoid buffer
             self.experience_buffer.update_data('rewards', n, shaped_rewards)
             self.experience_buffer.update_data('next_obses', n, self.obs['obs'])
             self.experience_buffer.update_data('dones', n, self.dones)
             self.experience_buffer.update_data('amp_obs', n, infos['amp_obs'])
-            self.experience_buffer_srl.update_data('rewards', n, shaped_rewards)
+            
+            # srl buffer
+            self.experience_buffer_srl.update_data('rewards', n, rewards_srl)
             self.experience_buffer_srl.update_data('next_obses', n, self.obs['obs'])
             self.experience_buffer_srl.update_data('dones', n, self.dones)
 
 
             terminated = infos['terminate'].float()
             terminated = terminated.unsqueeze(-1)
-            next_vals = self._eval_critic(self.obs)  # 评估下一个状态的价值
+            
+            # humanoid value of next state
+            next_vals = self._eval_critic(self.obs)  
             next_vals *= (1.0 - terminated)
             self.experience_buffer.update_data('next_values', n, next_vals)
-            self.experience_buffer_srl.update_data('next_values', n, next_vals)
-
+            
+            # srl value of next state
+            next_vals_srl = self._eval_critic_srl(self.obs)  
+            next_vals_srl *= (1.0 - terminated)
+            self.experience_buffer_srl.update_data('next_values', n, next_vals_srl)
+            
             self.current_rewards += rewards
-            self.current_lengths += 1
+            self.current_rewards_srl += rewards_srl
+
+            # calculate AMP reward 
+            _amp_rewards = self._calc_amp_rewards(infos['amp_obs']) 
+            self.current_rewards_amp += _amp_rewards
+
             all_done_indices = self.dones.nonzero(as_tuple=False)
             done_indices = all_done_indices[::self.num_agents]
   
             self.game_rewards.update(self.current_rewards[done_indices])
+            self.game_rewards_srl.update(self.current_rewards_srl[done_indices])
+            self.game_rewards_amp.update(self.current_rewards_amp[done_indices])
+
+            self.current_lengths += 1
             self.game_lengths.update(self.current_lengths[done_indices])
             self.algo_observer.process_infos(infos, done_indices)
 
             not_dones = 1.0 - self.dones.float()
 
+            # if env is done, reset current_reward 
             self.current_rewards = self.current_rewards * not_dones.unsqueeze(1)
+            self.current_rewards_srl = self.current_rewards_srl * not_dones.unsqueeze(1)
+            self.current_rewards_amp = self.current_rewards_amp * not_dones.unsqueeze(1)
+            
             self.current_lengths = self.current_lengths * not_dones
         
             if (self.vec_env.env.viewer and (n == (self.horizon_length - 1))):
                 self._amp_debug(infos)
 
+        # calculate Humanoid minibatch returns
         mb_fdones = self.experience_buffer.tensor_dict['dones'].float()  # 获取完成标志
         mb_values = self.experience_buffer.tensor_dict['values'] # 获取价值
         mb_next_values = self.experience_buffer.tensor_dict['next_values'] # 获取下一个价值
@@ -231,17 +265,28 @@ class SRLAgent(common_agent.CommonAgent):
         mb_advs = self.discount_values(mb_fdones, mb_values, mb_rewards, mb_next_values) # 折扣价值
         mb_returns = mb_advs + mb_values # 价值 = 当前价值+未来折扣价值
 
-        # srl_update_list = ['srl_actions', 'srl_neglogpacs', 'srl_values', 'srl_mus', 'srl_sigmas']
-        # self.tensor_list = update_list + srl_update_list + ['obses', 'states', 'dones']
+        # calculate SRL minibatch returns
+        mb_fdones_srl = self.experience_buffer_srl.tensor_dict['dones'].float()  # 获取完成标志
+        mb_values_srl = self.experience_buffer_srl.tensor_dict['values'] # 获取价值
+        mb_next_values_srl = self.experience_buffer_srl.tensor_dict['next_values'] # 获取下一个价值
 
+        mb_rewards_srl = self.experience_buffer_srl.tensor_dict['rewards'] # 获取奖励
+        mb_rewards_srl = self._combine_rewards(mb_rewards_srl, amp_rewards) # 合并奖励
+
+        mb_advs_srl = self.discount_values(mb_fdones_srl, mb_values_srl, mb_rewards_srl, mb_next_values_srl) # 折扣价值
+        mb_returns_srl = mb_advs_srl + mb_values_srl # 价值 = 当前价值+未来折扣价值
+
+        # humanoid batch
         batch_dict = self.experience_buffer.get_transformed_list(a2c_common.swap_and_flatten01, self.tensor_list) # 获取转换后的批次字典
         batch_dict['returns'] = a2c_common.swap_and_flatten01(mb_returns) # 设置返回值
         batch_dict['played_frames'] = self.batch_size
 
+        # srl batch
         batch_dict_srl = self.experience_buffer_srl.get_transformed_list(a2c_common.swap_and_flatten01, self.tensor_list) # 获取转换后的批次字典
-        batch_dict_srl['returns'] = a2c_common.swap_and_flatten01(mb_returns) # 设置返回值
+        batch_dict_srl['returns'] = a2c_common.swap_and_flatten01(mb_returns_srl) # 设置返回值
         batch_dict_srl['played_frames'] = self.batch_size
 
+        # humanoid AMP batch
         for k, v in amp_rewards.items():
             batch_dict[k] = a2c_common.swap_and_flatten01(v)
 
@@ -769,11 +814,17 @@ class SRLAgent(common_agent.CommonAgent):
                     mean_rewards = self.game_rewards.get_mean()
                     mean_lengths = self.game_lengths.get_mean()
 
+                    mean_rewards_srl = self.game_rewards_srl.get_mean()
+                    mean_rewards_amp = self.game_rewards_amp.get_mean()
+
                     for i in range(self.value_size):
-                        self.writer.add_scalar('rewards/frame'.format(i), mean_rewards[i], frame)
+                        self.writer.add_scalar('rewards/Humanoid_frame'.format(i), mean_rewards[i], frame)
                         self.writer.add_scalar('rewards/iter'.format(i), mean_rewards[i], epoch_num)
                         self.writer.add_scalar('rewards/time'.format(i), mean_rewards[i], total_time)
-
+                        # srl
+                        self.writer.add_scalar('rewards/SRL_frame'.format(i), mean_rewards_srl[i], frame)
+                        # amp
+                        self.writer.add_scalar('rewards/AMP_frame'.format(i), mean_rewards_amp[i], frame)
                     self.writer.add_scalar('episode_lengths/frame', mean_lengths, frame)
                     self.writer.add_scalar('episode_lengths/iter', mean_lengths, epoch_num)
 
@@ -929,3 +980,16 @@ class SRLAgent(common_agent.CommonAgent):
             disc_reward = disc_reward.cpu().numpy()[0, 0]
             print("disc_pred: ", disc_pred, disc_reward)
         return
+    
+    def _eval_critic_srl(self, obs_dict):
+        self.model_srl.eval()
+        obs = obs_dict['obs']
+
+        processed_obs = self._preproc_obs(obs)
+        if self.normalize_input:
+            processed_obs = self.model_srl.norm_obs(processed_obs)
+        value = self.model_srl.a2c_network.eval_critic(processed_obs)
+
+        if self.normalize_value:
+            value = self.value_mean_std(value, True)
+        return value
