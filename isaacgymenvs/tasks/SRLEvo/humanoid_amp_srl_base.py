@@ -394,7 +394,7 @@ class HumanoidAMPSRLBase(VecTask):
         self.extras["terminate"] = self._terminate_buf
 
         # SRL reward
-        self.extras["srl_rewards"] = self.srl_rew_buf
+        self.extras["srl_rewards"] = self.srl_rew_buf.to(self.rl_device)
 
         # debug viz
         if self.viewer and self.debug_viz:
