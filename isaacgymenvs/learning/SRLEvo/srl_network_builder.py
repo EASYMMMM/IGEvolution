@@ -330,7 +330,14 @@ class SRLBuilder(network_builder.A2CBuilder):
                 sigma = self.sigma_act(self.sigma(a_out))
 
             return mu, sigma, value, states
-    
+
+        def eval_critic(self, obs):
+            #c_out = self.critic_cnn(obs)
+            #c_out = c_out.contiguous().view(c_out.size(0), -1)
+            c_out = self.critic_mlp(obs)              
+            value = self.value_act(self.value(c_out))
+            return value
+                
         def load(self, params):
             super().load(params)
             return
