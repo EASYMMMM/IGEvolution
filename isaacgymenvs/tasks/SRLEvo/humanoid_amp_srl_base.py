@@ -544,7 +544,7 @@ def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, l
 
 # 计算任务奖励函数
 @torch.jit.script
-def compute_humanoid_reward(obs_buf):
+def compute_humanoid_reward(obs_buf, dof_force_tensor, action):
     # type: (Tensor) -> Tensor
     reward = torch.ones_like(obs_buf[:, 0])
 
