@@ -545,7 +545,7 @@ def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, l
 # 计算任务奖励函数
 @torch.jit.script
 def compute_humanoid_reward(obs_buf, dof_force_tensor, action):
-    # type: (Tensor) -> Tensor
+    # type: (Tensor, Tensor, Tensor) -> Tensor
     reward = torch.ones_like(obs_buf[:, 0])
 
     # 14-28 包括髋关节+膝关节+踝关节
@@ -553,7 +553,7 @@ def compute_humanoid_reward(obs_buf, dof_force_tensor, action):
     # v1.2.2指数衰减
     torque_reward = torch.exp(-0.1 * torque_usage)  # 指数衰减，0.1为衰减系数
 
-    return torque_rewards
+    return torque_reward
 
 # 计算外肢体奖励函数
 @torch.jit.script
