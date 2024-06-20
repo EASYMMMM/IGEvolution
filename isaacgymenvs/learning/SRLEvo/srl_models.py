@@ -80,7 +80,7 @@ class ModelSRLContinuous(ModelA2CContinuousLogStd):
             input_dict['obs'] = self.norm_obs(input_dict['obs']) # 标准化观测输入
             
             mu, logstd, value, states = self.a2c_network(input_dict)
-            sigma = torch.exp(logstd) # 计算sigma
+            sigma = torch.exp(logstd).clamp(min=1e-6) # 计算sigma
             distr = torch.distributions.Normal(mu, sigma, validate_args=False) # 创建正态分布
                   
             if is_train:

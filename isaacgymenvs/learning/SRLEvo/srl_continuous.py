@@ -229,7 +229,7 @@ class SRLAgent(common_agent.CommonAgent):
 
             # calculate AMP reward 
             _amp_rewards = self._calc_amp_rewards(infos['amp_obs']) 
-            self.current_rewards_amp += _amp_rewards
+            self.current_rewards_amp += _amp_rewards['disc_rewards']
 
             all_done_indices = self.dones.nonzero(as_tuple=False)
             done_indices = all_done_indices[::self.num_agents]
