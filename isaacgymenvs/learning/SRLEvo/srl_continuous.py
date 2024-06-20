@@ -195,6 +195,7 @@ class SRLAgent(common_agent.CommonAgent):
             
             # srl reward
             rewards_srl = infos["srl_rewards"]
+            rewards_srl = rewards_srl.unsqueeze(1)
 
             # humanoid buffer
             shaped_rewards = self.rewards_shaper(rewards)  # DefaultRewardsShaper
