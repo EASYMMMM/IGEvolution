@@ -95,3 +95,4 @@ params:
 
     actions_num_humanoid: 28
     actions_num_srl: 8
+    train_srl_only: False

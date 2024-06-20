@@ -1,4 +1,6 @@
-
+'''
+将SRL和Humanoid的模型（观测+奖励）分开训练，构建多智能体系统。
+'''
 from rl_games.algos_torch.running_mean_std import RunningMeanStd
 from rl_games.algos_torch import torch_ext
 from rl_games.common import a2c_common
@@ -193,9 +195,9 @@ class SRLAgent(common_agent.CommonAgent):
             #self.obs, rewards, self.dones, infos = self.env_step(res_dict['actions'])
             self.obs, rewards, self.dones, infos = self.env_step(conbined_action)
             
-            # # srl reward
-            # rewards_srl = infos["srl_rewards"]
-            # rewards_srl = rewards_srl.unsqueeze(1)
+            # srl reward
+            rewards_srl = infos["srl_rewards"]
+            rewards_srl = rewards_srl.unsqueeze(1)
 
             # humanoid buffer
             shaped_rewards = self.rewards_shaper(rewards)  # DefaultRewardsShaper
@@ -205,8 +207,8 @@ class SRLAgent(common_agent.CommonAgent):
             self.experience_buffer.update_data('amp_obs', n, infos['amp_obs'])
             
             # srl buffer
-            # shaped_rewards_srl = self.rewards_shaper(rewards_srl)
-            self.experience_buffer_srl.update_data('rewards', n, shaped_rewards)
+            shaped_rewards_srl = self.rewards_shaper(rewards_srl)
+            self.experience_buffer_srl.update_data('rewards', n, shaped_rewards_srl)
             self.experience_buffer_srl.update_data('next_obses', n, self.obs['obs'])
             self.experience_buffer_srl.update_data('dones', n, self.dones)
 
@@ -220,13 +222,12 @@ class SRLAgent(common_agent.CommonAgent):
             self.experience_buffer.update_data('next_values', n, next_vals)
             
             # srl value of next state
-            # next_vals_srl = self._eval_critic_srl(self.obs)  
-            # next_vals_srl *= (1.0 - terminated)
-            # self.experience_buffer_srl.update_data('next_values', n, next_vals_srl)
-            self.experience_buffer_srl.update_data('next_values', n, next_vals)
+            next_vals_srl = self._eval_critic_srl(self.obs)  
+            next_vals_srl *= (1.0 - terminated)
+            self.experience_buffer_srl.update_data('next_values', n, next_vals_srl)
             
             self.current_rewards += rewards
-            # self.current_rewards_srl += rewards_srl
+            self.current_rewards_srl += rewards_srl
 
             # calculate AMP reward 
             _amp_rewards = self._calc_amp_rewards(infos['amp_obs']) 
@@ -236,7 +237,7 @@ class SRLAgent(common_agent.CommonAgent):
             done_indices = all_done_indices[::self.num_agents]
   
             self.game_rewards.update(self.current_rewards[done_indices])
-            # self.game_rewards_srl.update(self.current_rewards_srl[done_indices])
+            self.game_rewards_srl.update(self.current_rewards_srl[done_indices])
             self.game_rewards_amp.update(self.current_rewards_amp[done_indices])
 
             self.current_lengths += 1
@@ -247,7 +248,7 @@ class SRLAgent(common_agent.CommonAgent):
 
             # if env is done, reset current_reward 
             self.current_rewards = self.current_rewards * not_dones.unsqueeze(1)
-            # self.current_rewards_srl = self.current_rewards_srl * not_dones.unsqueeze(1)
+            self.current_rewards_srl = self.current_rewards_srl * not_dones.unsqueeze(1)
             self.current_rewards_amp = self.current_rewards_amp * not_dones.unsqueeze(1)
             
             self.current_lengths = self.current_lengths * not_dones
@@ -269,15 +270,15 @@ class SRLAgent(common_agent.CommonAgent):
         mb_returns = mb_advs + mb_values # 价值 = 当前价值+未来折扣价值
 
         # calculate SRL minibatch returns
-        # mb_fdones_srl = self.experience_buffer_srl.tensor_dict['dones'].float()  # 获取完成标志
-        # mb_values_srl = self.experience_buffer_srl.tensor_dict['values'] # 获取价值
-        # mb_next_values_srl = self.experience_buffer_srl.tensor_dict['next_values'] # 获取下一个价值
+        mb_fdones_srl = self.experience_buffer_srl.tensor_dict['dones'].float()  # 获取完成标志
+        mb_values_srl = self.experience_buffer_srl.tensor_dict['values'] # 获取价值
+        mb_next_values_srl = self.experience_buffer_srl.tensor_dict['next_values'] # 获取下一个价值
 
-        # mb_rewards_srl = self.experience_buffer_srl.tensor_dict['rewards'] # 获取奖励
-        # mb_rewards_srl = self._combine_rewards(mb_rewards_srl, amp_rewards) # 合并奖励
+        mb_rewards_srl = self.experience_buffer_srl.tensor_dict['rewards'] # 获取奖励
+        mb_rewards_srl = self._combine_rewards(mb_rewards_srl, amp_rewards) # 合并奖励
 
-        # mb_advs_srl = self.discount_values(mb_fdones_srl, mb_values_srl, mb_rewards_srl, mb_next_values_srl) # 折扣价值
-        # mb_returns_srl = mb_advs_srl + mb_values_srl # 价值 = 当前价值+未来折扣价值
+        mb_advs_srl = self.discount_values(mb_fdones_srl, mb_values_srl, mb_rewards_srl, mb_next_values_srl) # 折扣价值
+        mb_returns_srl = mb_advs_srl + mb_values_srl # 价值 = 当前价值+未来折扣价值
 
         # humanoid batch
         batch_dict = self.experience_buffer.get_transformed_list(a2c_common.swap_and_flatten01, self.tensor_list) # 获取转换后的批次字典
@@ -286,7 +287,7 @@ class SRLAgent(common_agent.CommonAgent):
 
         # srl batch
         batch_dict_srl = self.experience_buffer_srl.get_transformed_list(a2c_common.swap_and_flatten01, self.tensor_list) # 获取转换后的批次字典
-        batch_dict_srl['returns'] = a2c_common.swap_and_flatten01(mb_returns) # 设置返回值
+        batch_dict_srl['returns'] = a2c_common.swap_and_flatten01(mb_returns_srl) # 设置返回值
         batch_dict_srl['played_frames'] = self.batch_size
 
         # humanoid AMP batch
@@ -426,8 +427,7 @@ class SRLAgent(common_agent.CommonAgent):
         return train_info
 
     def train_actor_critic(self, input_dict, input_dict_srl):
-        if not self._train_srl_only:
-            self.calc_gradients(input_dict)
+        self.calc_gradients(input_dict)
         self.calc_gradients_srl(input_dict_srl)
         
         return self.train_result
@@ -714,8 +714,6 @@ class SRLAgent(common_agent.CommonAgent):
         self._disc_weight_decay = config['disc_weight_decay']
         self._disc_reward_scale = config['disc_reward_scale']
         self._normalize_amp_input = config.get('normalize_amp_input', True)
-
-        self._train_srl_only = config['train_srl_only']
         return
 
     def _build_net_config(self):
