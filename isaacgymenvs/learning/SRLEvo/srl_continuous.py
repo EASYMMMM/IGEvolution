@@ -401,7 +401,10 @@ class SRLAgent(common_agent.CommonAgent):
                     for k, v in curr_train_info.items():
                         train_info[k].append(v)
             
-            av_kls = torch_ext.mean_list(train_info['kl'])
+            if 'kl' in train_info:
+                av_kls = torch_ext.mean_list(train_info['kl'])
+            elif 'kl_srl' in train_info:
+                av_kls = torch_ext.mean_list(train_info['kl_srl'])
 
             if self.schedule_type == 'standard':
                 self.last_lr, self.entropy_coef = self.scheduler.update(self.last_lr, self.entropy_coef, self.epoch_num, 0, av_kls.item())
@@ -426,8 +429,7 @@ class SRLAgent(common_agent.CommonAgent):
         return train_info
 
     def train_actor_critic(self, input_dict, input_dict_srl):
-        if not self._train_srl_only:
-            self.calc_gradients(input_dict)
+        self.calc_gradients(input_dict)
         self.calc_gradients_srl(input_dict_srl)
         
         return self.train_result
@@ -622,17 +624,18 @@ class SRLAgent(common_agent.CommonAgent):
         # self.scaler.step(self.optimizer)    # 2. 调用优化器的 step 方法，更新模型参数，并处理梯度的取消缩放
         # self.scaler.update()                # 3. 更新缩放因子，根据训练情况调整缩放因子以适应下一次迭代
 
-        self.scaler.scale(loss).backward()
-        #TODO: Refactor this ugliest code of the year
-        if self.truncate_grads:
-            # multiGPU相关代码已删除
-            self.scaler.unscale_(self.optimizer)
-            nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_norm)
-            self.scaler.step(self.optimizer)
-            self.scaler.update()    
-        else:
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
+        if not self._train_srl_only:
+            self.scaler.scale(loss).backward()
+            #TODO: Refactor this ugliest code of the year
+            if self.truncate_grads:
+                # multiGPU相关代码已删除
+                self.scaler.unscale_(self.optimizer)
+                nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_norm)
+                self.scaler.step(self.optimizer)
+                self.scaler.update()    
+            else:
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
         
         # 计算 KL 散度
         with torch.no_grad():
