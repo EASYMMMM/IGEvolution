@@ -1,24 +1,35 @@
 import torch
 
-# 创建一个16*20的action张量
-actions = torch.randn(16, 20)  # 随机生成16个环境中的20个动作向量
+# 定义 compute_srl_reward 函数
+def compute_srl_reward(obs_buf, dof_force_tensor, action):
+    reward = torch.ones_like(obs_buf[:, 0])
+    # 14-28 包括髋关节+膝关节+踝关节
+    torque_usage = torch.sum(action[:, 14:28] ** 2, dim=1)
+    print('torque usage:')
+    print(torque_usage)
+    # v1.2.1力矩使用惩罚（假设action代表施加的力矩）
+    torque_reward = -0.1 * torque_usage  # 惩罚力矩的平方和
+    print('torque_reward:')
+    print(torque_reward)
+    # v1.2.2指数衰减
+    torque_reward_decay = torch.exp(-0.1 * torque_usage)  # 指数衰减，0.1为衰减系数
+    # r = 0*reward + velocity_reward - torque_cost
+    print('torque_reward_decay:')
+    print(torque_reward_decay)
+    r = torque_reward
+    return r
 
-def compute_reward(actions):
-    # 计算每个环境动作的2范数的平方
-    torque_penalty = torch.sum(actions[:,:15] ** 2, dim=1)  # 对动作维度求和
+# 随机初始化张量
+batch_size = 1
+action_dim = 40
+obs_buf = torch.rand((batch_size, 50))  # 假设 obs_buf 的第二维度是 50
+dof_force_tensor = torch.rand((batch_size, 40))  # 假设 dof_force_tensor 的维度是 (400, 40)
+action = torch.rand((batch_size, action_dim))
 
-    # 这里假设还有其他奖励逻辑，暂时以示例形式表示
-    performance_reward = torch.randn(16)  # 随机生成一些性能奖励，仅作为示例
+# 计算奖励
+reward = compute_srl_reward(obs_buf, dof_force_tensor, action)
 
-    # 融合奖励和惩罚
-    # 注意：这里的-0.001是惩罚系数，可能需要根据实际情况调整
-    total_reward = performance_reward - 0.001 * torque_penalty
-    print(total_reward)
-    return total_reward
-
-# 计算并获取奖励
-rewards = compute_reward(actions)
-print(actions[1,:15])
-print(rewards.shape)  # 验证最终得到的尺寸是否是（16）
-
-python SRL_Evo_train.py task=HumanoidAMPSRLTest experiment=test task.env.asset.assetFileName='mjcf/amp_humanoid_srl_4.xml' headless=True    train.params.config.learning_rate=3e-5  train.params.config.task_reward_w=1
+# 打印结果
+print("Action:",action)
+print("Reward shape:", reward.shape)
+print("Reward:", reward)

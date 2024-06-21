@@ -78,8 +78,9 @@ class SRLAgent(common_agent.CommonAgent):
         self.algo_observer.after_init(self)
         self.scaler_srl = torch.cuda.amp.GradScaler(enabled=self.mixed_precision)
 
-        self.game_rewards_srl = torch_ext.AverageMeter(self.value_size, self.games_to_track).to(self.ppo_device)
-        self.game_rewards_amp = torch_ext.AverageMeter(self.value_size, self.games_to_track).to(self.ppo_device)
+        self.game_rewards_srl  = torch_ext.AverageMeter(self.value_size, self.games_to_track).to(self.ppo_device)
+        self.game_rewards_amp  = torch_ext.AverageMeter(self.value_size, self.games_to_track).to(self.ppo_device)
+        self.game_rewards_task = torch_ext.AverageMeter(self.value_size, self.games_to_track).to(self.ppo_device)
 
         # 观测值标准化
         if self.normalize_value:
@@ -108,6 +109,7 @@ class SRLAgent(common_agent.CommonAgent):
         
         self.current_rewards_srl = torch.zeros_like(self.current_rewards,dtype=torch.float32, device=self.ppo_device)
         self.current_rewards_amp = torch.zeros_like(self.current_rewards,dtype=torch.float32, device=self.ppo_device)
+        self.current_rewards_task = torch.zeros_like(self.current_rewards,dtype=torch.float32, device=self.ppo_device)
 
         self.experience_buffer_srl = ExperienceBuffer(env_info, algo_info, self.ppo_device)
         self.experience_buffer.tensor_dict['next_obses'] = torch.zeros_like(self.experience_buffer.tensor_dict['obses'])
@@ -197,14 +199,14 @@ class SRLAgent(common_agent.CommonAgent):
             # rewards_srl = infos["srl_rewards"]
             # rewards_srl = rewards_srl.unsqueeze(1)
 
-            # humanoid buffer
+            ''' humanoid buffer '''
             shaped_rewards = self.rewards_shaper(rewards)  # DefaultRewardsShaper
             self.experience_buffer.update_data('rewards', n, shaped_rewards)
             self.experience_buffer.update_data('next_obses', n, self.obs['obs'])
             self.experience_buffer.update_data('dones', n, self.dones)
             self.experience_buffer.update_data('amp_obs', n, infos['amp_obs'])
             
-            # srl buffer
+            ''' srl buffer '''
             # shaped_rewards_srl = self.rewards_shaper(rewards_srl)
             self.experience_buffer_srl.update_data('rewards', n, shaped_rewards)
             self.experience_buffer_srl.update_data('next_obses', n, self.obs['obs'])
@@ -214,23 +216,27 @@ class SRLAgent(common_agent.CommonAgent):
             terminated = infos['terminate'].float()
             terminated = terminated.unsqueeze(-1)
             
-            # humanoid value of next state
+            ''' humanoid value of next state '''
             next_vals = self._eval_critic(self.obs)  
             next_vals *= (1.0 - terminated)
             self.experience_buffer.update_data('next_values', n, next_vals)
             
-            # srl value of next state
+            ''' Srl value of next state '''
             # next_vals_srl = self._eval_critic_srl(self.obs)  
             # next_vals_srl *= (1.0 - terminated)
             # self.experience_buffer_srl.update_data('next_values', n, next_vals_srl)
             self.experience_buffer_srl.update_data('next_values', n, next_vals)
             
-            self.current_rewards += rewards
             # self.current_rewards_srl += rewards_srl
 
             # calculate AMP reward 
             _amp_rewards = self._calc_amp_rewards(infos['amp_obs']) 
-            self.current_rewards_amp += _amp_rewards['disc_rewards']
+            # calculate total reward
+            _total_rewards = self._combine_rewards(rewards,_amp_rewards)
+            # store reward
+            self.current_rewards_task += rewards
+            self.current_rewards      += _total_rewards
+            self.current_rewards_amp  += _amp_rewards['disc_rewards']
 
             all_done_indices = self.dones.nonzero(as_tuple=False)
             done_indices = all_done_indices[::self.num_agents]
@@ -238,6 +244,7 @@ class SRLAgent(common_agent.CommonAgent):
             self.game_rewards.update(self.current_rewards[done_indices])
             # self.game_rewards_srl.update(self.current_rewards_srl[done_indices])
             self.game_rewards_amp.update(self.current_rewards_amp[done_indices])
+            self.game_rewards_task.update(self.current_rewards_task[done_indices])
 
             self.current_lengths += 1
             self.game_lengths.update(self.current_lengths[done_indices])
@@ -245,11 +252,11 @@ class SRLAgent(common_agent.CommonAgent):
 
             not_dones = 1.0 - self.dones.float()
 
-            # if env is done, reset current_reward 
+            ''' If env is done, reset current_reward '''
             self.current_rewards = self.current_rewards * not_dones.unsqueeze(1)
             # self.current_rewards_srl = self.current_rewards_srl * not_dones.unsqueeze(1)
             self.current_rewards_amp = self.current_rewards_amp * not_dones.unsqueeze(1)
-            
+            self.current_rewards_task = self.current_rewards_task * not_dones.unsqueeze(1)
             self.current_lengths = self.current_lengths * not_dones
         
             if (self.vec_env.env.viewer and (n == (self.horizon_length - 1))):
@@ -823,17 +830,18 @@ class SRLAgent(common_agent.CommonAgent):
                     mean_rewards = self.game_rewards.get_mean()
                     mean_lengths = self.game_lengths.get_mean()
 
-                    mean_rewards_srl = self.game_rewards_srl.get_mean()
+                    # mean_rewards_srl = self.game_rewards_srl.get_mean()
                     mean_rewards_amp = self.game_rewards_amp.get_mean()
+                    mean_rewards_task = self.game_rewards_task.get_mean()
 
                     for i in range(self.value_size):
-                        self.writer.add_scalar('rewards/Humanoid_frame'.format(i), mean_rewards[i], frame)
-                        self.writer.add_scalar('rewards/iter'.format(i), mean_rewards[i], epoch_num)
-                        self.writer.add_scalar('rewards/time'.format(i), mean_rewards[i], total_time)
-                        # srl
-                        # self.writer.add_scalar('rewards/SRL_frame'.format(i), mean_rewards_srl[i], frame)
+                        self.writer.add_scalar('rewards/total_frame'.format(i), mean_rewards[i], frame)
+                        self.writer.add_scalar('rewards/total_iter'.format(i), mean_rewards[i], epoch_num)
+                        self.writer.add_scalar('rewards/total_time'.format(i), mean_rewards[i], total_time)
+                        # task
+                        self.writer.add_scalar('rewards/task'.format(i), mean_rewards_task[i], frame)
                         # amp
-                        self.writer.add_scalar('rewards/AMP_frame'.format(i), mean_rewards_amp[i], frame)
+                        self.writer.add_scalar('rewards/AMP'.format(i), mean_rewards_amp[i], frame)
                     self.writer.add_scalar('episode_lengths/frame', mean_lengths, frame)
                     self.writer.add_scalar('episode_lengths/iter', mean_lengths, epoch_num)
 
