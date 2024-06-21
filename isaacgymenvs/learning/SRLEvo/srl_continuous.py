@@ -831,7 +831,7 @@ class SRLAgent(common_agent.CommonAgent):
                         self.writer.add_scalar('rewards/iter'.format(i), mean_rewards[i], epoch_num)
                         self.writer.add_scalar('rewards/time'.format(i), mean_rewards[i], total_time)
                         # srl
-                        self.writer.add_scalar('rewards/SRL_frame'.format(i), mean_rewards_srl[i], frame)
+                        # self.writer.add_scalar('rewards/SRL_frame'.format(i), mean_rewards_srl[i], frame)
                         # amp
                         self.writer.add_scalar('rewards/AMP_frame'.format(i), mean_rewards_amp[i], frame)
                     self.writer.add_scalar('episode_lengths/frame', mean_lengths, frame)
@@ -851,6 +851,12 @@ class SRLAgent(common_agent.CommonAgent):
 
                 update_time = 0
         return
+
+    def save(self, fn):
+        state = self.get_full_state_weights()
+        state['model_srl'] = self.model_srl.state_dict()
+        state['optimizer_srl'] = self.optimizer_srl.state_dict()
+        torch_ext.save_checkpoint(fn, state)
 
     def _disc_loss_neg(self, disc_logits):
         bce = torch.nn.BCEWithLogitsLoss()
