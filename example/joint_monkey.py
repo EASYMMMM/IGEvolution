@@ -17,7 +17,7 @@ Joint Monkey
 import math
 import numpy as np
 from isaacgym import gymapi, gymutil
-
+from isaacgym import gymtorch
 
 def clamp(x, min_value, max_value):
     return max(min(x, max_value), min_value)
@@ -206,6 +206,12 @@ ANIM_FINISHED = 4
 anim_state = ANIM_SEEK_LOWER
 current_dof = 0
 print("Animating DOF %d ('%s')" % (current_dof, dof_names[current_dof]))
+
+dof_state_tensor = gym.acquire_dof_state_tensor(sim)
+_dof_state = gymtorch.wrap_tensor(dof_state_tensor)
+_dof_pos = _dof_state.view(num_envs, num_dofs, 2)[..., 0]
+_dof_vel = _dof_state.view(num_envs, num_dofs, 2)[..., 1]
+
 
 while not gym.query_viewer_has_closed(viewer):
 

@@ -117,9 +117,21 @@ class SRLAgent(common_agent.CommonAgent):
         self.experience_buffer_srl.tensor_dict['next_obses'] = torch.zeros_like(self.experience_buffer_srl.tensor_dict['obses'])
         self.experience_buffer_srl.tensor_dict['next_values'] = torch.zeros_like(self.experience_buffer_srl.tensor_dict['values'])
 
-        self._build_amp_buffers() # 构建 AMP 缓冲区        
+        self._build_amp_buffers() # 构建 AMP 缓冲区  
+
+        if self._train_srl_only:
+            self._load_humanoid_network()    
+        
         return
     
+    def _load_humanoid_network(self):
+        if self._humanoid_checkpoint == None:
+            raise ValueError
+        fn = self._humanoid_checkpoint
+        checkpoint = torch_ext.load_checkpoint(fn)
+        self.set_weights(checkpoint)
+        return
+
     def set_eval(self):
         super().set_eval()
         if self._normalize_amp_input:
@@ -726,6 +738,7 @@ class SRLAgent(common_agent.CommonAgent):
         self._normalize_amp_input = config.get('normalize_amp_input', True)
 
         self._train_srl_only = config['train_srl_only']
+        self._humanoid_checkpoint = config['humanoid_checkpoint']
         return
 
     def _build_net_config(self):

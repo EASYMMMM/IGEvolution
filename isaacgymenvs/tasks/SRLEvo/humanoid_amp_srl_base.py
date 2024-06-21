@@ -512,17 +512,17 @@ def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, l
     root_vel = root_states[:, 7:10]
     root_ang_vel = root_states[:, 10:13]
 
-    root_h = root_pos[:, 2:3]
+    root_h = root_pos[:, 2:3] # root高度
     heading_rot = calc_heading_quat_inv(root_rot)
 
     if (local_root_obs):
         root_rot_obs = quat_mul(heading_rot, root_rot)
     else:
         root_rot_obs = root_rot
-    root_rot_obs = quat_to_tan_norm(root_rot_obs)
+    root_rot_obs = quat_to_tan_norm(root_rot_obs) # root朝向
 
-    local_root_vel = my_quat_rotate(heading_rot, root_vel)
-    local_root_ang_vel = my_quat_rotate(heading_rot, root_ang_vel)
+    local_root_vel = my_quat_rotate(heading_rot, root_vel) # 局部root速度
+    local_root_ang_vel = my_quat_rotate(heading_rot, root_ang_vel) # 局部根部角速度
 
     root_pos_expand = root_pos.unsqueeze(-2)
     local_key_body_pos = key_body_pos - root_pos_expand
