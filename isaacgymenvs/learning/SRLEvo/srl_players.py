@@ -54,8 +54,9 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
 
     def restore(self, fn):
         super().restore(fn)
+        checkpoint = torch_ext.load_checkpoint(fn)
+        self.model_srl.load_state_dict(checkpoint['model_srl'])
         if self._normalize_amp_input:
-            checkpoint = torch_ext.load_checkpoint(fn)
             self._amp_input_mean_std.load_state_dict(checkpoint['amp_input_mean_std'])
         return
     
