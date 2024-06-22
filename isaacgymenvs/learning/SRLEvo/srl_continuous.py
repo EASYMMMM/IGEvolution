@@ -119,7 +119,7 @@ class SRLAgent(common_agent.CommonAgent):
 
         self._build_amp_buffers() # 构建 AMP 缓冲区  
 
-        if self._train_srl_only:
+        if not self._humanoid_checkpoint == 'None':
             self._load_humanoid_network()    
         
         return
