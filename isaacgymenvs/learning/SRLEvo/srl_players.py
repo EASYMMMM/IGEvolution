@@ -153,6 +153,7 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
             print_game_res = False
 
             episode_actions = []
+            episode_velocity = []
 
             for n in range(self.max_steps):
                 obs_dict, done_env_ids = self._env_reset_done()
@@ -170,7 +171,8 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                 
                 # 只记录第一个环境的动作
                 episode_actions.append(action[0].cpu().numpy())  # 假设动作输出是Tensor
-                
+                episode_velocity.append(info["x_velocity"][0].cpu().numpy()) # 
+
                 if render:
                     self.env.render(mode = 'human')
                     time.sleep(self.render_sleep)
@@ -181,8 +183,10 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                 games_played += done_count
 
                 if done_count > 0:
-                    if 0 in done_indices:
+                    if 0 in done_indices: # 第一个环境结束
                         print('Env-0 end ')
+                        print('Env-0 average velocity (x):',np.mean(episode_velocity))
+                        episode_velocity = []
                         actions_env0.append(episode_actions)
                         episode_count_env0 += 1
                         games_played += 1

@@ -396,6 +396,7 @@ class HumanoidAMPSRLBase(VecTask):
         # SRL reward
         self.extras["srl_rewards"] = self.srl_rew_buf.to(self.rl_device)
 
+        self.extras["x_velocity"] = self.obs_buf[:,7]
         # debug viz
         if self.viewer and self.debug_viz:
             self._update_debug_viz()
@@ -535,8 +536,9 @@ def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, l
     local_end_pos = my_quat_rotate(flat_heading_rot, flat_end_pos)
     flat_local_key_pos = local_end_pos.view(local_key_body_pos.shape[0], local_key_body_pos.shape[1] * local_key_body_pos.shape[2])
 
-    dof_obs = dof_to_obs(dof_pos)
+    dof_obs = dof_to_obs(dof_pos) # dof_pos 36
 
+    # root_h 1; root_rot_obs 6; local_root_vel 3 ; local_root_ang_vel 3 ; dof_obs 52; dof_vel 36 ; flat_local_key_pos 12
     obs = torch.cat((root_h, root_rot_obs, local_root_vel, local_root_ang_vel, dof_obs, dof_vel, flat_local_key_pos), dim=-1)
     return obs
 
@@ -547,7 +549,7 @@ def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, l
 def compute_humanoid_reward(obs_buf, dof_force_tensor, action):
     # type: (Tensor, Tensor, Tensor) -> Tensor
     reward = torch.ones_like(obs_buf[:, 0])
-
+    velocity_reward = obs_buf[:,7]  # vx
     # 14-28 包括髋关节+膝关节+踝关节
     torque_usage =  torch.sum(action[:,14:28] ** 2, dim=1)
     # v1.2.1力矩使用惩罚（假设action代表施加的力矩）
