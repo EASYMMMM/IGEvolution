@@ -551,7 +551,7 @@ def compute_humanoid_reward(obs_buf, dof_force_tensor, action):
     # reward = torch.ones_like(obs_buf[:, 0])
     velocity  = obs_buf[:,7]  # vx
     target_velocity = 1.4
-    velocity_penalty = torch.where(velocity < target_velocity, (target_velocity - velocity)**2, torch.zeros_like(velocity))
+    velocity_penalty = - torch.where(velocity < target_velocity, (target_velocity - velocity)**2, torch.zeros_like(velocity))
 
     # 14-28 包括髋关节+膝关节+踝关节
     torque_usage =  torch.sum(action[:,14:28] ** 2, dim=1)
@@ -560,7 +560,7 @@ def compute_humanoid_reward(obs_buf, dof_force_tensor, action):
     # v1.2.2指数衰减
     # torque_reward = torch.exp(-0.1 * torque_usage)  # 指数衰减，0.1为衰减系数
     # reward = -velocity_penalty + torque_reward
-    reward = -velocity_penalty 
+    reward = 5*velocity_penalty + 10 * torque_reward
 
     return reward
 
