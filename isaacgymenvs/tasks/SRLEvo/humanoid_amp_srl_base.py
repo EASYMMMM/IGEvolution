@@ -123,6 +123,10 @@ class HumanoidAMPSRLBase(VecTask):
         
         self.srl_rew_buf = torch.zeros(
             self.num_envs, device=self.device, dtype=torch.float)
+        self.rew_joint_cost_buf = torch.zeros(
+            self.num_envs, device=self.device, dtype=torch.float)
+        self.rew_v_pen_buf = torch.zeros(
+            self.num_envs, device=self.device, dtype=torch.float)
         
         if self.viewer != None:
             self._init_camera()
@@ -304,7 +308,7 @@ class HumanoidAMPSRLBase(VecTask):
         return
 
     def _compute_reward(self, actions):
-        self.rew_buf[:] = compute_humanoid_reward(self.obs_buf, self.dof_force_tensor, actions)
+        self.rew_buf[:], self.rew_v_pen_buf[:], self.rew_joint_cost_buf[:] = compute_humanoid_reward(self.obs_buf, self.dof_force_tensor, actions)
         self.srl_rew_buf[:] = compute_srl_reward(self.obs_buf, self.dof_force_tensor, actions)
         return
 
@@ -395,7 +399,8 @@ class HumanoidAMPSRLBase(VecTask):
 
         # SRL reward
         self.extras["srl_rewards"] = self.srl_rew_buf.to(self.rl_device)
-
+        self.extras["v_penalty"] = self.rew_v_pen_buf.to(self.rl_device)
+        self.extras["joint_cost"] = self.rew_joint_cost_buf.to(self.rl_device)
         self.extras["x_velocity"] = self.obs_buf[:,7]
         # debug viz
         if self.viewer and self.debug_viz:
@@ -547,7 +552,7 @@ def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, l
 # 计算任务奖励函数
 @torch.jit.script
 def compute_humanoid_reward(obs_buf, dof_force_tensor, action):
-    # type: (Tensor, Tensor, Tensor) -> Tensor
+    # type: (Tensor, Tensor, Tensor) -> (Tensor, Tensor, Tensor)
     # reward = torch.ones_like(obs_buf[:, 0])
     velocity  = obs_buf[:,7]  # vx
     target_velocity = 1.4
@@ -560,9 +565,9 @@ def compute_humanoid_reward(obs_buf, dof_force_tensor, action):
     # v1.2.2指数衰减
     # torque_reward = torch.exp(-0.1 * torque_usage)  # 指数衰减，0.1为衰减系数
     # reward = -velocity_penalty + torque_reward
-    reward = velocity_penalty + 2 * torque_reward
+    reward = velocity_penalty + 2*torque_reward
 
-    return reward
+    return reward, velocity_penalty, 2*torque_reward
 
 # 计算外肢体奖励函数
 @torch.jit.script

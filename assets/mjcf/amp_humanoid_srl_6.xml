@@ -208,14 +208,14 @@
     <motor name='left_ankle_x'    gear='50' joint='left_ankle_x'/>
     <motor name='left_ankle_y'    gear='50' joint='left_ankle_y'/>
     <motor name='left_ankle_z'    gear='50' joint='left_ankle_z'/>
-    <motor name='SRL_joint_joint11' gear='200' joint="SRL_joint_joint11"/>
-    <motor name='SRL_joint_joint12' gear='200' joint="SRL_joint_joint12"/>
-    <motor name='SRL_joint_joint13' gear='200' joint="SRL_joint_joint13"/>
-    <motor name='SRL_joint_joint14' gear='200' joint="SRL_joint_joint14"/>
-    <motor name='SRL_joint_joint01' gear='200' joint="SRL_joint_joint01"/>
-    <motor name='SRL_joint_joint02' gear='200' joint="SRL_joint_joint02"/>
-    <motor name='SRL_joint_joint1'  gear='200' joint="SRL_joint_joint1"/>
-    <motor name='SRL_joint_joint2'  gear='200' joint="SRL_joint_joint2"/>
+    <motor name='SRL_joint_joint11' gear='125' joint="SRL_joint_joint11"/>
+    <motor name='SRL_joint_joint12' gear='125' joint="SRL_joint_joint12"/>
+    <motor name='SRL_joint_joint13' gear='125' joint="SRL_joint_joint13"/>
+    <motor name='SRL_joint_joint14' gear='125' joint="SRL_joint_joint14"/>
+    <motor name='SRL_joint_joint01' gear='125' joint="SRL_joint_joint01"/>
+    <motor name='SRL_joint_joint02' gear='125' joint="SRL_joint_joint02"/>
+    <motor name='SRL_joint_joint1'  gear='125' joint="SRL_joint_joint1"/>
+    <motor name='SRL_joint_joint2'  gear='125' joint="SRL_joint_joint2"/>
 
   </actuator>
 
