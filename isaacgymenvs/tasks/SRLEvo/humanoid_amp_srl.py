@@ -341,7 +341,7 @@ def build_amp_observations(root_states, dof_pos, dof_vel, key_body_pos, local_ro
     local_end_pos = my_quat_rotate(flat_heading_rot, flat_end_pos)
     flat_local_key_pos = local_end_pos.view(local_key_body_pos.shape[0], local_key_body_pos.shape[1] * local_key_body_pos.shape[2])
     
-    dof_obs = dof_to_obs(dof_pos)
+    dof_obs = dof_to_obs_amp(dof_pos)
 
     '''
     print(f'root_h size{root_h.shape}')

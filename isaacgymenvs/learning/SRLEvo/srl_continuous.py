@@ -257,8 +257,8 @@ class SRLAgent(common_agent.CommonAgent):
             self.current_rewards_task += rewards
             self.current_rewards      += _total_rewards
             self.current_rewards_amp  += _amp_rewards['disc_rewards']
-            self.current_rewards_t_c  += _torque_cost       # 分量 
-            self.current_rewards_v_p  += _velocity_penalty  # 分量
+            self.current_rewards_t_c  += _torque_cost.unsqueeze(1)       # 分量 
+            self.current_rewards_v_p  += _velocity_penalty.unsqueeze(1)  # 分量
 
             all_done_indices = self.dones.nonzero(as_tuple=False)
             done_indices = all_done_indices[::self.num_agents]

@@ -33,3 +33,5 @@ reward = compute_srl_reward(obs_buf, dof_force_tensor, action)
 print("Action:",action)
 print("Reward shape:", reward.shape)
 print("Reward:", reward)
+
+ python SRL_Evo_train.py task=HumanoidAMPSRLTest experiment=SRL_walk_v1.5.1 task.env.asset.assetFileName='mjcf/amp_humanoid_srl_6.xml' headless=True wandb_activate=True train.params.config.task_reward_w=0 max_iterations=2000 train.params.config.humanoid_checkpoint=runs/SRL_walk_v1.5.0_26-15-37-12/nn/SRL_walk_v1.5.0_26-15-37-19.pth
