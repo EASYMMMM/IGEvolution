@@ -40,7 +40,7 @@ from ..base.vec_task import VecTask
 
 DOF_BODY_IDS = [1, 2, 3, 4, 6, 7, 9, 10, 11, 12, 13, 14]
 DOF_OFFSETS = [0, 3, 6, 9, 10, 13, 14, 17, 18, 21, 24, 25, 28]
-NUM_OBS = 13 + 52 + 28 + 12 + 8 #TODO： 单纯humanoid为103 SRL暂设为8 [root_h, root_rot, root_vel, root_ang_vel, dof_pos, dof_vel, key_body_pos]
+NUM_OBS = 13 + 60 + 28 + 12 + 8 #TODO： 单纯humanoid为103 SRL暂设为8 [root_h, root_rot, root_vel, root_ang_vel, dof_pos, dof_vel, key_body_pos]
 NUM_ACTIONS = 28 + 8   # Actions humanoid (Dof=28) + SRL
 
 
@@ -477,14 +477,19 @@ class HumanoidAMPSRLBase(VecTask):
 #####################################################################
 ###=========================jit functions=========================###
 #####################################################################
-
+    
 @torch.jit.script
 def dof_to_obs(pose):
     # type: (Tensor) -> Tensor
     #dof_obs_size = 64
     #dof_offsets = [0, 3, 6, 9, 12, 13, 16, 19, 20, 23, 24, 27, 30, 31, 34]
     dof_obs_size = 52
-    dof_offsets = [0, 3, 6, 9, 10, 13, 14, 17, 18, 21, 24, 25, 28]
+    dof_offsets = [0, 3, 6, 9, 10, 13, 14, 17, 18, 21, 24, 25, 28] # humanoid 
+    
+    for i in range(dof_offsets[-1], pose.shape[-1]):  # 补齐
+        dof_offsets.append(i+1)
+        dof_obs_size += 1
+
     num_joints = len(dof_offsets) - 1
 
     dof_obs_shape = pose.shape[:-1] + (dof_obs_size,)
@@ -509,6 +514,8 @@ def dof_to_obs(pose):
         dof_obs_offset += dof_obs_size
 
     return dof_obs
+
+
 
 @torch.jit.script
 def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, local_root_obs):
@@ -543,10 +550,9 @@ def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, l
 
     dof_obs = dof_to_obs(dof_pos) # dof_pos 36
 
-    # root_h 1; root_rot_obs 6; local_root_vel 3 ; local_root_ang_vel 3 ; dof_obs 52; dof_vel 36 ; flat_local_key_pos 12
+    # root_h 1; root_rot_obs 6; local_root_vel 3 ; local_root_ang_vel 3 ; dof_obs 60; dof_vel 36 ; flat_local_key_pos 12
     obs = torch.cat((root_h, root_rot_obs, local_root_vel, local_root_ang_vel, dof_obs, dof_vel, flat_local_key_pos), dim=-1)
     return obs
-
 
 
 # 计算任务奖励函数
