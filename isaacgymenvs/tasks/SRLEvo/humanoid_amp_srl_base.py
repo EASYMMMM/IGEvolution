@@ -273,14 +273,18 @@ class HumanoidAMPSRLBase(VecTask):
         return
 
     def _build_pd_action_offset_scale(self):
-        num_joints = len(DOF_OFFSETS) - 1
+        Dof_offsets = DOF_OFFSETS
+        for i in range(DOF_OFFSETS[-1], self.dof_limits_lower.shape[0]):  # 补齐
+            Dof_offsets.append(i+1)
+            
+        num_joints = len(Dof_offsets) - 1
         
         lim_low = self.dof_limits_lower.cpu().numpy()
         lim_high = self.dof_limits_upper.cpu().numpy()
 
         for j in range(num_joints):
-            dof_offset = DOF_OFFSETS[j]
-            dof_size = DOF_OFFSETS[j + 1] - DOF_OFFSETS[j]
+            dof_offset = Dof_offsets[j]
+            dof_size = Dof_offsets[j + 1] - Dof_offsets[j]
 
             if (dof_size == 3):
                 lim_low[dof_offset:(dof_offset + dof_size)] = -np.pi
@@ -477,7 +481,6 @@ class HumanoidAMPSRLBase(VecTask):
 #####################################################################
 ###=========================jit functions=========================###
 #####################################################################
-    
 @torch.jit.script
 def dof_to_obs(pose):
     # type: (Tensor) -> Tensor
