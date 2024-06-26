@@ -400,7 +400,7 @@ class HumanoidAMPSRLBase(VecTask):
         # SRL reward
         self.extras["srl_rewards"] = self.srl_rew_buf.to(self.rl_device)
         self.extras["v_penalty"] = self.rew_v_pen_buf.to(self.rl_device)
-        self.extras["joint_cost"] = self.rew_joint_cost_buf.to(self.rl_device)
+        self.extras["torque_cost"] = self.rew_joint_cost_buf.to(self.rl_device)
         self.extras["x_velocity"] = self.obs_buf[:,7]
         # debug viz
         if self.viewer and self.debug_viz:
@@ -552,7 +552,7 @@ def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, l
 # 计算任务奖励函数
 @torch.jit.script
 def compute_humanoid_reward(obs_buf, dof_force_tensor, action):
-    # type: (Tensor, Tensor, Tensor) -> (Tensor, Tensor, Tensor)
+    # type: (Tensor, Tensor, Tensor) -> Tuple[Tensor, Tensor, Tensor]
     # reward = torch.ones_like(obs_buf[:, 0])
     velocity  = obs_buf[:,7]  # vx
     target_velocity = 1.4
