@@ -12,7 +12,7 @@ from isaacgymenvs.tasks.SRLEvo.humanoid_amp_srl_base import HumanoidAMPSRLBase, 
 from isaacgymenvs.tasks.amp.utils_amp import gym_util
 from isaacgymenvs.tasks.amp.utils_amp.motion_lib import MotionLib
 
-from isaacgymenvs.utils.torch_jit_utils import quat_mul, to_torch, calc_heading_quat_inv, quat_to_tan_norm, my_quat_rotate
+from isaacgymenvs.utils.torch_jit_utils import quat_mul, to_torch, calc_heading_quat_inv, quat_to_tan_norm, my_quat_rotate, exp_map_to_quat
 
 
 NUM_AMP_OBS_PER_STEP = 13 + 52 + 28 + 12 # [root_h, root_rot, root_vel, root_ang_vel, dof_pos, dof_vel, key_body_pos]
@@ -274,6 +274,41 @@ class HumanoidAMPSRLTest(HumanoidAMPSRLBase):
 #####################################################################
 ###=========================jit functions=========================###
 #####################################################################
+@torch.jit.script
+def dof_to_obs_amp(pose):
+    # type: (Tensor) -> Tensor
+    #dof_obs_size = 64
+    #dof_offsets = [0, 3, 6, 9, 12, 13, 16, 19, 20, 23, 24, 27, 30, 31, 34]
+    '''
+    仅计算amp的obs
+    '''
+    dof_obs_size = 52
+    dof_offsets = [0, 3, 6, 9, 10, 13, 14, 17, 18, 21, 24, 25, 28] # humanoid 
+    
+    num_joints = len(dof_offsets) - 1
+
+    dof_obs_shape = pose.shape[:-1] + (dof_obs_size,)
+    dof_obs = torch.zeros(dof_obs_shape, device=pose.device)
+    dof_obs_offset = 0
+
+    for j in range(num_joints):
+        dof_offset = dof_offsets[j]
+        dof_size = dof_offsets[j + 1] - dof_offsets[j]
+        joint_pose = pose[:, dof_offset:(dof_offset + dof_size)]
+
+        # assume this is a spherical joint
+        if (dof_size == 3):
+            joint_pose_q = exp_map_to_quat(joint_pose)
+            joint_dof_obs = quat_to_tan_norm(joint_pose_q)
+            dof_obs_size = 6
+        else:
+            joint_dof_obs = joint_pose
+            dof_obs_size = 1
+
+        dof_obs[:, dof_obs_offset:(dof_obs_offset + dof_obs_size)] = joint_dof_obs
+        dof_obs_offset += dof_obs_size
+
+    return dof_obs
 
 @torch.jit.script
 def build_amp_observations(root_states, dof_pos, dof_vel, key_body_pos, local_root_obs):
