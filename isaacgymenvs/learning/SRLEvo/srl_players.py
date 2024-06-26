@@ -170,7 +170,8 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                 self._post_step(info)
                 
                 # 只记录第一个环境的动作
-                episode_actions.append(action[0].cpu().numpy())  # 假设动作输出是Tensor
+                dof_forces = info["dof_forces"]
+                episode_actions.append(dof_forces[0].cpu().numpy())  # 假设动作输出是Tensor
                 episode_velocity.append(info["x_velocity"][0].cpu().numpy()) # 
 
                 if render:
