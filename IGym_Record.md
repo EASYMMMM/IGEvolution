@@ -44,6 +44,11 @@ ImportError: libpython3.7m.so.1.0: cannot open shared object file: No such file 
 或者`export LD_LIBRARY_PATH=/home/ps/anaconda3/envs/rlgpu/lib`
 `export LD_LIBRARY_PATH=/home/ps/anaconda3/envs/Mrlgpu/lib`
 
+登录wandb：
+`wandb login` 
+随后输出自己账户的API。
+仅在当前终端登录账号：
+`export WANDB_API_KEY=d9e147c0c0f29ad02ca38e65742ce8ce2bbd52ab`
 尝试一下就行 大概率后者设置路径有效
 
 如果报以下错误是因为模型文件URDF文件中mesh文件的地址出错，找不到模型文件导致的。建议可以直接写绝对地址。
