@@ -36,8 +36,7 @@ python joint_monkey.py --asset_id=6
 
 出现这样的报错：
 
-`
-ImportError: libpython3.7m.so.1.0: cannot open shared object file: No such file or directory`
+`ImportError: libpython3.7m.so.1.0: cannot open shared object file: No such file or directory`
 
 需要`sudo apt install libpython3.7`
 
@@ -50,6 +49,11 @@ ImportError: libpython3.7m.so.1.0: cannot open shared object file: No such file 
 仅在当前终端登录账号：
 `export WANDB_API_KEY=d9e147c0c0f29ad02ca38e65742ce8ce2bbd52ab`
 尝试一下就行 大概率后者设置路径有效
+
+重启todesk：
+`sudo systemctl stop  todeskd.service`
+`sudo systemctl start todeskd.service`
+
 
 如果报以下错误是因为模型文件URDF文件中mesh文件的地址出错，找不到模型文件导致的。建议可以直接写绝对地址。
 
