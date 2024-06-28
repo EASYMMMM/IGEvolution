@@ -146,27 +146,27 @@
 			<geom density="2500" name="SRL_geom_root" pos="0 0 0" size="0.02 0.095 0.095" type="box"/>
 			<body name="SRL_leg2" pos="0.02 0.0475 0" quat="1.0 0.0 0.0 0.0">
 				<geom density="2500" fromto="0 0 0 0.4 0 0" name="SRL_geom_leg2" size="0.03" type="capsule"/>
-				<joint axis="0 0 1" name="SRL_joint_joint11" pos="0 0 0" range="-70 70" stiffness="300" damping="30" armature=".02"/>
-				<joint axis="0 1 0" name="SRL_joint_joint12" pos="0 0 0" range="-70 70" stiffness="300" damping="30" armature=".02"/>
+				<joint axis="0 0 1" name="SRL_joint_joint11" pos="0 0 0" range="-40 40" stiffness="300" damping="30" armature=".02"/>
+				<joint axis="0 1 0" name="SRL_joint_joint12" pos="0 0 0" range="-30 70" stiffness="300" damping="30" armature=".02"/>
 				<body name="SRL_shin11" pos="0.4 0 0" quat="0.92388 0.0 0.38268 0.0">
 					<geom density="2500" fromto="0 0 0 0.8 0 0" name="SRL_geom_shin11" size="0.03" type="capsule"/>
-					<joint axis="0 1 0" name="SRL_joint_joint13" pos="0 0 0" range="-70 70" stiffness="300" damping="30" armature=".02"/>
+					<joint axis="0 1 0" name="SRL_joint_joint13" pos="0 0 0" range="-50 50" stiffness="300" damping="30" armature=".02"/>
 					<body name="SRL_shin12" pos="0.8 0 0" quat="0.70711 0.0 -0.70711 0.0">
 						<geom density="2500" name="SRL_geom_shin12" pos="0.09 0 -0.045" size="0.12 0.045 0.02" type="box"/>
-						<joint axis="0 1 0" name="SRL_joint_joint14" pos="0 0 0" range="-70 70" stiffness="300" damping="30" armature=".02"/>
+						<joint axis="0 1 0" name="SRL_joint_joint14" pos="0 0 0" range="-40 40" stiffness="300" damping="30" armature=".02"/>
 					</body>
 				</body>
 			</body>
 			<body name="SRL_leg1" pos="0.02 -0.0475 0" quat="1.0 0.0 0.0 0.0">
 				<geom density="2500" fromto="0 0 0 0.4 0 0" name="SRL_geom_leg1" size="0.03" type="capsule"/>
-				<joint axis="0 0 1" name="SRL_joint_joint01" pos="0 0 0" range="-70 70" stiffness="300" damping="30" armature=".02"/>
-				<joint axis="0 1 0" name="SRL_joint_joint02" pos="0 0 0" range="-70 70" stiffness="300" damping="30" armature=".02"/>
+				<joint axis="0 0 1" name="SRL_joint_joint01" pos="0 0 0" range="-40 40" stiffness="300" damping="30" armature=".02"/>
+				<joint axis="0 1 0" name="SRL_joint_joint02" pos="0 0 0" range="-30 70" stiffness="300" damping="30" armature=".02"/>
 				<body name="SRL_shin1" pos="0.4 0 0" quat="0.92388 0.0 0.38268 0.0">
 					<geom density="2500" fromto="0 0 0 0.8 0 0" name="SRL_geom_shin1" size="0.03" type="capsule"/>
-					<joint axis="0 1 0" name="SRL_joint_joint1" pos="0 0 0" range="-70 70" stiffness="300" damping="30" armature=".02"/>
+					<joint axis="0 1 0" name="SRL_joint_joint1" pos="0 0 0" range="-50 50" stiffness="300" damping="30" armature=".02"/>
 					<body name="SRL_shin2" pos="0.8 0 0" quat="0.70711 0.0 -0.70711 0.0">
 						<geom density="2500" name="SRL_geom_shin2" pos="0.09 0 -0.045" size="0.12 0.045 0.02" type="box"/>
-						<joint axis="0 1 0" name="SRL_joint_joint2" pos="0 0 0" range="-70 70" stiffness="300" damping="30" armature=".02"/>
+						<joint axis="0 1 0" name="SRL_joint_joint2" pos="0 0 0" range="-40 40" stiffness="300" damping="30" armature=".02"/>
 					</body>
 				</body>
 			</body>
