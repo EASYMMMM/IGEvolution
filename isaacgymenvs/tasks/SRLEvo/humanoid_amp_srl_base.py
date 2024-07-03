@@ -69,6 +69,8 @@ class HumanoidAMPSRLBase(VecTask):
         self._termination_height = self.cfg["env"]["terminationHeight"]
         self._enable_early_termination = self.cfg["env"]["enableEarlyTermination"]
 
+        self._torque_threshold = self.cfg["env"]["torque_threshold"]
+
         self.cfg["env"]["numObservations"] = self.get_obs_size()
         self.cfg["env"]["numActions"] = self.get_action_size()
 
@@ -312,7 +314,7 @@ class HumanoidAMPSRLBase(VecTask):
         return
 
     def _compute_reward(self, actions):
-        self.rew_buf[:], self.rew_v_pen_buf[:], self.rew_joint_cost_buf[:] = compute_humanoid_reward(self.obs_buf, self.dof_force_tensor, actions)
+        self.rew_buf[:], self.rew_v_pen_buf[:], self.rew_joint_cost_buf[:] = compute_humanoid_reward(self.obs_buf, self.dof_force_tensor, actions, self._torque_threshold)
         self.srl_rew_buf[:] = compute_srl_reward(self.obs_buf, self.dof_force_tensor, actions)
         return
 
@@ -561,8 +563,8 @@ def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, l
 
 # 计算任务奖励函数
 @torch.jit.script
-def compute_humanoid_reward(obs_buf, dof_force_tensor, action):
-    # type: (Tensor, Tensor, Tensor) -> Tuple[Tensor, Tensor, Tensor]
+def compute_humanoid_reward(obs_buf, dof_force_tensor, action, _torque_threshold):
+    # type: (Tensor, Tensor, Tensor, int) -> Tuple[Tensor, Tensor, Tensor]
     # reward = torch.ones_like(obs_buf[:, 0])
     velocity  = obs_buf[:,7]  # vx
     target_velocity = 1.4
@@ -575,7 +577,7 @@ def compute_humanoid_reward(obs_buf, dof_force_tensor, action):
     # v1.2.2指数衰减
     # torque_reward = 2*torch.exp(-0.1 * torque_usage)  # 指数衰减，0.1为衰减系数
     # v1.5.12 比例惩罚，力矩绝对值超过100
-    torque_threshold = 100
+    torque_threshold = _torque_threshold
     torque_usage   = dof_force_tensor[:, 14:28]
     torque_penalty = torch.where(torch.abs(torque_usage) > torque_threshold, 
                                  (torch.abs(torque_usage) - torque_threshold) / torque_threshold, 

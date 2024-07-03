@@ -40,6 +40,8 @@ env:
     staticFriction: 1.0
     dynamicFriction: 1.0
     restitution: 0.0
+  
+  torque_threshold: 100
 
 sim:
   dt: 0.0166 # 1/60 s
