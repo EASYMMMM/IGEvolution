@@ -65,7 +65,7 @@ class HumanoidAMPSRLBase(VecTask):
         self.max_episode_length = self.cfg["env"]["episodeLength"]
         self._local_root_obs = self.cfg["env"]["localRootObs"]
         # self._contact_bodies = self.cfg["env"]["contactBodies"]
-        self._contact_bodies = self.cfg["env"]["contactBodies"] + SRL_CONTACT_BODY_NAMES
+        self._contact_bodies = self.cfg["env"]["contactBodies"] + SRL_CONTACT_BODY_NAMES # TODO: 自动生成外肢体的碰撞
         self._termination_height = self.cfg["env"]["terminationHeight"]
         self._enable_early_termination = self.cfg["env"]["enableEarlyTermination"]
 
@@ -78,6 +78,21 @@ class HumanoidAMPSRLBase(VecTask):
         
         dt = self.cfg["sim"]["dt"]
         self.dt = self.control_freq_inv * dt
+
+        # mirror matrix
+        self.mirror_idx_humanoid = np.array([-0.0001, 1, -2, -3, 4, -5, -10, 11, -12,  13, -6,
+                                                 7, -8, 9, -21, 22, -23, 24, -25, 26, -27, -14, 
+                                                 15, -16, 17, -18, 19, -20,])
+        self.mirror_idx_srl = np.array([-32, 33, 34, 35, -28, 29, 30, 31])
+        self.mirror_idx = np.concatenate((self.mirror_idx_humanoid, self.mirror_idx_srl))
+        obs_dim = self.mirror_idx.shape[0]
+        self.mirror_mat = torch.zeros((obs_dim, obs_dim), dtype=torch.float32, device=self.device)
+        for i, perm in enumerate(self.mirror_idx):
+            self.mirror_mat[i, int(abs(perm))] = np.sign(perm)
+        # self.act_perm_mat = torch.zeros((self.get_action_size(), self.get_action_size()), dtype=torch.float32, device=self.device)
+        # for i, perm in enumerate(self.action_permutation):
+        #     self.act_perm_mat[i, abs(perm)] = np.sign(perm)
+        # self.action_permutation = np.array(config.get('action_permutation', []))
         
         # get gym GPU state tensors
         actor_root_state = self.gym.acquire_actor_root_state_tensor(self.sim)
@@ -125,11 +140,13 @@ class HumanoidAMPSRLBase(VecTask):
         
         self.srl_rew_buf = torch.zeros(
             self.num_envs, device=self.device, dtype=torch.float)
-        self.rew_joint_cost_buf = torch.zeros(
+        self.rew_joint_cost_buf = torch.zeros(      # 关节力矩惩罚
             self.num_envs, device=self.device, dtype=torch.float)
-        self.rew_v_pen_buf = torch.zeros(
+        self.rew_v_pen_buf = torch.zeros(           # 速度惩罚
             self.num_envs, device=self.device, dtype=torch.float)
-        
+        self.obs_mirrored_buf = torch.zeros(
+            (self.num_envs, self.num_obs), device=self.device, dtype=torch.float)
+
         if self.viewer != None:
             self._init_camera()
             
@@ -274,6 +291,12 @@ class HumanoidAMPSRLBase(VecTask):
 
         return
 
+    def reset_done(self):
+        _, done_env_ids = super().reset_done()
+        # 添加镜像OBS
+        self.obs_dict["obs_mirrored"] = torch.clamp(self.obs_mirrored_buf, -self.clip_obs, self.clip_obs).to(self.rl_device)
+        return self.obs_dict, done_env_ids
+        
     def _build_pd_action_offset_scale(self):
         Dof_offsets = DOF_OFFSETS
         for i in range(DOF_OFFSETS[-1], self.dof_limits_lower.shape[0]):  # 补齐
@@ -336,12 +359,14 @@ class HumanoidAMPSRLBase(VecTask):
         return
 
     def _compute_observations(self, env_ids=None):
-        obs = self._compute_humanoid_obs(env_ids)
+        obs, obs_mirrored = self._compute_humanoid_obs(env_ids)
 
         if (env_ids is None):
             self.obs_buf[:] = obs
+            self.obs_mirrored_buf[:] = obs_mirrored
         else:
             self.obs_buf[env_ids] = obs
+            self.obs_mirrored_buf[env_ids] = obs_mirrored
 
         return
 
@@ -359,7 +384,9 @@ class HumanoidAMPSRLBase(VecTask):
         
         obs = compute_humanoid_observations(root_states, dof_pos, dof_vel,
                                             key_body_pos, self._local_root_obs)
-        return obs
+        obs_mirrored = compute_humanoid_observations_mirrored(root_states, dof_pos, dof_vel,
+                                            key_body_pos, self._local_root_obs)
+        return obs, obs_mirrored
 
     def _reset_actors(self, env_ids):
         self._dof_pos[env_ids] = self._initial_dof_pos[env_ids]
@@ -409,6 +436,7 @@ class HumanoidAMPSRLBase(VecTask):
         self.extras["torque_cost"] = self.rew_joint_cost_buf.to(self.rl_device)
         self.extras["x_velocity"] = self.obs_buf[:,7]
         self.extras["dof_forces"] = self.dof_force_tensor.to(self.rl_device)
+        self.extras["obs_mirrored"] = self.obs_mirrored_buf.to(self.rl_device)  # 镜像观测
         # debug viz
         if self.viewer and self.debug_viz:
             self._update_debug_viz()
@@ -492,7 +520,7 @@ def dof_to_obs(pose):
     dof_obs_size = 52
     dof_offsets = [0, 3, 6, 9, 10, 13, 14, 17, 18, 21, 24, 25, 28] # humanoid 
     
-    for i in range(dof_offsets[-1], pose.shape[-1]):  # 补齐
+    for i in range(dof_offsets[-1], pose.shape[-1]):  # 补齐SRL
         dof_offsets.append(i+1)
         dof_obs_size += 1
 
@@ -558,6 +586,59 @@ def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, l
 
     # root_h 1; root_rot_obs 6; local_root_vel 3 ; local_root_ang_vel 3 ; dof_obs 60; dof_vel 36 ; flat_local_key_pos 12
     obs = torch.cat((root_h, root_rot_obs, local_root_vel, local_root_ang_vel, dof_obs, dof_vel, flat_local_key_pos), dim=-1)
+    return obs
+
+@torch.jit.script
+def compute_humanoid_observations_mirrored(root_states, dof_pos, dof_vel, key_body_pos, local_root_obs, mirror_mat):
+    # type: (Tensor, Tensor, Tensor, Tensor, bool, Tensor) -> Tensor
+    root_pos = root_states[:, 0:3]
+    root_rot = root_states[:, 3:7]
+    root_vel = root_states[:, 7:10]
+    root_ang_vel = root_states[:, 10:13]
+
+    root_h = root_pos[:, 2:3] # root高度
+    heading_rot = calc_heading_quat_inv(root_rot)
+
+    if (local_root_obs):
+        root_rot_obs = quat_mul(heading_rot, root_rot)
+    else:
+        root_rot_obs = root_rot
+    root_rot_obs = quat_to_tan_norm(root_rot_obs) # root朝向
+
+    local_root_vel = my_quat_rotate(heading_rot, root_vel) # 局部root速度
+    local_root_ang_vel = my_quat_rotate(heading_rot, root_ang_vel) # 局部根部角速度
+
+    root_pos_expand = root_pos.unsqueeze(-2)
+    local_key_body_pos = key_body_pos - root_pos_expand
+    
+    heading_rot_expand = heading_rot.unsqueeze(-2)
+    heading_rot_expand = heading_rot_expand.repeat((1, local_key_body_pos.shape[1], 1))
+    flat_end_pos = local_key_body_pos.view(local_key_body_pos.shape[0] * local_key_body_pos.shape[1], local_key_body_pos.shape[2])
+    flat_heading_rot = heading_rot_expand.view(heading_rot_expand.shape[0] * heading_rot_expand.shape[1], 
+                                               heading_rot_expand.shape[2])
+    local_end_pos = my_quat_rotate(flat_heading_rot, flat_end_pos)
+    flat_local_key_pos = local_end_pos.view(local_key_body_pos.shape[0], local_key_body_pos.shape[1] * local_key_body_pos.shape[2])
+
+    # dof_obs = dof_to_obs(dof_pos) # dof_pos 36
+
+    # Mirror
+    root_rot_obs[:,1] =  -root_rot_obs[:,1]  # 切向量
+    root_rot_obs[:,4] =  -root_rot_obs[:,4]  # 法向量
+    local_root_vel[:,1] = -local_root_vel[:,1] # y方向速度
+    local_root_ang_vel[:,0] = -local_root_ang_vel[:,0] # x轴角速度
+    local_root_ang_vel[:,2] = -local_root_ang_vel[:,2] # z轴角速度
+    mirrored_dof_pos = torch.matmul(dof_pos, mirror_mat) # Perform the matrix multiplication to get mirrored dof_pos
+    dof_obs = dof_to_obs(mirrored_dof_pos) # dof_pos 36
+    dof_vel = torch.matmul(dof_vel, mirror_mat)
+    flat_local_key_pos_mirror = flat_local_key_pos
+    flat_local_key_pos_mirror[:,0:3] = flat_local_key_pos[:,3:6]
+    flat_local_key_pos_mirror[:,3:6] = flat_local_key_pos[:,0:3]
+    flat_local_key_pos_mirror[:,6:9] = flat_local_key_pos[:,9:12]
+    flat_local_key_pos_mirror[:,9:12] = flat_local_key_pos[:,6:9]
+    # TODO:
+
+    # root_h 1; root_rot_obs 6; local_root_vel 3 ; local_root_ang_vel 3 ; dof_obs 60; dof_vel 36 ; flat_local_key_pos 12
+    obs = torch.cat((root_h, root_rot_obs, local_root_vel, local_root_ang_vel, dof_obs, dof_vel, flat_local_key_pos_mirror), dim=-1)
     return obs
 
 

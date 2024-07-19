@@ -97,3 +97,6 @@ params:
     actions_num_srl: 8
     train_srl_only: False
     humanoid_checkpoint: None
+
+    mirror_loss: False
+    

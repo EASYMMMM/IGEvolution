@@ -95,7 +95,6 @@ class ModelSRLContinuous(ModelA2CContinuousLogStd):
                     'sigmas' : sigma,
                 }                               
             else: # eval
-                # 分别计算humanoid和srl，并拼接
                 selected_action = distr.sample()
                 # 计算选定动作的负对数概率
                 neglogp = self.neglogp(selected_action, mu, sigma, logstd) 
