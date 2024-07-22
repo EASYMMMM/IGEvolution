@@ -89,10 +89,11 @@ class HumanoidAMPSRLBase(VecTask):
         self.mirror_mat = torch.zeros((obs_dim, obs_dim), dtype=torch.float32, device=self.device)
         for i, perm in enumerate(self.mirror_idx):
             self.mirror_mat[i, int(abs(perm))] = np.sign(perm)
-        # self.act_perm_mat = torch.zeros((self.get_action_size(), self.get_action_size()), dtype=torch.float32, device=self.device)
-        # for i, perm in enumerate(self.action_permutation):
-        #     self.act_perm_mat[i, abs(perm)] = np.sign(perm)
-        # self.action_permutation = np.array(config.get('action_permutation', []))
+        self.mirror_idx_act_srl = np.array([-4, 5, 6, 7, -0.01, 1, 2, 3])
+        self.mirror_act_srl_mat = torch.zeros((self.mirror_idx_act_srl.shape[0], self.mirror_idx_act_srl.shape[0]), dtype=torch.float32, device=self.device)
+        for i, perm in enumerate(self.mirror_idx_act_srl):
+            self.mirror_act_srl_mat[i, abs(perm)] = np.sign(perm)
+         
         
         # get gym GPU state tensors
         actor_root_state = self.gym.acquire_actor_root_state_tensor(self.sim)
@@ -151,7 +152,7 @@ class HumanoidAMPSRLBase(VecTask):
             self._init_camera()
             
         return
-
+    
     def get_obs_size(self):
         return NUM_OBS
 
@@ -385,7 +386,7 @@ class HumanoidAMPSRLBase(VecTask):
         obs = compute_humanoid_observations(root_states, dof_pos, dof_vel,
                                             key_body_pos, self._local_root_obs)
         obs_mirrored = compute_humanoid_observations_mirrored(root_states, dof_pos, dof_vel,
-                                            key_body_pos, self._local_root_obs)
+                                            key_body_pos, self._local_root_obs, self.mirror_mat)
         return obs, obs_mirrored
 
     def _reset_actors(self, env_ids):

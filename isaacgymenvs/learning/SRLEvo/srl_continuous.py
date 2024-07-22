@@ -37,6 +37,7 @@ class SRLAgent(common_agent.CommonAgent):
         self.is_discrete = False
         self._setup_action_space()
         self.bounds_loss_coef = config.get('bounds_loss_coef', None)
+        self.sym_loss_coef = config.get('sym_loss_coef',None)
         self.clip_actions = config.get('clip_actions', True)
         self.network_path = self.nn_dir 
         
@@ -538,14 +539,21 @@ class SRLAgent(common_agent.CommonAgent):
             # 计算边界损失
             b_loss = self.bound_loss(mu)
 
-            sym_loss = self.sym_loss()
-            # 应用掩码并计算损失
-            losses, sum_mask = torch_ext.apply_masks([a_loss.unsqueeze(1), c_loss, entropy.unsqueeze(1), b_loss.unsqueeze(1)], rnn_masks)
-            a_loss, c_loss, entropy, b_loss = losses[0], losses[1], losses[2], losses[3]
-            
+            if self.mirror_loss:
+                # 计算对称损失
+                sym_loss = self.sym_loss(mu,mu_mirrored)
+                losses, sum_mask = torch_ext.apply_masks([a_loss.unsqueeze(1), c_loss, entropy.unsqueeze(1), b_loss.unsqueeze(1), sym_loss.unsqueeze(1)], rnn_masks)
+                a_loss, c_loss, entropy, b_loss, sym_loss = losses[0], losses[1], losses[2], losses[3], losses[4]
+                # 计算总损失
+                loss = a_loss + self.critic_coef * c_loss - self.entropy_coef * entropy + self.bounds_loss_coef * b_loss + self.sym_loss_coef * sym_loss
 
-            # 计算总损失
-            loss = a_loss + self.critic_coef * c_loss - self.entropy_coef * entropy + self.bounds_loss_coef * b_loss 
+            else:
+                # 应用掩码并计算损失
+                losses, sum_mask = torch_ext.apply_masks([a_loss.unsqueeze(1), c_loss, entropy.unsqueeze(1), b_loss.unsqueeze(1)], rnn_masks)
+                a_loss, c_loss, entropy, b_loss = losses[0], losses[1], losses[2], losses[3]
+                
+                # 计算总损失
+                loss = a_loss + self.critic_coef * c_loss - self.entropy_coef * entropy + self.bounds_loss_coef * b_loss 
                  
             
             # 梯度清零
@@ -595,8 +603,11 @@ class SRLAgent(common_agent.CommonAgent):
 
     def sym_loss(self, mus, mus_mirrored):
         # TODO: 7-19 完成对称损失
-
-        return
+        # 计算mus和mus_mirrored之间的平方误差
+ 
+        mus_perm = torch.matmul(mus_mirrored, self.vec_env.mirror_act_srl_mat)
+        loss = torch.mean((mus - mus_perm) ** 2, dim=1)
+        return loss
 
     def calc_gradients(self, input_dict):
         self.set_train()

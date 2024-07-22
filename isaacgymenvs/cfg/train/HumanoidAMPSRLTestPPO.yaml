@@ -99,4 +99,5 @@ params:
     humanoid_checkpoint: None
 
     mirror_loss: False
+    sym_loss_coef: 1
     
