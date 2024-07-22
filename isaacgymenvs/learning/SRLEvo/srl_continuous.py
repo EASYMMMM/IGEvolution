@@ -542,7 +542,8 @@ class SRLAgent(common_agent.CommonAgent):
 
             if self.mirror_loss:
                 # 计算对称损失
-                sym_loss = self.sym_loss(mu,mu_mirrored)
+                sym_info = self.sym_loss(mu,mu_mirrored)
+                sym_loss = sym_info['sym_loss']
                 losses, sum_mask = torch_ext.apply_masks([a_loss.unsqueeze(1), c_loss, entropy.unsqueeze(1), b_loss.unsqueeze(1), sym_loss.unsqueeze(1)], rnn_masks)
                 a_loss, c_loss, entropy, b_loss, sym_loss = losses[0], losses[1], losses[2], losses[3], losses[4]
                 # 计算总损失
@@ -599,6 +600,8 @@ class SRLAgent(common_agent.CommonAgent):
         self.train_result.update(srl_train_result)
         self.train_result.update(a_info)
         self.train_result.update(c_info)
+        if self.mirror_loss:
+            self.train_result.update(sym_info)
 
         return        
 
@@ -608,7 +611,9 @@ class SRLAgent(common_agent.CommonAgent):
  
         mus_perm = torch.matmul(mus_mirrored, self.vec_env.env.mirror_act_srl_mat)
         loss = torch.mean((mus - mus_perm) ** 2, dim=1)
-        return loss
+        sym_info = {}
+        sym_info['sym_loss'] = loss
+        return sym_info
 
     def calc_gradients(self, input_dict):
         self.set_train()
@@ -859,7 +864,7 @@ class SRLAgent(common_agent.CommonAgent):
         self.frame = 0
         self.obs = self.env_reset()
         self.curr_frames = self.batch_size_envs
-
+ 
 
         self.model_output_file = os.path.join(self.network_path, 
             self.config['name'] + '_{date:%d-%H-%M-%S}'.format(date=datetime.now()))
@@ -1061,7 +1066,8 @@ class SRLAgent(common_agent.CommonAgent):
         # self.writer.add_scalar('info/e_clip', self.e_clip * train_info['lr_mul'][-1], frame)
         # self.writer.add_scalar('info/clip_frac', torch_ext.mean_list(train_info['actor_clip_frac']).item(), frame)
         # self.writer.add_scalar('info/kl', torch_ext.mean_list(train_info['kl']).item(), frame)
-
+        if self.mirror_loss:
+            self.writer.add_scalar('losses/sym_loss_srl', torch_ext.mean_list(train_info['sym_loss']).item(), frame)
         return
 
     def _amp_debug(self, info):
