@@ -32,7 +32,7 @@ class AssetDesc:
 
 
 asset_descriptors = [
-    AssetDesc("mjcf/amp_humanoid_srl_6.xml", False),
+    AssetDesc("mjcf/amp_humanoid_srl_9.xml", False),
     AssetDesc("mjcf/nv_humanoid.xml", False),
     AssetDesc("mjcf/nv_ant.xml", False),
     AssetDesc("urdf/cartpole.urdf", False),
@@ -212,9 +212,18 @@ _dof_state = gymtorch.wrap_tensor(dof_state_tensor)
 _dof_pos = _dof_state.view(num_envs, num_dofs, 2)[..., 0]
 _dof_vel = _dof_state.view(num_envs, num_dofs, 2)[..., 1]
 
+_root_tensor = gym.acquire_actor_root_state_tensor(sim)
+root_tensor = gymtorch.wrap_tensor(_root_tensor)
+gym.refresh_actor_root_state_tensor(sim)
+root_positions = root_tensor[:,0:3]
+root_orientations = root_tensor[:,3:7]
+root_linvels = root_tensor[:,7:10]
+root_angvels = root_tensor[:, 10:13]
+
+print('root orientation:', root_orientations[0,:])
 
 while not gym.query_viewer_has_closed(viewer):
-
+    current_dof = 35
     # step the physics
     gym.simulate(sim)
     gym.fetch_results(sim, True)
@@ -227,6 +236,7 @@ while not gym.query_viewer_has_closed(viewer):
         if dof_positions[current_dof] <= lower_limits[current_dof]:
             dof_positions[current_dof] = lower_limits[current_dof]
             anim_state = ANIM_SEEK_UPPER
+        print("Animating DOF %d ('%s')" % (current_dof, dof_names[current_dof]))
     elif anim_state == ANIM_SEEK_UPPER:
         dof_positions[current_dof] += speed * dt
         if dof_positions[current_dof] >= upper_limits[current_dof]:
@@ -241,7 +251,7 @@ while not gym.query_viewer_has_closed(viewer):
         dof_positions[current_dof] = defaults[current_dof]
         current_dof = (current_dof + 1) % num_dofs
         anim_state = ANIM_SEEK_LOWER
-        print("Animating DOF %d ('%s')" % (current_dof, dof_names[current_dof]))
+        # print("Animating DOF %d ('%s')" % (current_dof, dof_names[current_dof]))
 
     if args.show_axis:
         gym.clear_lines(viewer)

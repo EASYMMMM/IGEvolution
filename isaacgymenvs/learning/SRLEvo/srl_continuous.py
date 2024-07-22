@@ -94,8 +94,7 @@ class SRLAgent(common_agent.CommonAgent):
         if self._normalize_amp_input:
             self._amp_input_mean_std = RunningMeanStd(self._amp_observation_space.shape).to(self.ppo_device)
 
-        if self.mirror_loss:
-            self.tensor_list += ['obses_mirrored']
+
         return
 
     def init_tensors(self):
@@ -130,7 +129,9 @@ class SRLAgent(common_agent.CommonAgent):
 
         if not self._humanoid_checkpoint == 'None':
             self._load_humanoid_network()    
-        
+            
+        if self.mirror_loss:
+            self.tensor_list += ['obses_mirrored']
         return
     
     def _load_humanoid_network(self):
@@ -206,7 +207,7 @@ class SRLAgent(common_agent.CommonAgent):
             res_dict, res_dict_srl = self.get_action_values(self.obs) # 获取动作值
 
             if self.mirror_loss: # 镜像损失
-                self.experience_buffer_srl.update_data('obses_mirrored', n, self.obs['obs_mirrored']) # 镜像观测
+                self.experience_buffer_srl.update_data('obs_mirrored', n, self.obs['obs_mirrored']) # 镜像观测
                 mirrored_obs = {}
                 mirrored_obs['obs']  =  self.obs['obs_mirrored']
                 
@@ -605,7 +606,7 @@ class SRLAgent(common_agent.CommonAgent):
         # TODO: 7-19 完成对称损失
         # 计算mus和mus_mirrored之间的平方误差
  
-        mus_perm = torch.matmul(mus_mirrored, self.vec_env.mirror_act_srl_mat)
+        mus_perm = torch.matmul(mus_mirrored, self.vec_env.env.mirror_act_srl_mat)
         loss = torch.mean((mus - mus_perm) ** 2, dim=1)
         return loss
 

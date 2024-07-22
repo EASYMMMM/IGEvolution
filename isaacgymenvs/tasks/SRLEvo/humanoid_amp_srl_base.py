@@ -92,7 +92,7 @@ class HumanoidAMPSRLBase(VecTask):
         self.mirror_idx_act_srl = np.array([-4, 5, 6, 7, -0.01, 1, 2, 3])
         self.mirror_act_srl_mat = torch.zeros((self.mirror_idx_act_srl.shape[0], self.mirror_idx_act_srl.shape[0]), dtype=torch.float32, device=self.device)
         for i, perm in enumerate(self.mirror_idx_act_srl):
-            self.mirror_act_srl_mat[i, abs(perm)] = np.sign(perm)
+            self.mirror_act_srl_mat[i, int(abs(perm))] = np.sign(perm)
          
         
         # get gym GPU state tensors

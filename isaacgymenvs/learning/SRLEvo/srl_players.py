@@ -261,7 +261,8 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
             # 确定需要绘制的关节的索引
             indices_to_draw = [joint_indices[name] for name in d_l if name in joint_indices]
 
-            plt.figure(figsize=(12, 8))
+            # plt.figure(figsize=(12, 8))
+            plt.figure()
             for episode_index, actions in enumerate(actions_env0):
                 plt.subplot(len(actions_env0), 1, episode_index + 1)
                 for joint_index in indices_to_draw:
