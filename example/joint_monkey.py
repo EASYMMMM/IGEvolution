@@ -223,7 +223,7 @@ root_angvels = root_tensor[:, 10:13]
 print('root orientation:', root_orientations[0,:])
 
 while not gym.query_viewer_has_closed(viewer):
-    current_dof = 35
+    # current_dof = 35
     # step the physics
     gym.simulate(sim)
     gym.fetch_results(sim, True)
@@ -236,7 +236,7 @@ while not gym.query_viewer_has_closed(viewer):
         if dof_positions[current_dof] <= lower_limits[current_dof]:
             dof_positions[current_dof] = lower_limits[current_dof]
             anim_state = ANIM_SEEK_UPPER
-        print("Animating DOF %d ('%s')" % (current_dof, dof_names[current_dof]))
+        # print("Animating DOF %d ('%s')" % (current_dof, dof_names[current_dof]))
     elif anim_state == ANIM_SEEK_UPPER:
         dof_positions[current_dof] += speed * dt
         if dof_positions[current_dof] >= upper_limits[current_dof]:
@@ -251,7 +251,7 @@ while not gym.query_viewer_has_closed(viewer):
         dof_positions[current_dof] = defaults[current_dof]
         current_dof = (current_dof + 1) % num_dofs
         anim_state = ANIM_SEEK_LOWER
-        # print("Animating DOF %d ('%s')" % (current_dof, dof_names[current_dof]))
+        print("Animating DOF %d ('%s')" % (current_dof, dof_names[current_dof]))
 
     if args.show_axis:
         gym.clear_lines(viewer)
