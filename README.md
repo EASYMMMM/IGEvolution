@@ -9,15 +9,18 @@
    其中`XXX`为虚拟环境名称。
    `export LD_LIBRARY_PATH=/home/ps/anaconda3/envs/rlgpu/lib`   
    `export LD_LIBRARY_PATH=/home/ps/anaconda3/envs/Mrlgpu/lib`
+   `export LD_LIBRARY_PATH=/home/user/miniconda3/envs/mly_isaacgym/lib`
 
 - **登录wandb：**
    `wandb login` 
    随后输出自己账户的API。
    仅在当前终端登录账号：
    `export WANDB_API_KEY=d9e147c0c0f29ad02ca38e65742ce8ce2bbd52ab`   
+
 - **重启todesk：**
 `sudo systemctl stop  todeskd.service`
 `sudo systemctl start todeskd.service`
+
 ## 1. 环境配置
 [Isaac Gym环境安装和四足机器人模型的训练-CSDN博客](https://blog.csdn.net/weixin_44061195/article/details/131830133?spm=1001.2101.3001.6650.2&utm_medium=distribute.pc_relevant.none-task-blog-2~default~YuanLiJiHua~Position-2-131830133-blog-124605383.235^v38^pc_relevant_sort&depth_1-utm_source=distribute.pc_relevant.none-task-blog-2~default~YuanLiJiHua~Position-2-131830133-blog-124605383.235^v38^pc_relevant_sort&utm_relevant_index=5)
 
