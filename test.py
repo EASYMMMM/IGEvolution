@@ -1,5 +1,5 @@
 import torch
-
+import numpy as np
 # 定义 compute_srl_reward 函数
 def compute_humanoid_reward(obs_buf, dof_force_tensor, action):
     # type: (Tensor, Tensor, Tensor) -> Tuple[Tensor, Tensor, Tensor]
@@ -51,3 +51,13 @@ reward, velocity_penalty, torque_penalty = compute_humanoid_reward(obs_buf, dof_
 print("Reward:", reward)
 print("Velocity Penalty:", velocity_penalty)
 print("Torque Penalty:", torque_penalty)
+
+
+mirror_idx_act_srl = np.array([-4, 5, 6, 7, -0.01, 1, 2, 3])
+mirror_act_srl_mat = torch.zeros((mirror_idx_act_srl.shape[0], mirror_idx_act_srl.shape[0]), dtype=torch.float32)
+for i, perm in enumerate(mirror_idx_act_srl):
+    mirror_act_srl_mat[i, int(abs(perm))] = np.sign(perm)
+print('mirror act srl mat:',mirror_act_srl_mat)
+
+I = torch.matmul(mirror_act_srl_mat,mirror_act_srl_mat)
+print('m*m:',I)
