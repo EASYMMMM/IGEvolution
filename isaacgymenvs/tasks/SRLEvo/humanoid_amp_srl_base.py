@@ -43,7 +43,7 @@ DOF_OFFSETS = [0, 3, 6, 9, 10, 13, 14, 17, 18, 21, 24, 25, 28]
 NUM_OBS = 13 + 60 + 28 + 12 + 8 #TODO： 单纯humanoid为103 SRL暂设为8 [root_h, root_rot, root_vel, root_ang_vel, dof_pos, dof_vel, key_body_pos]
 NUM_ACTIONS = 28 + 8   # Actions humanoid (Dof=28) + SRL
 
-
+UPPER_BODY_NAMES = ["pelvis", "torso"]
 KEY_BODY_NAMES = ["right_hand", "left_hand", "right_foot", "left_foot"]
 SRL_CONTACT_BODY_NAMES = ['SRL_root', 'SRL_leg2', 'SRL_shin11', 'SRL_shin12', 'SRL_leg1', 'SRL_shin1', 'SRL_shin2']
  
@@ -285,6 +285,7 @@ class HumanoidAMPSRLBase(VecTask):
         self.dof_limits_upper = to_torch(self.dof_limits_upper, device=self.device)
 
         self._key_body_ids = self._build_key_body_ids_tensor(env_ptr, handle)
+        self._upper_body_ids = self._build_upper_body_ids_tensor(env_ptr, handle)
         self._contact_body_ids = self._build_contact_body_ids_tensor(env_ptr, handle)
         
         if (self._pd_control):
@@ -338,7 +339,11 @@ class HumanoidAMPSRLBase(VecTask):
         return
 
     def _compute_reward(self, actions):
-        self.rew_buf[:], self.rew_v_pen_buf[:], self.rew_joint_cost_buf[:] = compute_humanoid_reward(self.obs_buf, self.dof_force_tensor, actions, self._torque_threshold)
+        upper_body_pos = self._rigid_body_pos[:, self._upper_body_ids, :]
+        self.rew_buf[:], self.rew_v_pen_buf[:], self.rew_joint_cost_buf[:] = compute_humanoid_reward(self.obs_buf, 
+                                                                                                     self.dof_force_tensor, 
+                                                                                                     actions,
+                                                                                                     self._torque_threshold)
         self.srl_rew_buf[:] = compute_srl_reward(self.obs_buf, self.dof_force_tensor, actions)
         return
 
@@ -433,9 +438,9 @@ class HumanoidAMPSRLBase(VecTask):
 
         # SRL reward
         self.extras["srl_rewards"] = self.srl_rew_buf.to(self.rl_device)
-        self.extras["v_penalty"] = self.rew_v_pen_buf.to(self.rl_device)
-        self.extras["torque_cost"] = self.rew_joint_cost_buf.to(self.rl_device)
-        self.extras["x_velocity"] = self.obs_buf[:,7]
+        self.extras["v_penalty"] = self.rew_v_pen_buf.to(self.rl_device)         # Reward: velocity penalty
+        self.extras["torque_cost"] = self.rew_joint_cost_buf.to(self.rl_device)  # Reward: torque cost
+        self.extras["x_velocity"] = self.obs_buf[:,7]                            
         self.extras["dof_forces"] = self.dof_force_tensor.to(self.rl_device)
         self.extras["obs_mirrored"] = self.obs_mirrored_buf.to(self.rl_device)  # 镜像观测
         # debug viz
@@ -451,6 +456,18 @@ class HumanoidAMPSRLBase(VecTask):
         super().render()
         return
 
+    def _build_upper_body_ids_tensor(self, env_ptr, actor_handle):
+        # get id of upper body 
+        # used to calculate the balance reward
+        body_ids = []
+        for body_name in UPPER_BODY_NAMES:
+            body_id = self.gym.find_actor_rigid_body_handle(env_ptr, actor_handle, body_name)
+            assert(body_id != -1)
+            body_ids.append(body_id)
+
+        body_ids = to_torch(body_ids, device=self.device, dtype=torch.long)
+        return body_ids
+    
     def _build_key_body_ids_tensor(self, env_ptr, actor_handle):
         body_ids = []
         for body_name in KEY_BODY_NAMES:
@@ -636,7 +653,7 @@ def compute_humanoid_observations_mirrored(root_states, dof_pos, dof_vel, key_bo
     flat_local_key_pos_mirror[:,3:6] = flat_local_key_pos[:,0:3]
     flat_local_key_pos_mirror[:,6:9] = flat_local_key_pos[:,9:12]
     flat_local_key_pos_mirror[:,9:12] = flat_local_key_pos[:,6:9]
-    # TODO:
+
 
     # root_h 1; root_rot_obs 6; local_root_vel 3 ; local_root_ang_vel 3 ; dof_obs 60; dof_vel 36 ; flat_local_key_pos 12
     obs = torch.cat((root_h, root_rot_obs, local_root_vel, local_root_ang_vel, dof_obs, dof_vel, flat_local_key_pos_mirror), dim=-1)
