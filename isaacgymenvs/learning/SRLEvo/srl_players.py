@@ -37,6 +37,13 @@ import isaacgymenvs.learning.common_player as common_player
 import numpy as np
 import matplotlib.pyplot as plt
 
+def my_safe_load(filename, **kwargs):
+    return torch_ext.safe_filesystem_op(torch.load, filename, **kwargs)
+
+def my_load_checkpoint(filename,**kwargs):
+    print("=> my loading checkpoint '{}'".format(filename))
+    state = my_safe_load(filename, **kwargs)
+    return state
 
 class SRLPlayerContinuous(common_player.CommonPlayer):
 
@@ -53,8 +60,16 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
         return
 
     def restore(self, fn):
-        super().restore(fn)
-        checkpoint = torch_ext.load_checkpoint(fn)
+        
+        checkpoint = my_load_checkpoint(fn,map_location='cuda:1')
+        self.model.load_state_dict(checkpoint['model'])
+        if self.normalize_input and 'running_mean_std' in checkpoint:
+            self.model.running_mean_std.load_state_dict(checkpoint['running_mean_std'])
+
+        env_state = checkpoint.get('env_state', None)
+        if self.env is not None and env_state is not None:
+            self.env.set_env_state(env_state)
+
         self.model_srl.load_state_dict(checkpoint['model_srl'])
         if self._normalize_amp_input:
             self._amp_input_mean_std.load_state_dict(checkpoint['amp_input_mean_std'])
