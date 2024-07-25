@@ -70,7 +70,8 @@ class HumanoidAMPSRLBase(VecTask):
         self._enable_early_termination = self.cfg["env"]["enableEarlyTermination"]
 
         self._torque_threshold = self.cfg["env"]["torque_threshold"]
-
+        self._upper_reward_w = self.cfg["env"]["upper_reward_w"]
+    
         self.cfg["env"]["numObservations"] = self.get_obs_size()
         self.cfg["env"]["numActions"] = self.get_action_size()
 
@@ -144,6 +145,8 @@ class HumanoidAMPSRLBase(VecTask):
         self.rew_joint_cost_buf = torch.zeros(      # 关节力矩惩罚
             self.num_envs, device=self.device, dtype=torch.float)
         self.rew_v_pen_buf = torch.zeros(           # 速度惩罚
+            self.num_envs, device=self.device, dtype=torch.float)
+        self.rew_upper_buf = torch.zeros(           # 直立惩罚
             self.num_envs, device=self.device, dtype=torch.float)
         self.obs_mirrored_buf = torch.zeros(
             (self.num_envs, self.num_obs), device=self.device, dtype=torch.float)
@@ -340,10 +343,12 @@ class HumanoidAMPSRLBase(VecTask):
 
     def _compute_reward(self, actions):
         upper_body_pos = self._rigid_body_pos[:, self._upper_body_ids, :]
-        self.rew_buf[:], self.rew_v_pen_buf[:], self.rew_joint_cost_buf[:] = compute_humanoid_reward(self.obs_buf, 
+        self.rew_buf[:], self.rew_v_pen_buf[:], self.rew_joint_cost_buf[:], self.rew_upper_buf[:] = compute_humanoid_reward(self.obs_buf, 
                                                                                                      self.dof_force_tensor, 
                                                                                                      actions,
-                                                                                                     self._torque_threshold)
+                                                                                                     self._torque_threshold,
+                                                                                                     upper_body_pos,
+                                                                                                     self._upper_reward_w)
         self.srl_rew_buf[:] = compute_srl_reward(self.obs_buf, self.dof_force_tensor, actions)
         return
 
@@ -440,6 +445,7 @@ class HumanoidAMPSRLBase(VecTask):
         self.extras["srl_rewards"] = self.srl_rew_buf.to(self.rl_device)
         self.extras["v_penalty"] = self.rew_v_pen_buf.to(self.rl_device)         # Reward: velocity penalty
         self.extras["torque_cost"] = self.rew_joint_cost_buf.to(self.rl_device)  # Reward: torque cost
+        self.extras["upper_reward"] = self.rew_upper_buf.to(self.rl_device)      # Reward: upper reward
         self.extras["x_velocity"] = self.obs_buf[:,7]                            
         self.extras["dof_forces"] = self.dof_force_tensor.to(self.rl_device)
         self.extras["obs_mirrored"] = self.obs_mirrored_buf.to(self.rl_device)  # 镜像观测
@@ -662,8 +668,8 @@ def compute_humanoid_observations_mirrored(root_states, dof_pos, dof_vel, key_bo
 
 # 计算任务奖励函数
 @torch.jit.script
-def compute_humanoid_reward(obs_buf, dof_force_tensor, action, _torque_threshold):
-    # type: (Tensor, Tensor, Tensor, int) -> Tuple[Tensor, Tensor, Tensor]
+def compute_humanoid_reward(obs_buf, dof_force_tensor, action, _torque_threshold, upper_body_pos, upper_reawrd_w):
+    # type: (Tensor, Tensor, Tensor, int, Tensor, int ) -> Tuple[Tensor, Tensor, Tensor]
     # reward = torch.ones_like(obs_buf[:, 0])
     velocity  = obs_buf[:,7]  # vx
     target_velocity = 1.4
@@ -683,10 +689,17 @@ def compute_humanoid_reward(obs_buf, dof_force_tensor, action, _torque_threshold
                                  torch.zeros_like(torque_usage))
     torque_reward  = - torch.sum(torque_penalty, dim=1)
     
-    # reward = -velocity_penalty + torque_reward
-    reward = velocity_penalty + torque_reward
+    # 躯干直立奖励
+    lower_pos = upper_body_pos[:, 0, :]  # (4096, 3)
+    upper_pos = upper_body_pos[:, 1, :]  # (4096, 3)
+    upper_body_direction = upper_pos - lower_pos  # 维度 (4096, 3)
+    norm_upper_body_direction = upper_body_direction / torch.norm(upper_body_direction, dim=1, keepdim=True)
+    upper_reward = upper_reawrd_w * (norm_upper_body_direction[:,2] - 1 )
 
-    return reward, velocity_penalty, torque_reward
+    # reward = -velocity_penalty + torque_reward
+    reward = velocity_penalty + torque_reward + upper_reward
+
+    return reward, velocity_penalty, torque_reward, upper_reward
 
 # 计算外肢体奖励函数
 @torch.jit.script

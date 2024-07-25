@@ -84,6 +84,7 @@ class SRLAgent(common_agent.CommonAgent):
         self.game_rewards_task = torch_ext.AverageMeter(self.value_size, self.games_to_track).to(self.ppo_device)
         self.game_rewards_v_p = torch_ext.AverageMeter(self.value_size, self.games_to_track).to(self.ppo_device)  # velocity penalty
         self.game_rewards_t_c = torch_ext.AverageMeter(self.value_size, self.games_to_track).to(self.ppo_device)  # torque cost
+        self.game_rewards_u_r = torch_ext.AverageMeter(self.value_size, self.games_to_track).to(self.ppo_device)  # upper reward
 
         # 观测值标准化
         if self.normalize_value:
@@ -116,6 +117,7 @@ class SRLAgent(common_agent.CommonAgent):
         self.current_rewards_task = torch.zeros_like(self.current_rewards,dtype=torch.float32, device=self.ppo_device)
         self.current_rewards_v_p = torch.zeros_like(self.current_rewards,dtype=torch.float32, device=self.ppo_device)
         self.current_rewards_t_c = torch.zeros_like(self.current_rewards,dtype=torch.float32, device=self.ppo_device)
+        self.current_rewards_u_r = torch.zeros_like(self.current_rewards,dtype=torch.float32, device=self.ppo_device)
 
 
         self.experience_buffer_srl = ExperienceBuffer(env_info, algo_info, self.ppo_device)
@@ -248,6 +250,7 @@ class SRLAgent(common_agent.CommonAgent):
 
             _velocity_penalty = infos['v_penalty']
             _torque_cost = infos['torque_cost']
+            _upper_reward = infos['upper_reward'] 
             
             ''' humanoid value of next state '''
             next_vals = self._eval_critic(self.obs)  
@@ -272,6 +275,7 @@ class SRLAgent(common_agent.CommonAgent):
             self.current_rewards_amp  += _amp_rewards['disc_rewards']
             self.current_rewards_t_c  += _torque_cost.unsqueeze(1)       # 分量 
             self.current_rewards_v_p  += _velocity_penalty.unsqueeze(1)  # 分量
+            self.current_rewards_u_r  += _upper_reward.unsqueeze(1)      # upper reward
 
             all_done_indices = self.dones.nonzero(as_tuple=False)
             done_indices = all_done_indices[::self.num_agents]
@@ -282,6 +286,7 @@ class SRLAgent(common_agent.CommonAgent):
             self.game_rewards_task.update(self.current_rewards_task[done_indices])
             self.game_rewards_v_p.update(self.current_rewards_v_p[done_indices])
             self.game_rewards_t_c.update(self.current_rewards_t_c[done_indices])
+            self.game_rewards_u_r.update(self.current_rewards_u_r[done_indices])
 
             self.current_lengths += 1
             self.game_lengths.update(self.current_lengths[done_indices])
@@ -296,6 +301,7 @@ class SRLAgent(common_agent.CommonAgent):
             self.current_rewards_task = self.current_rewards_task * not_dones.unsqueeze(1)
             self.current_rewards_v_p = self.current_rewards_v_p * not_dones.unsqueeze(1)
             self.current_rewards_t_c = self.current_rewards_t_c * not_dones.unsqueeze(1)
+            self.current_rewards_u_r = self.current_rewards_u_r * not_dones.unsqueeze(1)
             self.current_lengths = self.current_lengths * not_dones
         
             if (self.vec_env.env.viewer and (n == (self.horizon_length - 1))):
@@ -909,6 +915,7 @@ class SRLAgent(common_agent.CommonAgent):
                     mean_rewards_task = self.game_rewards_task.get_mean()
                     mean_rewards_t_c = self.game_rewards_t_c.get_mean()
                     mean_rewards_v_p = self.game_rewards_v_p.get_mean()
+                    mean_rewards_u_r = self.game_rewards_u_r.get_mean()
 
                     for i in range(self.value_size):
                         self.writer.add_scalar('rewards/total_frame'.format(i), mean_rewards[i], frame)
@@ -918,6 +925,7 @@ class SRLAgent(common_agent.CommonAgent):
                         self.writer.add_scalar('rewards/task'.format(i), mean_rewards_task[i], frame)
                         self.writer.add_scalar('rewards/v_penalty'.format(i), mean_rewards_v_p[i], frame)
                         self.writer.add_scalar('rewards/torque_cost'.format(i), mean_rewards_t_c[i], frame)
+                        self.writer.add_scalar('rewards/u_reward'.format(i), mean_rewards_u_r[i], frame)
                         # amp
                         self.writer.add_scalar('rewards/AMP'.format(i), mean_rewards_amp[i], frame)
                     self.writer.add_scalar('episode_lengths/frame', mean_lengths, frame)
