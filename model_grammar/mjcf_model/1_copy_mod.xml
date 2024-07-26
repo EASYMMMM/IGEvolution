@@ -1,0 +1,219 @@
+<?xml version="1.0" ?>
+<mujoco model="your_robot_name">
+    
+  
+    <compiler inertiafromgeom="true" angle="radian"/>
+    
+
+    <default>
+        <joint armature="0.01" damping="0.1" limited="true"/>
+        <geom condim="3" density="5.0" friction="1.5 0.1 0.1" margin="0.01" rgba="0.97 0.38 0.06 1"/>
+    </default>
+    
+
+    <size nconmax="50" njmax="200" nstack="10000"/>
+    <visual>
+        <map force="0.1" zfar="30"/>
+        <rgba haze="0.15 0.25 0.35 1"/>
+        <quality shadowsize="2048"/>
+        <global offwidth="800" offheight="800"/>
+    </visual>
+    <asset>
+        <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="512"/>
+        <texture name="texplane" type="2d" builtin="checker" rgb1=".2 .3 .4" rgb2=".1 0.15 0.2" width="512" height="512" mark="cross" markrgb=".8 .8 .8"/>
+        <texture name="texgeom" type="cube" builtin="flat" mark="cross" width="127" height="1278" rgb1="0.8 0.6 0.4" rgb2="0.8 0.6 0.4" markrgb="1 1 1" random="0.01"/>
+        <material name="matplane" reflectance="0.3" texture="texplane" texrepeat="1 1" texuniform="true"/>
+        <material name="matgeom" texture="texgeom" texuniform="true" rgba="0.8 0.6 .4 1"/>
+    </asset>
+    <actuator>
+        <motor ctrllimited="true" ctrlrange="-1 1" joint="joint_1" gear="10"/>
+        <motor ctrllimited="true" ctrlrange="-1 1" joint="joint_4" gear="10"/>
+        <motor ctrllimited="true" ctrlrange="-1 1" joint="joint_5" gear="10"/>
+        <motor ctrllimited="true" ctrlrange="-1 1" joint="joint_6" gear="10"/>
+        <motor ctrllimited="true" ctrlrange="-1 1" joint="joint_9" gear="10"/>
+        <motor ctrllimited="true" ctrlrange="-1 1" joint="joint_10" gear="10"/>
+        <motor ctrllimited="true" ctrlrange="-1 1" joint="joint_11" gear="10"/>
+        <motor ctrllimited="true" ctrlrange="-1 1" joint="joint_12" gear="10"/>
+        <motor ctrllimited="true" ctrlrange="-1 1" joint="joint_13" gear="10"/>
+        <motor ctrllimited="true" ctrlrange="-1 1" joint="joint_14" gear="10"/>
+        <motor ctrllimited="true" ctrlrange="-1 1" joint="joint_15" gear="10"/>
+        <motor ctrllimited="true" ctrlrange="-1 1" joint="joint_16" gear="10"/>
+    </actuator>
+    <compiler angle="radian"/>
+    
+  
+    <statistic meansize="0.19" extent="1.7" center="0.375 0 0.00334936"/>
+    
+  
+    <worldbody>
+        
+    
+        <geom name="floor" pos="0 0 0" size="0 0 .25" type="plane" material="matplane" condim="3"/>
+        <light directional="false" diffuse=".2 .2 .2" specular="0 0 0" pos="0 0 5" dir="0 0 -1" castshadow="false"/>
+        <light mode="targetbodycom" target="root" directional="false" diffuse=".8 .8 .8" specular="0.3 0.3 0.3" pos="0 0 4.0" dir="0 0 -1"/>
+        <body name="root" pos="0 0 0.75">
+            <freejoint name="root"/>
+            <geom size="0.09 0.15" quat="0.707388 0 -0.706825 0" type="capsule" rgba="0.45 0.5 0.55 1"/>
+            
+    
+            <geom size="0.05 0.1" pos="0.15 0 0" quat="0.500199 0.499801 -0.499801 0.500199" type="capsule" rgba="0.45 0.5 0.55 1"/>
+            
+    
+            <geom size="0.05 0.1" pos="0.15 0 0" quat="0.500199 -0.499801 -0.499801 -0.500199" type="capsule" rgba="0.45 0.5 0.55 1"/>
+            
+    
+            <body name="link_1" pos="0.3 0 0">
+                
+      
+                <joint name="joint_1" pos="0 0 0" axis="0 0 1" range="-1.5 1.5" frictionloss="0.9"/>
+                
+      
+                <geom size="0.09 0.15" pos="0.15 0 0" quat="0.707388 0 -0.706825 0" type="capsule" rgba="0.45 0.5 0.55 1"/>
+                
+      
+                <body name="link_4" pos="0.3 0 0">
+                    
+        
+                    <joint name="joint_4" pos="0 0 0" axis="0 1 0" range="-1.5 1.5" frictionloss="0.9"/>
+                    
+        
+                    <geom size="0.09 0.15" pos="0.15 0 0" quat="0.707388 0 -0.706825 0" type="capsule" rgba="0.45 0.5 0.55 1"/>
+                    
+        
+                    <geom size="0.05 0.1" pos="0.15 0 0" quat="0.500199 0.499801 -0.499801 0.500199" type="capsule" rgba="0.45 0.5 0.55 1"/>
+                    
+        
+                    <geom size="0.05 0.1" pos="0.15 0 0" quat="0.500199 -0.499801 -0.499801 -0.500199" type="capsule" rgba="0.45 0.5 0.55 1"/>
+                    
+        
+                    <body name="link_11" pos="0.15 0.2 0" quat="0.707107 0 0 0.707107">
+                        
+          
+                        <joint name="joint_11" pos="0 0 0" axis="0 1 0" range="-1.5 1.5" frictionloss="0.9"/>
+                        
+          
+                        <geom size="0.05 0.15" pos="0.1 0 0" quat="0.707388 0 -0.706825 0" type="capsule" rgba="0.45 0.5 0.55 1"/>
+                        
+          
+                        <body name="link_15_foot" pos="0.3 0 0" quat="0.866025 0 0.5 0">
+                            
+            
+                            <joint name="joint_15" pos="0 0 0" axis="0 0 1" range="-1.5 1.5" frictionloss="0.9"/>
+                            
+            
+                            <geom size="0.05 0.1" pos="0.15 0 0" quat="0.707388 0 -0.706825 0" type="capsule" rgba="0.45 0.5 0.55 1"/>
+                            
+          
+                        </body>
+                        
+        
+                    </body>
+                    
+        
+                    <body name="link_12" pos="0.15 -0.2 0" quat="0.707107 0 0 -0.707107">
+                        
+          
+                        <joint name="joint_12" pos="0 0 0" axis="0 1 0" range="-1.5 1.5" frictionloss="0.9"/>
+                        
+          
+                        <geom size="0.05 0.15" pos="0.1 0 0" quat="0.707388 0 -0.706825 0" type="capsule" rgba="0.45 0.5 0.55 1"/>
+                        
+          
+                        <body name="link_16_foot" pos="0.3 0 0" quat="0.866025 0 0.5 0">
+                            
+            
+                            <joint name="joint_16" pos="0 0 0" axis="0 0 -1" range="-1.5 1.5" frictionloss="0.9"/>
+                            
+            
+                            <geom size="0.05 0.1" pos="0.15 0 0" quat="0.707388 0 -0.706825 0" type="capsule" rgba="0.45 0.5 0.55 1"/>
+                            
+          
+                        </body>
+                        
+        
+                    </body>
+                    
+      
+                </body>
+                
+    
+            </body>
+            
+    
+            <body name="link_5" pos="0.15 0.2 0" quat="0.707107 0 0 0.707107">
+                
+      
+                <joint name="joint_5" pos="0 0 0" axis="0 1 0" range="-1.5 1.5" frictionloss="0.9"/>
+                
+      
+                <geom size="0.05 0.15" pos="0.1 0 0" quat="0.707388 0 -0.706825 0" type="capsule" rgba="0.45 0.5 0.55 1"/>
+                
+      
+                <body name="link_9" pos="0.3 0 0" quat="0.866025 0 -0.5 0">
+                    
+        
+                    <joint name="joint_9" pos="0 0 0" axis="0 0 1" range="-1.5 1.5" frictionloss="0.9"/>
+                    
+        
+                    <geom size="0.05 0.1" pos="0.15 0 0" quat="0.707388 0 -0.706825 0" type="capsule" rgba="0.45 0.5 0.55 1"/>
+                    
+        
+                    <body name="link_13_foot" pos="0.2 0 0" quat="0.5 0 0.866025 0">
+                        
+          
+                        <joint name="joint_13" pos="0 0 0" axis="0 0 1" range="-1.5 1.5" frictionloss="0.9"/>
+                        
+          
+                        <geom size="0.05 0.15" pos="0.1 0 0" quat="0.707388 0 -0.706825 0" type="capsule" rgba="0.45 0.5 0.55 1"/>
+                        
+        
+                    </body>
+                    
+      
+                </body>
+                
+    
+            </body>
+            
+    
+            <body name="link_6" pos="0.15 -0.2 0" quat="0.707107 0 0 -0.707107">
+                
+      
+                <joint name="joint_6" pos="0 0 0" axis="0 1 0" range="-1.5 1.5" frictionloss="0.9"/>
+                
+      
+                <geom size="0.05 0.15" pos="0.1 0 0" quat="0.707388 0 -0.706825 0" type="capsule" rgba="0.45 0.5 0.55 1"/>
+                
+      
+                <body name="link_10" pos="0.3 0 0" quat="0.866025 0 -0.5 0">
+                    
+        
+                    <joint name="joint_10" pos="0 0 0" axis="0 0 -1" range="-1.5 1.5" frictionloss="0.9"/>
+                    
+        
+                    <geom size="0.05 0.1" pos="0.15 0 0" quat="0.707388 0 -0.706825 0" type="capsule" rgba="0.45 0.5 0.55 1"/>
+                    
+        
+                    <body name="link_14_foot" pos="0.2 0 0" quat="0.5 0 0.866025 0">
+                        
+          
+                        <joint name="joint_14" pos="0 0 0" axis="0 0 -1" range="-1.5 1.5" frictionloss="0.9"/>
+                        
+          
+                        <geom size="0.05 0.15" pos="0.1 0 0" quat="0.707388 0 -0.706825 0" type="capsule" rgba="0.45 0.5 0.55 1"/>
+                        
+        
+                    </body>
+                    
+      
+                </body>
+                
+    
+            </body>
+            
+  
+        </body>
+    </worldbody>
+    
+
+</mujoco>
