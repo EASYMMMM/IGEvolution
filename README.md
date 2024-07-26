@@ -18,9 +18,12 @@
    `export WANDB_API_KEY=d9e147c0c0f29ad02ca38e65742ce8ce2bbd52ab`   
 
 - **重启todesk：**
-`sudo systemctl stop  todeskd.service`
-`sudo systemctl start todeskd.service`
+   `sudo systemctl stop  todeskd.service`
+   `sudo systemctl start todeskd.service`
 
+- **通过SCP从服务器传输训练模型：**
+   `scp -r  user@172.18.41.167:/home/user/mly/IGEvolution/isaacgymenvs/runs/SRL_walk_v1.5.15.0_25-11-01-51  /home/ps/pan1/files/mly/IsaacGymEvo/isaacgymenvs/runs`
+   
 ## 1. 环境配置
 [Isaac Gym环境安装和四足机器人模型的训练-CSDN博客](https://blog.csdn.net/weixin_44061195/article/details/131830133?spm=1001.2101.3001.6650.2&utm_medium=distribute.pc_relevant.none-task-blog-2~default~YuanLiJiHua~Position-2-131830133-blog-124605383.235^v38^pc_relevant_sort&depth_1-utm_source=distribute.pc_relevant.none-task-blog-2~default~YuanLiJiHua~Position-2-131830133-blog-124605383.235^v38^pc_relevant_sort&utm_relevant_index=5)
 

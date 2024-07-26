@@ -669,7 +669,7 @@ def compute_humanoid_observations_mirrored(root_states, dof_pos, dof_vel, key_bo
 # 计算任务奖励函数
 @torch.jit.script
 def compute_humanoid_reward(obs_buf, dof_force_tensor, action, _torque_threshold, upper_body_pos, upper_reawrd_w):
-    # type: (Tensor, Tensor, Tensor, int, Tensor, int ) -> Tuple[Tensor, Tensor, Tensor]
+    # type: (Tensor, Tensor, Tensor, int, Tensor, int ) -> Tuple[Tensor, Tensor, Tensor, Tensor]
     # reward = torch.ones_like(obs_buf[:, 0])
     velocity  = obs_buf[:,7]  # vx
     target_velocity = 1.4
