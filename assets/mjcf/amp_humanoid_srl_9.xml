@@ -145,7 +145,7 @@
       <!-- range="-70 70" stiffness="300" damping="30" armature=".02" -->
       <body name="SRL_root" pos="-.07 0 0.05" quat="0.0 0.0 0.0 1.0">
         <geom density="2500" name="SRL_geom_root" pos="0 0 0" size="0.02 0.095 0.095" type="box"/>
-        <geom name="backpack" type="box" pos="0.15 0 0.35" size="0.1 0.25 0.22" density="4000"  />
+        <geom name="backpack" type="box" pos="0.20 0 0.35" size="0.13 0.13 0.22" density="6000"  />
         <body name="SRL_leg2" pos="0.02 0.0475 0" quat="1.0 0.0 0.0 0.0">
           <geom density="2500" fromto="0 0 0 0.4 0 0" name="SRL_geom_leg2" size="0.03" type="capsule"/>
           <joint axis="0 0 1" name="SRL_joint_joint11" pos="0 0 0" range="0 40" stiffness="300" damping="30" armature=".02"/>
