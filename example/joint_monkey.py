@@ -32,7 +32,7 @@ class AssetDesc:
 
 
 asset_descriptors = [
-    AssetDesc("mjcf/amp_humanoid_srl_9.xml", False),
+    AssetDesc("mjcf/amp_humanoid_srl_10.xml", False),
     AssetDesc("mjcf/nv_humanoid.xml", False),
     AssetDesc("mjcf/nv_ant.xml", False),
     AssetDesc("urdf/cartpole.urdf", False),
