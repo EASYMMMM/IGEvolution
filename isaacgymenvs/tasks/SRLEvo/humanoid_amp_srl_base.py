@@ -44,8 +44,10 @@ NUM_OBS = 13 + 60 + 28 + 12 + 8 #TODO： 单纯humanoid为103 SRL暂设为8 [roo
 NUM_ACTIONS = 28 + 8   # Actions humanoid (Dof=28) + SRL
 
 UPPER_BODY_NAMES = ["pelvis", "torso"]
-KEY_BODY_NAMES = ["right_hand", "left_hand", "right_foot", "left_foot","SRL_right_end","SRL_left_end"]  # body end + SRL end
-SRL_CONTACT_BODY_NAMES = ['SRL_root', 'SRL_leg2', 'SRL_shin11', 'SRL_shin12', 'SRL_leg1', 'SRL_shin1', 'SRL_shin2']
+# KEY_BODY_NAMES = ["right_hand", "left_hand", "right_foot", "left_foot"]
+KEY_BODY_NAMES = ["right_hand", "left_hand", "right_foot", "left_foot"]  # body end + SRL end
+SRL_END_BODY_NAMES = ["SRL_right_end","SRL_left_end"] 
+SRL_CONTACT_BODY_NAMES = ['SRL_root', 'SRL_leg2', 'SRL_shin11', 'SRL_right_end', 'SRL_leg1', 'SRL_shin1', 'SRL_left_end']
  
 class HumanoidAMPSRLBase(VecTask):
 
@@ -574,7 +576,6 @@ def dof_to_obs(pose):
     return dof_obs
 
 
-
 @torch.jit.script
 def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, local_root_obs):
     # type: (Tensor, Tensor, Tensor, Tensor, bool) -> Tensor
@@ -655,10 +656,16 @@ def compute_humanoid_observations_mirrored(root_states, dof_pos, dof_vel, key_bo
     dof_obs = dof_to_obs(mirrored_dof_pos) # dof_pos 36
     dof_vel = torch.matmul(dof_vel, mirror_mat)
     flat_local_key_pos_mirror = flat_local_key_pos
+    # right/left hand
     flat_local_key_pos_mirror[:,0:3] = flat_local_key_pos[:,3:6]
     flat_local_key_pos_mirror[:,3:6] = flat_local_key_pos[:,0:3]
+    # right/left foot
     flat_local_key_pos_mirror[:,6:9] = flat_local_key_pos[:,9:12]
     flat_local_key_pos_mirror[:,9:12] = flat_local_key_pos[:,6:9]
+    # right/left SRL end
+    flat_local_key_pos_mirror[:,12:15] = flat_local_key_pos[:,15:18]
+    flat_local_key_pos_mirror[:,15:18] = flat_local_key_pos[:,12:15]
+    
 
 
     # root_h 1; root_rot_obs 6; local_root_vel 3 ; local_root_ang_vel 3 ; dof_obs 60; dof_vel 36 ; flat_local_key_pos 12
