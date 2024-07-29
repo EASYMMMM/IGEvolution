@@ -3,7 +3,7 @@
 
   <statistic extent="2" center="0 0 1"/>
 
-  <option timestep="0.00555" gravity="0 0 0"/>
+  <option timestep="0.00555" />
 
   <default>
     <motor ctrlrange="-1 1" ctrllimited="true"/>
