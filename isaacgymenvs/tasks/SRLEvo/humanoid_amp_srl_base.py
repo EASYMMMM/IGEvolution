@@ -71,6 +71,8 @@ class HumanoidAMPSRLBase(VecTask):
 
         self._torque_threshold = self.cfg["env"]["torque_threshold"]
         self._upper_reward_w = self.cfg["env"]["upper_reward_w"]
+
+        self._srl_endpos_obs = self.cfg["env"]["SRL_endpos_obs"]
     
         self.cfg["env"]["numObservations"] = self.get_obs_size()
         self.cfg["env"]["numActions"] = self.get_action_size()

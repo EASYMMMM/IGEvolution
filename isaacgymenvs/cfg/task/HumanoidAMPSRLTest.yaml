@@ -32,7 +32,8 @@ env:
   # these motions should use hyperparameters from HumanoidAMPPPOLowGP.yaml
   #motion_file: "amp_humanoid_hop.npy"
   #motion_file: "amp_humanoid_backflip.npy"
-
+  SRL_endpos_obs: False
+  
   asset:
     assetFileName: "mjcf/amp_humanoid_srl.xml"
 

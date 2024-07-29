@@ -16,7 +16,7 @@ from mujoco_py import MjSim, MjViewer, load_model_from_path
 import numpy as np
 
 # model_path = 'mjcf_model/antrobot_dfs.xml'
-model_path = 'C:\\MLY\\IGEvolution\\assets\\mjcf\\amp_humanoid_srl_10.xml'
+model_path = 'C:\\MLY\\IGEvolution\\assets\\mjcf\\amp_humanoid_load.xml'
 print(model_path)
 model = load_model_from_path(model_path)
 sim = MjSim(model)

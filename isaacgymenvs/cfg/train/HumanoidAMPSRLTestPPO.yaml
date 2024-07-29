@@ -98,8 +98,9 @@ params:
     train_srl_only: False
     humanoid_checkpoint: None
 
-    mirror_loss: False
+    mirror_loss: True
     sym_loss_coef: 1
+
 
     
     
