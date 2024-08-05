@@ -32,7 +32,7 @@ class AssetDesc:
 
 
 asset_descriptors = [
-    AssetDesc("mjcf/amp_humanoid_srl_10.xml", False),
+    AssetDesc("mjcf/amp_humanoid_srl_V2_1.xml", False),
     AssetDesc("mjcf/nv_humanoid.xml", False),
     AssetDesc("mjcf/nv_ant.xml", False),
     AssetDesc("urdf/cartpole.urdf", False),
@@ -223,7 +223,7 @@ root_angvels = root_tensor[:, 10:13]
 print('root orientation:', root_orientations[0,:])
 
 while not gym.query_viewer_has_closed(viewer):
-    # current_dof = 35
+    current_dof = 28
     # step the physics
     gym.simulate(sim)
     gym.fetch_results(sim, True)
