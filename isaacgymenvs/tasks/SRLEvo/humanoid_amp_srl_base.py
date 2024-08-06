@@ -161,7 +161,10 @@ class HumanoidAMPSRLBase(VecTask):
         return
     
     def get_obs_size(self):
-        return NUM_OBS
+        if self._srl_endpos_obs:
+            return NUM_OBS+6
+        else:
+            return NUM_OBS
 
     def get_action_size(self):
         return NUM_ACTIONS
@@ -394,16 +397,16 @@ class HumanoidAMPSRLBase(VecTask):
             dof_vel = self._dof_vel
             key_body_pos = self._rigid_body_pos[:, self._key_body_ids, :]
             if self._srl_endpos_obs:
-                srl_srl_end_body_pos = self._rigid_body_pos[:,self._srl_endpos_ids, :]
-                key_body_pos = torch.cat((key_body_pos, srl_srl_end_body_pos), dim=1)
+                srl_end_body_pos = self._rigid_body_pos[:,self._srl_endpos_ids, :]
+                key_body_pos = torch.cat((key_body_pos, srl_end_body_pos), dim=1)
         else:
             root_states = self._root_states[env_ids]
             dof_pos = self._dof_pos[env_ids]
             dof_vel = self._dof_vel[env_ids]
             key_body_pos = self._rigid_body_pos[env_ids][:, self._key_body_ids, :]
             if self._srl_endpos_obs:
-                srl_srl_end_body_pos = self._rigid_body_pos[:,self._srl_endpos_ids, :]
-                key_body_pos = torch.cat((key_body_pos, srl_srl_end_body_pos), dim=1)
+                srl_end_body_pos = self._rigid_body_pos[env_ids][:,self._srl_endpos_ids, :]
+                key_body_pos = torch.cat((key_body_pos, srl_end_body_pos), dim=1)
         
         obs = compute_humanoid_observations(root_states, dof_pos, dof_vel,
                                             key_body_pos, self._local_root_obs)
