@@ -74,7 +74,7 @@ class HumanoidAMPSRLBase(VecTask):
         self._torque_threshold = self.cfg["env"]["torque_threshold"]
         self._upper_reward_w = self.cfg["env"]["upper_reward_w"]
 
-        self._srl_endpos_obs = self.cfg["env"]["SRL_endpos_obs"]
+        self._srl_endpos_obs = self.cfg["env"]["srl_endpos_obs"]
     
         self.cfg["env"]["numObservations"] = self.get_obs_size()
         self.cfg["env"]["numActions"] = self.get_action_size()
@@ -294,7 +294,9 @@ class HumanoidAMPSRLBase(VecTask):
         self._key_body_ids = self._build_key_body_ids_tensor(env_ptr, handle)
         self._upper_body_ids = self._build_upper_body_ids_tensor(env_ptr, handle)
         self._contact_body_ids = self._build_contact_body_ids_tensor(env_ptr, handle)
-        
+        if self._srl_endpos_obs:
+            self._srl_endpos_ids = self._build_srl_endpos_body_ids_tensor(env_ptr, handle)
+
         if (self._pd_control):
             self._build_pd_action_offset_scale()
 
@@ -391,11 +393,17 @@ class HumanoidAMPSRLBase(VecTask):
             dof_pos = self._dof_pos
             dof_vel = self._dof_vel
             key_body_pos = self._rigid_body_pos[:, self._key_body_ids, :]
+            if self._srl_endpos_obs:
+                srl_srl_end_body_pos = self._rigid_body_pos[:,self._srl_endpos_ids, :]
+                key_body_pos = torch.cat((key_body_pos, srl_srl_end_body_pos), dim=1)
         else:
             root_states = self._root_states[env_ids]
             dof_pos = self._dof_pos[env_ids]
             dof_vel = self._dof_vel[env_ids]
             key_body_pos = self._rigid_body_pos[env_ids][:, self._key_body_ids, :]
+            if self._srl_endpos_obs:
+                srl_srl_end_body_pos = self._rigid_body_pos[:,self._srl_endpos_ids, :]
+                key_body_pos = torch.cat((key_body_pos, srl_srl_end_body_pos), dim=1)
         
         obs = compute_humanoid_observations(root_states, dof_pos, dof_vel,
                                             key_body_pos, self._local_root_obs)
@@ -481,6 +489,16 @@ class HumanoidAMPSRLBase(VecTask):
     def _build_key_body_ids_tensor(self, env_ptr, actor_handle):
         body_ids = []
         for body_name in KEY_BODY_NAMES:
+            body_id = self.gym.find_actor_rigid_body_handle(env_ptr, actor_handle, body_name)
+            assert(body_id != -1)
+            body_ids.append(body_id)
+
+        body_ids = to_torch(body_ids, device=self.device, dtype=torch.long)
+        return body_ids
+
+    def _build_srl_endpos_body_ids_tensor(self, env_ptr, actor_handle):
+        body_ids = []
+        for body_name in SRL_END_BODY_NAMES:
             body_id = self.gym.find_actor_rigid_body_handle(env_ptr, actor_handle, body_name)
             assert(body_id != -1)
             body_ids.append(body_id)
