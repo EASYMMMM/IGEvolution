@@ -310,11 +310,14 @@ class HumanoidAMPSRLBase(VecTask):
 
         return
 
-    def get_task_target_v(self):
+    def get_task_target_v(self, env_ids=None):
         # 0:X轴正方向, 1:Y轴正方向
         task_v = torch.tensor([0] * 100 + [1] * 100 +  [0] * 101,device=self.device)
         target_velocity = task_v[self.progress_buf]
-        return target_velocity
+        if env_ids is None:
+            return target_velocity
+        else:
+            return target_velocity[env_ids]
 
         
     def reset_done(self):
@@ -411,6 +414,7 @@ class HumanoidAMPSRLBase(VecTask):
             if self._srl_endpos_obs:
                 srl_end_body_pos = self._rigid_body_pos[:,self._srl_endpos_ids, :]
                 key_body_pos = torch.cat((key_body_pos, srl_end_body_pos), dim=1)
+            target_v = self.get_task_target_v()
         else:
             root_states = self._root_states[env_ids]
             dof_pos = self._dof_pos[env_ids]
@@ -419,13 +423,14 @@ class HumanoidAMPSRLBase(VecTask):
             if self._srl_endpos_obs:
                 srl_end_body_pos = self._rigid_body_pos[env_ids][:,self._srl_endpos_ids, :]
                 key_body_pos = torch.cat((key_body_pos, srl_end_body_pos), dim=1)
+            target_v = self.get_task_target_v(env_ids)
         
         obs = compute_humanoid_observations(root_states, dof_pos, dof_vel,
                                             key_body_pos, self._local_root_obs)
         obs_mirrored = compute_humanoid_observations_mirrored(root_states, dof_pos, dof_vel,
                                             key_body_pos, self._local_root_obs, self.mirror_mat)
         if self._target_v_task:
-            target_v = self.get_task_target_v()
+            target_v= target_v.unsqueeze(1)
             obs = torch.cat((obs, target_v),dim=1)
             obs_mirrored = torch.cat((obs_mirrored, target_v),dim=1)
         return obs, obs_mirrored
@@ -714,7 +719,7 @@ def compute_humanoid_observations_mirrored(root_states, dof_pos, dof_vel, key_bo
 
 
 # 计算任务奖励函数
-@torch.jit.script
+# @torch.jit.script
 def compute_humanoid_reward(obs_buf, dof_force_tensor, action, _torque_threshold, upper_body_pos, upper_reawrd_w, target_v = None):
     # type: (Tensor, Tensor, Tensor, int, Tensor, int, Tensor ) -> Tuple[Tensor, Tensor, Tensor, Tensor]
     # 速度惩罚
