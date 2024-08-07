@@ -48,7 +48,7 @@ UPPER_BODY_NAMES = ["pelvis", "torso"]
 KEY_BODY_NAMES = ["right_hand", "left_hand", "right_foot", "left_foot"]  # body end + SRL end
 SRL_END_BODY_NAMES = ["SRL_right_end","SRL_left_end"] 
 SRL_CONTACT_BODY_NAMES = ['SRL_root', 'SRL_leg2', 'SRL_shin11', 'SRL_right_end', 'SRL_leg1', 'SRL_shin1', 'SRL_left_end']
- 
+
 class HumanoidAMPSRLBase(VecTask):
 
     def __init__(self, config, rl_device, sim_device, graphics_device_id, headless, virtual_screen_capture, force_render):
@@ -76,7 +76,9 @@ class HumanoidAMPSRLBase(VecTask):
         self._upper_reward_w = self.cfg["env"]["upper_reward_w"]
         self._srl_endpos_obs = self.cfg["env"]["srl_endpos_obs"]
         self._target_v_task = self.cfg["env"]["target_v_task"]
-    
+        # --- user defined end ---
+
+
         self.cfg["env"]["numObservations"] = self.get_obs_size()
         self.cfg["env"]["numActions"] = self.get_action_size()
 
@@ -308,6 +310,13 @@ class HumanoidAMPSRLBase(VecTask):
 
         return
 
+    def get_task_target_v(self):
+        # 0:X轴正方向, 1:Y轴正方向
+        task_v = torch.tensor([0] * 100 + [1] * 100 +  [0] * 101,device=self.device)
+        target_velocity = task_v[self.progress_buf,:]
+        return target_velocity
+
+        
     def reset_done(self):
         _, done_env_ids = super().reset_done()
         # 添加镜像OBS
@@ -415,7 +424,10 @@ class HumanoidAMPSRLBase(VecTask):
                                             key_body_pos, self._local_root_obs)
         obs_mirrored = compute_humanoid_observations_mirrored(root_states, dof_pos, dof_vel,
                                             key_body_pos, self._local_root_obs, self.mirror_mat)
-        target_v = compute_task_target_velocity(self.progress_buf)
+        if self._target_v_task:
+            target_v = self.get_task_target_v()
+            obs = torch.cat((obs, target_v),dim=1)
+            obs_mirrored = torch.cat((obs_mirrored, target_v),dim=1)
         return obs, obs_mirrored
 
     def _reset_actors(self, env_ids):
@@ -674,8 +686,8 @@ def compute_humanoid_observations_mirrored(root_states, dof_pos, dof_vel, key_bo
     # dof_obs = dof_to_obs(dof_pos) # dof_pos 36
 
     # Mirror
-    root_rot_obs[:,1] =  -root_rot_obs[:,1]  # 切向量
-    root_rot_obs[:,4] =  -root_rot_obs[:,4]  # 法向量
+    # root_rot_obs[:,1] =  -root_rot_obs[:,1]  # 切向量
+    # root_rot_obs[:,4] =  -root_rot_obs[:,4]  # 法向量
     local_root_vel[:,1] = -local_root_vel[:,1] # y方向速度
     local_root_ang_vel[:,0] = -local_root_ang_vel[:,0] # x轴角速度
     local_root_ang_vel[:,2] = -local_root_ang_vel[:,2] # z轴角速度
@@ -700,16 +712,6 @@ def compute_humanoid_observations_mirrored(root_states, dof_pos, dof_vel, key_bo
     return obs
 
 
-@torch.jit.script
-def compute_task_target_velocity(progress_buf):
-    # type: (Tensor) -> Tensor
-    task_velocities = torch.tensor([
-    [1.4, 0, 0]] * 100 + 
-    [[0, 1.4, 0]] * 100 + 
-    [[1.4, 0, 0]] * 101
-    )
-    target_velocity = task_velocities[progress_buf,:]
-    return target_velocity
 
 # 计算任务奖励函数
 @torch.jit.script
