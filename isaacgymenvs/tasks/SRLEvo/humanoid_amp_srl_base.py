@@ -313,7 +313,7 @@ class HumanoidAMPSRLBase(VecTask):
     def get_task_target_v(self):
         # 0:X轴正方向, 1:Y轴正方向
         task_v = torch.tensor([0] * 100 + [1] * 100 +  [0] * 101,device=self.device)
-        target_velocity = task_v[self.progress_buf,:]
+        target_velocity = task_v[self.progress_buf]
         return target_velocity
 
         
@@ -715,13 +715,18 @@ def compute_humanoid_observations_mirrored(root_states, dof_pos, dof_vel, key_bo
 
 # 计算任务奖励函数
 @torch.jit.script
-def compute_humanoid_reward(obs_buf, dof_force_tensor, action, _torque_threshold, upper_body_pos, upper_reawrd_w):
-    # type: (Tensor, Tensor, Tensor, int, Tensor, int ) -> Tuple[Tensor, Tensor, Tensor, Tensor]
-    # reward = torch.ones_like(obs_buf[:, 0])
-    velocity  = obs_buf[:,7]  # vx
-    target_velocity = 1.4
-    velocity_penalty = - torch.where(velocity < target_velocity, (target_velocity - velocity)**2, torch.zeros_like(velocity))
-
+def compute_humanoid_reward(obs_buf, dof_force_tensor, action, _torque_threshold, upper_body_pos, upper_reawrd_w, target_v = None):
+    # type: (Tensor, Tensor, Tensor, int, Tensor, int, Tensor ) -> Tuple[Tensor, Tensor, Tensor, Tensor]
+    # 速度惩罚
+    if target_v == None:  
+        velocity  = obs_buf[:,7]  # vx
+        velocity_threshold = 1.4
+        velocity_penalty = - torch.where(velocity < velocity_threshold, (velocity_threshold - velocity)**2, torch.zeros_like(velocity))
+    else: 
+        index = 7+torch.abs(target_v)
+        velocity = obs_buf[torch.arange(obs_buf.size(0)), index]
+        velocity = torch.sign(target_v) * velocity
+        velocity_penalty = - torch.where(velocity < velocity_threshold, (velocity_threshold - velocity)**2, torch.zeros_like(velocity))
     # 14-28 包括髋关节+膝关节+踝关节
     # torque_usage =  torch.sum(dof_force_tensor[:,14:28] ** 2, dim=1)
     # v1.2.1力矩使用惩罚（假设action代表施加的力矩）
