@@ -148,7 +148,7 @@ class SRLAgent(common_agent.CommonAgent):
         if self._humanoid_checkpoint == None:
             raise ValueError
         fn = self._humanoid_checkpoint
-        checkpoint = my_load_checkpoint(fn,map_location='cuda:1')
+        checkpoint = my_load_checkpoint(fn,map_location=self.device)
         self.set_weights(checkpoint)
         return
 
