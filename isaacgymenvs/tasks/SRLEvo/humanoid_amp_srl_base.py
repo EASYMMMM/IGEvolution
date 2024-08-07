@@ -71,10 +71,11 @@ class HumanoidAMPSRLBase(VecTask):
         self._termination_height = self.cfg["env"]["terminationHeight"]
         self._enable_early_termination = self.cfg["env"]["enableEarlyTermination"]
 
+        # --- user defined ---
         self._torque_threshold = self.cfg["env"]["torque_threshold"]
         self._upper_reward_w = self.cfg["env"]["upper_reward_w"]
-
         self._srl_endpos_obs = self.cfg["env"]["srl_endpos_obs"]
+        self._target_v_task = self.cfg["env"]["target_v_task"]
     
         self.cfg["env"]["numObservations"] = self.get_obs_size()
         self.cfg["env"]["numActions"] = self.get_action_size()
@@ -161,10 +162,12 @@ class HumanoidAMPSRLBase(VecTask):
         return
     
     def get_obs_size(self):
+        obs_size = NUM_OBS
         if self._srl_endpos_obs:
-            return NUM_OBS+6
-        else:
-            return NUM_OBS
+            obs_size = obs_size + 6
+        if self._target_v_task:
+            obs_size = obs_size + 1
+        return obs_size
 
     def get_action_size(self):
         return NUM_ACTIONS
@@ -412,6 +415,7 @@ class HumanoidAMPSRLBase(VecTask):
                                             key_body_pos, self._local_root_obs)
         obs_mirrored = compute_humanoid_observations_mirrored(root_states, dof_pos, dof_vel,
                                             key_body_pos, self._local_root_obs, self.mirror_mat)
+        target_v = compute_task_target_velocity(self.progress_buf)
         return obs, obs_mirrored
 
     def _reset_actors(self, env_ids):
@@ -599,7 +603,7 @@ def dof_to_obs(pose):
     return dof_obs
 
 
-# @torch.jit.script
+@torch.jit.script
 def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, local_root_obs):
     # type: (Tensor, Tensor, Tensor, Tensor, bool) -> Tensor
     root_pos = root_states[:, 0:3]
@@ -636,7 +640,7 @@ def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, l
     obs = torch.cat((root_h, root_rot_obs, local_root_vel, local_root_ang_vel, dof_obs, dof_vel, flat_local_key_pos), dim=-1)
     return obs
 
-# @torch.jit.script
+@torch.jit.script
 def compute_humanoid_observations_mirrored(root_states, dof_pos, dof_vel, key_body_pos, local_root_obs, mirror_mat):
     # type: (Tensor, Tensor, Tensor, Tensor, bool, Tensor) -> Tensor
     root_pos = root_states[:, 0:3]
@@ -695,6 +699,17 @@ def compute_humanoid_observations_mirrored(root_states, dof_pos, dof_vel, key_bo
     obs = torch.cat((root_h, root_rot_obs, local_root_vel, local_root_ang_vel, dof_obs, dof_vel, flat_local_key_pos_mirror), dim=-1)
     return obs
 
+
+@torch.jit.script
+def compute_task_target_velocity(progress_buf):
+    # type: (Tensor) -> Tensor
+    task_velocities = torch.tensor([
+    [1.4, 0, 0]] * 100 + 
+    [[0, 1.4, 0]] * 100 + 
+    [[1.4, 0, 0]] * 101
+    )
+    target_velocity = task_velocities[progress_buf,:]
+    return target_velocity
 
 # 计算任务奖励函数
 @torch.jit.script
