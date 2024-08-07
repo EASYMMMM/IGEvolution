@@ -599,7 +599,7 @@ def dof_to_obs(pose):
     return dof_obs
 
 
-@torch.jit.script
+# @torch.jit.script
 def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, local_root_obs):
     # type: (Tensor, Tensor, Tensor, Tensor, bool) -> Tensor
     root_pos = root_states[:, 0:3]
@@ -636,7 +636,7 @@ def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, l
     obs = torch.cat((root_h, root_rot_obs, local_root_vel, local_root_ang_vel, dof_obs, dof_vel, flat_local_key_pos), dim=-1)
     return obs
 
-@torch.jit.script
+# @torch.jit.script
 def compute_humanoid_observations_mirrored(root_states, dof_pos, dof_vel, key_body_pos, local_root_obs, mirror_mat):
     # type: (Tensor, Tensor, Tensor, Tensor, bool, Tensor) -> Tensor
     root_pos = root_states[:, 0:3]

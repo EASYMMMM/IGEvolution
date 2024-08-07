@@ -23,6 +23,14 @@ from tensorboardX import SummaryWriter
 from rl_games.common import datasets
 from gym.spaces.box import Box
 
+def my_safe_load(filename, **kwargs):
+    return torch_ext.safe_filesystem_op(torch.load, filename, **kwargs)
+
+def my_load_checkpoint(filename,**kwargs):
+    print("=> my loading checkpoint '{}'".format(filename))
+    state = my_safe_load(filename, **kwargs)
+    return state
+
 class SRLAgent(common_agent.CommonAgent):
 
     def __init__(self, base_name, params):
@@ -140,7 +148,7 @@ class SRLAgent(common_agent.CommonAgent):
         if self._humanoid_checkpoint == None:
             raise ValueError
         fn = self._humanoid_checkpoint
-        checkpoint = torch_ext.load_checkpoint(fn)
+        checkpoint = my_load_checkpoint(fn,map_location='cuda:1')
         self.set_weights(checkpoint)
         return
 
