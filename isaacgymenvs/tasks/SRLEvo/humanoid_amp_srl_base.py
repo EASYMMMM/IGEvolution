@@ -312,7 +312,7 @@ class HumanoidAMPSRLBase(VecTask):
 
     def get_task_target_v(self, env_ids=None):
         # 0:X轴正方向, 1:Y轴正方向
-        task_v = torch.tensor([[1,0]] * 100 + [[0,1]] * 100 +  [[1,0]] * 101,device=self.device)
+        task_v = torch.tensor([[0,1]] * 100 + [[1,0]] * 100 +  [[0,1]] * 101,device=self.device)
         target_velocity = task_v[self.progress_buf,:]
         if env_ids is None:
             return target_velocity
@@ -720,7 +720,7 @@ def compute_humanoid_observations_mirrored(root_states, dof_pos, dof_vel, key_bo
 
 
 # 计算任务奖励函数
-@torch.jit.script
+# @torch.jit.script
 def compute_humanoid_reward(obs_buf, dof_force_tensor, action, _torque_threshold, upper_body_pos, upper_reawrd_w, target_v_task = False):
     # type: (Tensor, Tensor, Tensor, int, Tensor, int, bool ) -> Tuple[Tensor, Tensor, Tensor, Tensor]
     # TODO: 目标速度跟随
@@ -738,10 +738,11 @@ def compute_humanoid_reward(obs_buf, dof_force_tensor, action, _torque_threshold
         norm_direction = direction / torch.norm(direction, p=2, dim=1, keepdim=True)
         target_direction = obs_buf[:,-2:] # [x,y]
         d_penalty = -1+torch.sum(norm_direction * target_direction, dim=1)
-        mask = d_penalty < 0.2    # 创建一个布尔掩码，用于标记 d_penalty 小于 0.2 的情况
-        velocity_penalty = torch.zeros_like(d_penalty)
-        velocity_penalty[mask] = 2 * d_penalty[mask]
-        velocity_penalty[~mask] = 0.5 * v_penalty[~mask] + 0.5 * d_penalty[~mask]
+        velocity_penalty = d_penalty
+        # mask = d_penalty < -0.2    # 创建一个布尔掩码，用于标记 d_penalty 小于 0.2 的情况
+        # velocity_penalty = torch.zeros_like(d_penalty)
+        # velocity_penalty[mask] = d_penalty[mask]
+        # velocity_penalty[~mask] = 0.5 * v_penalty[~mask] + 0.5 * d_penalty[~mask]
     
     
     # v1.5.12 比例惩罚，力矩绝对值超过100
