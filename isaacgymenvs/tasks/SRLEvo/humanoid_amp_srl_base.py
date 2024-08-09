@@ -168,7 +168,7 @@ class HumanoidAMPSRLBase(VecTask):
         if self._srl_endpos_obs:
             obs_size = obs_size + 6
         if self._target_v_task:
-            obs_size = obs_size + 1
+            obs_size = obs_size + 2
         return obs_size
 
     def get_action_size(self):
@@ -720,7 +720,7 @@ def compute_humanoid_observations_mirrored(root_states, dof_pos, dof_vel, key_bo
 
 
 # 计算任务奖励函数
-# @torch.jit.script
+@torch.jit.script
 def compute_humanoid_reward(obs_buf, dof_force_tensor, action, _torque_threshold, upper_body_pos, upper_reawrd_w, target_v_task = False):
     # type: (Tensor, Tensor, Tensor, int, Tensor, int, bool ) -> Tuple[Tensor, Tensor, Tensor, Tensor]
     # TODO: 目标速度跟随
@@ -729,15 +729,19 @@ def compute_humanoid_reward(obs_buf, dof_force_tensor, action, _torque_threshold
         velocity  = obs_buf[:,7]  # vx
         velocity_penalty = - torch.where(velocity < velocity_threshold, (velocity_threshold - velocity)**2, torch.zeros_like(velocity))
     else: 
-        velocity_x  = obs_buf[:,7]  # vx
-        velocity_y  = obs_buf[:,8]  # vy
-        velocity = torch.sqrt(velocity_x**2 + velocity_y**2)
+        # velocity_x  = obs_buf[:,7]  # vx
+        # velocity_y  = obs_buf[:,8]  # vy
+        # velocity = torch.sqrt(velocity_x**2 + velocity_y**2)
+        velocity  = obs_buf[:,7]  # vx
         v_penalty = - torch.where(velocity < velocity_threshold, (velocity_threshold - velocity)**2, torch.zeros_like(velocity))
         direction = obs_buf[:,1:3]  # [x,y]
         norm_direction = direction / torch.norm(direction, p=2, dim=1, keepdim=True)
         target_direction = obs_buf[:,-2:] # [x,y]
         d_penalty = -1+torch.sum(norm_direction * target_direction, dim=1)
-        velocity_penalty = 0.5*v_penalty + 0.5*d_penalty
+        if d_penalty < 0.2:
+            velocity_penalty = 2*d_penalty
+        else:
+            velocity_penalty = 0.5*v_penalty + 0.5*d_penalty
         
         # # 计算目标方向速度惩罚
         # target_v = obs_buf[:,-1]  # target velocity
