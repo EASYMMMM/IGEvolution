@@ -737,7 +737,9 @@ def compute_humanoid_reward(obs_buf, dof_force_tensor, action, _torque_threshold
         direction = obs_buf[:,1:3]  # [x,y]
         norm_direction = direction / torch.norm(direction, p=2, dim=1, keepdim=True)
         target_direction = obs_buf[:,-2:] # [x,y]
-        d_penalty = -1+torch.sum(norm_direction * target_direction, dim=1)
+        # d_penalty = -1+torch.sum(norm_direction * target_direction, dim=1)
+        d_penalty = -(-1+torch.sum(norm_direction * target_direction, dim=1))**2
+
         velocity_penalty = d_penalty
         # mask = d_penalty < -0.2    # 创建一个布尔掩码，用于标记 d_penalty 小于 0.2 的情况
         # velocity_penalty = torch.zeros_like(d_penalty)
