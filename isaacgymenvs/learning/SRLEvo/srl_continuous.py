@@ -103,7 +103,7 @@ class SRLAgent(common_agent.CommonAgent):
         if self._normalize_amp_input:
             self._amp_input_mean_std = RunningMeanStd(self._amp_observation_space.shape).to(self.ppo_device)
 
-
+        self._srl_dof = 8
         return
 
     def init_tensors(self):
@@ -187,9 +187,19 @@ class SRLAgent(common_agent.CommonAgent):
             'obs' : processed_obs,
             'rnn_states' : self.rnn_states
         }
+        if self._humanoid_obs_masked :
+            masked_input_dict = {
+            'is_train': False,
+            'prev_actions': None, 
+            'obs' : self.mask_humanoid_obs(processed_obs), # TODO:humanoid观测掩码
+            'rnn_states' : self.rnn_states                
+            }
 
         with torch.no_grad():
-            res_dict = self.model(input_dict)
+            if self._humanoid_obs_masked :
+                res_dict = self.model(masked_input_dict)
+            else:
+                res_dict = self.model(input_dict)
             res_dict_srl = self.model_srl(input_dict)
             # if self.has_central_value:
             #     states = obs['states']
@@ -201,6 +211,14 @@ class SRLAgent(common_agent.CommonAgent):
             #     res_dict['values'] = value
         return res_dict, res_dict_srl
 
+    def mask_humanoid_obs(self, obs):
+        # root_h 1; root_rot_obs 6; local_root_vel 3 ; local_root_ang_vel 3 ; dof_obs 60; dof_vel 36 ; flat_local_key_pos 12
+        mask = torch.ones_like(obs)
+        mask[: , 66-1 : 66-1+self._srl_dof]  = 0  # SRL dof position
+        mask[: , 66-1+self._srl_dof+28:66-1+self._srl_dof+28+self._srl_dof] = 0
+        masked_obs = obs * mask
+        return masked_obs
+    
     def play_steps(self):
         # 执行一轮完整的经验收集过程 
         self.set_eval()
