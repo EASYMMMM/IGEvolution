@@ -813,6 +813,7 @@ class SRLAgent(common_agent.CommonAgent):
         self._humanoid_checkpoint = config['humanoid_checkpoint']
 
         self.mirror_loss = config.get('mirror_loss', False)
+        self._humanoid_obs_masked = config.get('humanoid_obs_masked', False)
 
         return
 
