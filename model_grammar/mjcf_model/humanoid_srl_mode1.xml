@@ -18,7 +18,7 @@
 	</default>
 	<asset/>
 	<worldbody>
-		<geom conaffinity="1" material="grid" name="floor" size="100 100 0.2" type="plane"/>
+		<geom conaffinity="1" name="floor" size="100 100 0.2" type="plane"/>
 		<body childclass="body" name="pelvis" pos="0 0 1">
 			<freejoint name="root"/>
 			<site class="force-torque" name="root"/>
@@ -122,32 +122,33 @@
 					</body>
 				</body>
 			</body>
-		</body>
-		<body name="SRL_root" pos="0 0 2" quat="0.0 0.0 0.0 1.0">
-			<geom density="2500" name="SRL_geom_root" pos="0 0 0" size="0.02 0.095 0.095" type="box"/>
-			<body name="SRL_leg2" pos="0.02 0.0475 0" quat="1.0 0.0 0.0 0.0">
-				<geom density="2500" fromto="0 0 0 0.1 0 0" name="SRL_geom_leg2" size="0.03" type="capsule"/>
-				<joint axis="0 0 1" name="SRL_joint_joint11" pos="0 0 0" range="-45 45" type="hinge"/>
-				<joint axis="0 1 0" name="SRL_joint_joint12" pos="0 0 0" range="-45 45" type="hinge"/>
-				<body name="SRL_shin11" pos="0.1 0 0" quat="0.92388 0.0 0.38268 0.0">
-					<geom density="2500" fromto="0 0 0 0.68 0 0" name="SRL_geom_shin11" size="0.03" type="capsule"/>
-					<joint axis="0 1 0" name="SRL_joint_joint13" pos="0 0 0" range="-45 45" type="hinge"/>
-					<body name="SRL_shin12" pos="0.68 0 0" quat="0.70711 0.0 -0.70711 0.0">
-						<geom density="2500" name="SRL_geom_shin12" pos="0.09 0 -0.045" size="0.12 0.045 0.02" type="box"/>
-						<joint axis="0 1 0" name="SRL_joint_joint14" pos="0 0 0" range="-45 45" type="hinge"/>
+			<body name="SRL_root" pos="-0.07 0 0.05" quat="0.0 0.0 0.0 1.0">
+				<geom density="2500" name="SRL_geom_root" pos="0 0 0" size="0.02 0.095 0.095" type="box"/>
+				<geom name="backpack" type="box" pos="0.20 0 0.35" size="0.13 0.13 0.22" density="6000"  />
+				<body name="SRL_right_leg1" pos="0.02 0.0475 0" quat="1.0 0.0 0.0 0.0">
+					<geom density="2500" fromto="0 0 0 0.4 0 0" name="SRL_geom_right_leg1" size="0.03" type="capsule"/>
+					<joint axis="0 0 1" name="SRL_joint_right_hipjoint_z" pos="0 0 0" range="-45 45" type="hinge"/>
+					<joint axis="0 1 0" name="SRL_joint_right_hipjoint_y" pos="0 0 0" range="-45 45" type="hinge"/>
+					<body name="SRL_right_leg2" pos="0.4 0 0" quat="0.92388 0.0 0.38268 0.0">
+						<geom density="2500" fromto="0 0 0 0.8 0 0" name="SRL_geom_right_leg2" size="0.03" type="capsule"/>
+						<joint axis="0 1 0" name="SRL_joint_right_kneejoint" pos="0 0 0" range="-45 45" type="hinge"/>
+						<body name="SRL_right_end" pos="0.8 0 0" quat="0.70711 0.0 -0.70711 0.0">
+							<geom density="2500" name="SRL_geom_right_end" pos="0.09 0 -0.045" size="0.12 0.045 0.02" type="box"/>
+							<joint axis="0 1 0" name="SRL_joint_right_ankle" pos="0 0 0" range="-45 45" type="hinge"/>
+						</body>
 					</body>
 				</body>
-			</body>
-			<body name="SRL_leg1" pos="0.02 -0.0475 0" quat="1.0 0.0 0.0 0.0">
-				<geom density="2500" fromto="0 0 0 0.1 0 0" name="SRL_geom_leg1" size="0.03" type="capsule"/>
-				<joint axis="0 0 1" name="SRL_joint_joint01" pos="0 0 0" range="-45 45" type="hinge"/>
-				<joint axis="0 1 0" name="SRL_joint_joint02" pos="0 0 0" range="-45 45" type="hinge"/>
-				<body name="SRL_shin1" pos="0.1 0 0" quat="0.92388 0.0 0.38268 0.0">
-					<geom density="2500" fromto="0 0 0 0.68 0 0" name="SRL_geom_shin1" size="0.03" type="capsule"/>
-					<joint axis="0 1 0" name="SRL_joint_joint1" pos="0 0 0" range="-45 45" type="hinge"/>
-					<body name="SRL_shin2" pos="0.68 0 0" quat="0.70711 0.0 -0.70711 0.0">
-						<geom density="2500" name="SRL_geom_shin2" pos="0.09 0 -0.045" size="0.12 0.045 0.02" type="box"/>
-						<joint axis="0 1 0" name="SRL_joint_joint2" pos="0 0 0" range="-45 45" type="hinge"/>
+				<body name="SRL_left_leg1" pos="0.02 -0.0475 0" quat="1.0 0.0 0.0 0.0">
+					<geom density="2500" fromto="0 0 0 0.4 0 0" name="SRL_geom_left_leg1" size="0.03" type="capsule"/>
+					<joint axis="0 0 1" name="SRL_joint_left_hip_z" pos="0 0 0" range="-45 45" type="hinge"/>
+					<joint axis="0 1 0" name="SRL_joint_left_hip_y" pos="0 0 0" range="-45 45" type="hinge"/>
+					<body name="SRL_left_leg2" pos="0.4 0 0" quat="0.92388 0.0 0.38268 0.0">
+						<geom density="2500" fromto="0 0 0 0.8 0 0" name="SRL_geom_left_leg2" size="0.03" type="capsule"/>
+						<joint axis="0 1 0" name="SRL_joint_left_kneejoint" pos="0 0 0" range="-45 45" type="hinge"/>
+						<body name="SRL_left_end" pos="0.8 0 0" quat="0.86603 0.0 -0.5 0.0">
+							<geom density="2500" name="SRL_geom_left_end" pos="0 0 0" size="0.036" type="sphere"/>
+							<joint axis="0 1 0" name="SRL_joint_left_ankle" pos="0 0 0" range="-45 45" type="hinge"/>
+						</body>
 					</body>
 				</body>
 			</body>
@@ -182,13 +183,47 @@
 		<motor gear="50" joint="left_ankle_x" name="left_ankle_x"/>
 		<motor gear="50" joint="left_ankle_y" name="left_ankle_y"/>
 		<motor gear="50" joint="left_ankle_z" name="left_ankle_z"/>
-		<motor ctrllimited="true" ctrlrange="-1 1" joint="SRL_joint_joint11"/>
-		<motor ctrllimited="true" ctrlrange="-1 1" joint="SRL_joint_joint12"/>
-		<motor ctrllimited="true" ctrlrange="-1 1" joint="SRL_joint_joint13"/>
-		<motor ctrllimited="true" ctrlrange="-1 1" joint="SRL_joint_joint14"/>
-		<motor ctrllimited="true" ctrlrange="-1 1" joint="SRL_joint_joint01"/>
-		<motor ctrllimited="true" ctrlrange="-1 1" joint="SRL_joint_joint02"/>
-		<motor ctrllimited="true" ctrlrange="-1 1" joint="SRL_joint_joint1"/>
-		<motor ctrllimited="true" ctrlrange="-1 1" joint="SRL_joint_joint2"/>
+		<motor gear="125" joint="SRL_joint_right_hipjoint_z" name="SRL_joint_right_hipjoint_z"/>
+		<motor gear="125" joint="SRL_joint_right_hipjoint_y" name="SRL_joint_right_hipjoint_y"/>
+		<motor gear="125" joint="SRL_joint_right_kneejoint" name="SRL_joint_right_kneejoint"/>
+		<motor gear="125" joint="SRL_joint_right_ankle" name="SRL_joint_right_ankle"/>
+		<motor gear="125" joint="SRL_joint_left_hip_z" name="SRL_joint_left_hip_z"/>
+		<motor gear="125" joint="SRL_joint_left_hip_y" name="SRL_joint_left_hip_y"/>
+		<motor gear="125" joint="SRL_joint_left_kneejoint" name="SRL_joint_left_kneejoint"/>
+		<motor gear="125" joint="SRL_joint_left_ankle" name="SRL_joint_left_ankle"/>
 	</actuator>
+	<sensor>
+		<subtreelinvel body="pelvis" name="pelvis_subtreelinvel"/>
+		<accelerometer site="root" name="root_accel"/>
+		<velocimeter site="root" name="root_vel"/>
+		<gyro site="root" name="root_gyro"/>
+		<force site="left_ankle" name="left_ankle_force"/>
+		<force site="right_ankle" name="right_ankle_force"/>
+		<force site="left_knee" name="left_knee_force"/>
+		<force site="right_knee" name="right_knee_force"/>
+		<force site="left_hip" name="left_hip_force"/>
+		<force site="right_hip" name="right_hip_force"/>
+		<torque site="left_ankle" name="left_ankle_torque"/>
+		<torque site="right_ankle" name="right_ankle_torque"/>
+		<torque site="left_knee" name="left_knee_torque"/>
+		<torque site="right_knee" name="right_knee_torque"/>
+		<torque site="left_hip" name="left_hip_torque"/>
+		<torque site="right_hip" name="right_hip_torque"/>
+		<touch site="pelvis" name="pelvis_touch"/>
+		<touch site="upper_waist" name="upper_waist_touch"/>
+		<touch site="torso" name="torso_touch"/>
+		<touch site="head" name="head_touch"/>
+		<touch site="right_upper_arm" name="right_upper_arm_touch"/>
+		<touch site="right_lower_arm" name="right_lower_arm_touch"/>
+		<touch site="right_hand" name="right_hand_touch"/>
+		<touch site="left_upper_arm" name="left_upper_arm_touch"/>
+		<touch site="left_lower_arm" name="left_lower_arm_touch"/>
+		<touch site="left_hand" name="left_hand_touch"/>
+		<touch site="right_thigh" name="right_thigh_touch"/>
+		<touch site="right_shin" name="right_shin_touch"/>
+		<touch site="right_foot" name="right_foot_touch"/>
+		<touch site="left_thigh" name="left_thigh_touch"/>
+		<touch site="left_shin" name="left_shin_touch"/>
+		<touch site="left_foot" name="left_foot_touch"/>
+	</sensor>
 </mujoco>

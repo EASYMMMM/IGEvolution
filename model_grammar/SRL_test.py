@@ -198,7 +198,7 @@ def SRL_2(  name='srl_2',
 
 
     M = ModelGenerator(R)
-    M.set_compiler(angle='degree')
+    # M.set_compiler(angle='degree')
     M.set_basic_assets()
     ms = e.Material(
             name="SRL",

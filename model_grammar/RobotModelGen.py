@@ -14,8 +14,6 @@ def euler2quaternion(euler):
     quaternion = r.as_quat()
     return quaternion
  
- 
- 
 
 class ModelGenerator():
     '''
@@ -24,28 +22,30 @@ class ModelGenerator():
     '''
     def __init__(self,
                  robot:RobotGraph , 
-                 path:str = 'mjcf_model/'  , # 存储路径
+                 save_path:str = 'mjcf_model/'  , # 存储路径
+                 model_name = 'XMLModel'
                  ):
         self.robot = robot # 机器人图
-        self.model = e.Mujoco(model=self.robot.graph['name']) # mjcf生成器
-        self.path = path
+        self.model = e.Mujoco(model=model_name) # mjcf生成器
+        self.save_path = save_path
         # 初始化xml文档结构
-        self.compiler = e.Compiler()
+        # self.compiler = e.Compiler()
+        self.statistic = e.Statistic()
         self.option = e.Option()
-        self.size = e.Size()
-        self.custom = e.Custom()
+        # self.size = e.Size()
+        # self.custom = e.Custom()
         self.default = e.Default()
         self.asset = e.Asset()
         self.worldbody = e.Worldbody()
         self.actuator = e.Actuator()
-        self.model.add_children([self.compiler,
+        self.sensor = e.Sensor()
+        self.model.add_children([self.statistic,
                                  self.option,
-                                 self.size,
-                                 self.custom,
                                  self.default,
                                  self.asset,
                                  self.worldbody,
-                                 self.actuator])
+                                 self.actuator,
+                                 self.sensor])
     def set_basic_assets(self,):
         '''
         添加基本的素材：纹理，地面
@@ -102,19 +102,31 @@ class ModelGenerator():
         ])
     
     def set_default(self,):
-            # Default
-        default_joint = e.Joint(
-            armature=1,
-            damping=1,
-            limited=True
-        )
-        d_geom = e.Geom(
-            conaffinity=0,
-            condim=3,
-            margin=0.01,
-            rgba=[0.8, 0.6, 0.4, 1]
-        )
-        self.default.add_children([default_joint, d_geom])
+        # 添加motor元素
+        motor = e.Motor(ctrlrange=[-1, 1], ctrllimited=True)
+        self.default.add_child(motor)
+
+        # 创建并添加<body>的默认设置
+        body_default = e.Default(class_="body")
+        geom = e.Geom(type="capsule", condim=1, friction=[1.0, 0.05, 0.05], solimp=[0.9, 0.99, 0.003], solref=[0.015, 1])
+        joint = e.Joint(type="hinge", damping=0.1, stiffness=5, armature=0.007, limited=True, solimplimit=[0, 0.99, 0.01])
+        site = e.Site(size=0.04, group=3)
+        body_default.add_children([geom, joint, site])
+
+        # 添加force-torque的默认设置
+        force_torque_default = e.Default(class_="force-torque")
+        force_torque_site = e.Site(type="box", size=[0.01, 0.01, 0.02], rgba=[1, 0, 0, 1])
+        force_torque_default.add_child(force_torque_site)
+        body_default.add_child(force_torque_default)
+
+        # 添加touch的默认设置
+        touch_default = e.Default(class_="touch")
+        touch_site = e.Site(type="capsule", rgba=[0, 0, 1, 0.3])
+        touch_default.add_child(touch_site)
+        body_default.add_child(touch_default)
+
+        # 将body_default添加到default_element中
+        self.default.add_child(body_default)
 
     def set_compiler(self, angle = 'radian', eulerseq = 'xyz',**kwargs):
         self.compiler.angle = angle
@@ -219,12 +231,9 @@ class ModelGenerator():
         if robot_joint.stiffness != None:
             joint.stiffness = robot_joint.stiffness
 
-        actuator  = e.Motor(
-                        ctrllimited=robot_joint.ctrllimited,
-                        ctrlrange= robot_joint.ctrlrange,
-                        joint="SRL_joint_"+robot_joint.name,
-                        
-                    )
+        actuator  = e.Motor(name = "SRL_joint_"+robot_joint.name,
+                            joint="SRL_joint_"+robot_joint.name,
+                            gear=125)
         return joint,actuator
 
     def get_robot_dfs(self,):
@@ -342,20 +351,366 @@ class ModelGenerator():
                     continue
         self.worldbody.add_child(rootbody)
 
+    def get_humanoid_model(self):
+        # 创建<worldbody>元素
+        #worldbody = e.Worldbody()
+
+        # 添加floor geom
+        floor_geom = e.Geom(name="floor", type="plane", conaffinity=1, size=[100, 100, 0.2] )
+        self.worldbody.add_child(floor_geom)
+
+        # 创建pelvis body及其子元素
+        self.pelvis_body = e.Body(name="pelvis", pos=[0, 0, 1], childclass="body")
+        self.pelvis_body.add_children([
+            e.Freejoint(name="root"),
+            e.Site(name="root", class_="force-torque"),
+            e.Geom(name="pelvis", type="sphere", pos=[0, 0, 0.07], size=[0.09], density=2226),
+            e.Geom(name="upper_waist", type="sphere", pos=[0, 0, 0.205], size=[0.07], density=2226),
+            e.Site(name="pelvis", class_="touch", type="sphere", pos=[0, 0, 0.07], size=[0.091]),
+            e.Site(name="upper_waist", class_="touch", type="sphere", pos=[0, 0, 0.205], size=[0.071])
+        ])
+
+        # 创建torso body及其子元素
+        torso_body = e.Body(name="torso", pos=[0, 0, 0.236151])
+        torso_body.add_children([
+            e.Light(name="top", pos=[0, 0, 2], mode="trackcom"),
+            e.Camera(name="back", pos=[-3, 0, 1], xyaxes=[0, -1, 0, 1, 0, 2], mode="trackcom"),
+            e.Camera(name="side", pos=[0, -3, 1], xyaxes=[1, 0, 0, 0, 1, 2], mode="trackcom"),
+            e.Joint(name="abdomen_x", pos=[0, 0, 0], axis=[1, 0, 0], range=[-60, 60], stiffness=600, damping=60, armature=0.025),
+            e.Joint(name="abdomen_y", pos=[0, 0, 0], axis=[0, 1, 0], range=[-60, 90], stiffness=600, damping=60, armature=0.025),
+            e.Joint(name="abdomen_z", pos=[0, 0, 0], axis=[0, 0, 1], range=[-50, 50], stiffness=600, damping=60, armature=0.025),
+            e.Geom(name="torso", type="sphere", pos=[0, 0, 0.12], size=[0.11], density=1794),
+            e.Site(name="torso", class_="touch", type="sphere", pos=[0, 0, 0.12], size=[0.111]),
+            e.Geom(name="right_clavicle", fromto=[-0.0060125, -0.0457775, 0.2287955, -0.016835, -0.128177, 0.2376182], size=[0.045], density=1100),
+            e.Geom(name="left_clavicle", fromto=[-0.0060125, 0.0457775, 0.2287955, -0.016835, 0.128177, 0.2376182], size=[0.045], density=1100)
+        ])
+
+        # 创建head body及其子元素
+        head_body = e.Body(name="head", pos=[0, 0, 0.223894])
+        head_body.add_children([
+            e.Joint(name="neck_x", axis=[1, 0, 0], range=[-50, 50], stiffness=50, damping=5, armature=0.017),
+            e.Joint(name="neck_y", axis=[0, 1, 0], range=[-40, 60], stiffness=50, damping=5, armature=0.017),
+            e.Joint(name="neck_z", axis=[0, 0, 1], range=[-45, 45], stiffness=50, damping=5, armature=0.017),
+            e.Geom(name="head", type="sphere", pos=[0, 0, 0.175], size=[0.095], density=1081),
+            e.Site(name="head", class_="touch", pos=[0, 0, 0.175], type="sphere", size=[0.103]),
+            e.Camera(name="egocentric", pos=[0.103, 0, 0.175], xyaxes=[0, -1, 0, 0.1, 0, 1], fovy=80)
+        ])
+
+        # 创建right_upper_arm body及其子元素
+        right_upper_arm_body = e.Body(name="right_upper_arm", pos=[-0.02405, -0.18311, 0.24350])
+        right_upper_arm_body.add_children([
+            e.Joint(name="right_shoulder_x", axis=[1, 0, 0], range=[-180, 45], stiffness=200, damping=20, armature=0.02),
+            e.Joint(name="right_shoulder_y", axis=[0, 1, 0], range=[-180, 60], stiffness=200, damping=20, armature=0.02),
+            e.Joint(name="right_shoulder_z", axis=[0, 0, 1], range=[-90, 90], stiffness=200, damping=20, armature=0.02),
+            e.Geom(name="right_upper_arm", fromto=[0, 0, -0.05, 0, 0, -0.23], size=[0.045], density=982),
+            e.Site(name="right_upper_arm", class_="touch", pos=[0, 0, -0.14], size=[0.046, 0.1], zaxis=[0, 0, 1])
+        ])
+
+        # 创建right_lower_arm body及其子元素
+        right_lower_arm_body = e.Body(name="right_lower_arm", pos=[0, 0, -0.274788])
+        right_lower_arm_body.add_children([
+            e.Joint(name="right_elbow", axis=[0, 1, 0], range=[-160, 0], stiffness=150, damping=15, armature=0.015),
+            e.Geom(name="right_lower_arm", fromto=[0, 0, -0.0525, 0, 0, -0.1875], size=[0.04], density=1056),
+            e.Site(name="right_lower_arm", class_="touch", pos=[0, 0, -0.12], size=[0.041, 0.0685], zaxis=[0, 1, 0])
+        ])
+
+        # 创建right_hand body及其子元素
+        right_hand_body = e.Body(name="right_hand", pos=[0, 0, -0.258947])
+        right_hand_body.add_children([
+            e.Geom(name="right_hand", type="sphere", size=[0.04], density=1865),
+            e.Site(name="right_hand", class_="touch", type="sphere", size=[0.041])
+        ])
+
+        # 创建left_upper_arm body及其子元素
+        left_upper_arm_body = e.Body(name="left_upper_arm", pos=[-0.02405, 0.18311, 0.24350])
+        left_upper_arm_body.add_children([
+            e.Joint(name="left_shoulder_x", axis=[1, 0, 0], range=[-45, 180], stiffness=200, damping=20, armature=0.02),
+            e.Joint(name="left_shoulder_y", axis=[0, 1, 0], range=[-180, 60], stiffness=200, damping=20, armature=0.02),
+            e.Joint(name="left_shoulder_z", axis=[0, 0, 1], range=[-90, 90], stiffness=200, damping=20, armature=0.02),
+            e.Geom(name="left_upper_arm", fromto=[0, 0, -0.05, 0, 0, -0.23], size=[0.045], density=982),
+            e.Site(name="left_upper_arm", class_="touch", pos=[0, 0, -0.14], size=[0.046, 0.1], zaxis=[0, 0, 1])
+        ])
+
+        # 创建left_lower_arm body及其子元素
+        left_lower_arm_body = e.Body(name="left_lower_arm", pos=[0, 0, -0.274788])
+        left_lower_arm_body.add_children([
+            e.Joint(name="left_elbow", axis=[0, 1, 0], range=[-160, 0], stiffness=150, damping=15, armature=0.015),
+            e.Geom(name="left_lower_arm", fromto=[0, 0, -0.0525, 0, 0, -0.1875], size=[0.04], density=1056),
+            e.Site(name="left_lower_arm", class_="touch", pos=[0, 0, -0.1], size=[0.041, 0.0685], zaxis=[0, 0, 1])
+        ])
+
+        # 创建left_hand body及其子元素
+        left_hand_body = e.Body(name="left_hand", pos=[0, 0, -0.258947])
+        left_hand_body.add_children([
+            e.Geom(name="left_hand", type="sphere", size=[0.04], density=1865),
+            e.Site(name="left_hand", class_="touch", type="sphere", size=[0.041])
+        ])
+
+        # 将left_lower_arm和left_hand body添加到left_upper_arm body中
+        left_upper_arm_body.add_child(left_lower_arm_body)
+        left_lower_arm_body.add_child(left_hand_body)
+
+
+
+        # 创建right_thigh body及其子元素
+        right_thigh_body = e.Body(name="right_thigh", pos=[0, -0.084887, 0])
+        right_thigh_body.add_children([
+            e.Site(name="right_hip", class_="force-torque"),
+            e.Joint(name="right_hip_x", axis=[1, 0, 0], range=[-60, 15], stiffness=300, damping=30, armature=0.02),
+            e.Joint(name="right_hip_y", axis=[0, 1, 0], range=[-140, 60], stiffness=300, damping=30, armature=0.02),
+            e.Joint(name="right_hip_z", axis=[0, 0, 1], range=[-60, 35], stiffness=300, damping=30, armature=0.02),
+            e.Geom(name="right_thigh", fromto=[0, 0, -0.06, 0, 0, -0.36], size=[0.055], density=1269),
+            e.Site(name="right_thigh", class_="touch", pos=[0, 0, -0.21], size=[0.056, 0.301], zaxis=[0, 0, -1])
+        ])
+
+        # 创建right_shin body及其子元素
+        right_shin_body = e.Body(name="right_shin", pos=[0, 0, -0.421546])
+        right_shin_body.add_children([
+            e.Site(name="right_knee", class_="force-torque", pos=[0, 0, 0]),
+            e.Joint(name="right_knee", pos=[0, 0, 0], axis=[0, 1, 0], range=[0, 160], stiffness=300, damping=30, armature=0.02),
+            e.Geom(name="right_shin", fromto=[0, 0, -0.045, 0, 0, -0.355], size=[0.05], density=1014),
+            e.Site(name="right_shin", class_="touch", pos=[0, 0, -0.2], size=[0.051, 0.156], zaxis=[0, 0, -1])
+        ])
+
+        # 创建right_foot body及其子元素
+        right_foot_body = e.Body(name="right_foot", pos=[0, 0, -0.409870])
+        right_foot_body.add_children([
+            e.Site(name="right_ankle", class_="force-torque"),
+            e.Joint(name="right_ankle_x", pos=[0, 0, 0], axis=[1, 0, 0], range=[-30, 30], stiffness=200, damping=20, armature=0.01),
+            e.Joint(name="right_ankle_y", pos=[0, 0, 0], axis=[0, 1, 0], range=[-55, 55], stiffness=200, damping=20, armature=0.01),
+            e.Joint(name="right_ankle_z", pos=[0, 0, 0], axis=[0, 0, 1], range=[-40, 40], stiffness=200, damping=20, armature=0.01),
+            e.Geom(name="right_foot", type="box", pos=[0.045, 0, -0.0225], size=[0.0885, 0.045, 0.0275], density=1141),
+            e.Site(name="right_foot", class_="touch", type="box", pos=[0.045, 0, -0.0225], size=[0.0895, 0.055, 0.0285])
+        ])
+
+        # 将right_shin和right_foot body添加到right_thigh body中
+        right_thigh_body.add_child(right_shin_body)
+        right_shin_body.add_child(right_foot_body)
+
+
+
+        # 创建left_thigh body及其子元素
+        left_thigh_body = e.Body(name="left_thigh", pos=[0, 0.084887, 0])
+        left_thigh_body.add_children([
+            e.Site(name="left_hip", class_="force-torque"),
+            e.Joint(name="left_hip_x", axis=[1, 0, 0], range=[-15, 60], stiffness=300, damping=30, armature=0.02),
+            e.Joint(name="left_hip_y", axis=[0, 1, 0], range=[-140, 60], stiffness=300, damping=30, armature=0.02),
+            e.Joint(name="left_hip_z", axis=[0, 0, 1], range=[-35, 60], stiffness=300, damping=30, armature=0.02),
+            e.Geom(name="left_thigh", fromto=[0, 0, -0.06, 0, 0, -0.36], size=[0.055], density=1269),
+            e.Site(name="left_thigh", class_="touch", pos=[0, 0, -0.21], size=[0.056, 0.301], zaxis=[0, 0, -1])
+        ])
+
+        # 创建left_shin body及其子元素
+        left_shin_body = e.Body(name="left_shin", pos=[0, 0, -0.421546])
+        left_shin_body.add_children([
+            e.Site(name="left_knee", class_="force-torque", pos=[0, 0, 0.02]),
+            e.Joint(name="left_knee", pos=[0, 0, 0], axis=[0, 1, 0], range=[0, 160], stiffness=300, damping=30, armature=0.02),
+            e.Geom(name="left_shin", fromto=[0, 0, -0.045, 0, 0, -0.355], size=[0.05], density=1014),
+            e.Site(name="left_shin", class_="touch", pos=[0, 0, -0.2], size=[0.051, 0.156], zaxis=[0, 0, -1])
+        ])
+
+        # 创建left_foot body及其子元素
+        left_foot_body = e.Body(name="left_foot", pos=[0, 0, -0.409870])
+        left_foot_body.add_children([
+            e.Site(name="left_ankle", class_="force-torque"),
+            e.Joint(name="left_ankle_x", pos=[0, 0, 0], axis=[1, 0, 0], range=[-30, 30], stiffness=200, damping=20, armature=0.01),
+            e.Joint(name="left_ankle_y", pos=[0, 0, 0], axis=[0, 1, 0], range=[-55, 55], stiffness=200, damping=20, armature=0.01),
+            e.Joint(name="left_ankle_z", pos=[0, 0, 0], axis=[0, 0, 1], range=[-40, 40], stiffness=200, damping=20, armature=0.01),
+            e.Geom(name="left_foot", type="box", pos=[0.045, 0, -0.0225], size=[0.0885, 0.045, 0.0275], density=1141),
+            e.Site(name="left_foot", class_="touch", type="box", pos=[0.045, 0, -0.0225], size=[0.0895, 0.055, 0.0285])
+        ])
+
+        # 将left_shin和left_foot body添加到left_thigh body中
+        left_thigh_body.add_child(left_shin_body)
+        left_shin_body.add_child(left_foot_body)
+
+        # 将所有子元素添加到对应的父元素中
+        right_upper_arm_body.add_child(right_lower_arm_body)
+        right_lower_arm_body.add_child(right_hand_body)
+        torso_body.add_child(head_body)
+        torso_body.add_child(right_upper_arm_body)
+        torso_body.add_child(left_upper_arm_body)
+
+        self.pelvis_body.add_child(torso_body)
+        self.pelvis_body.add_child(right_thigh_body)
+        self.pelvis_body.add_child(left_thigh_body)
+
+        self.worldbody.add_child(self.pelvis_body)
+
+        # 添加motor元素
+        self.motor_list = [
+            e.Motor(name='abdomen_x', gear=125, joint='abdomen_x'),
+            e.Motor(name='abdomen_y', gear=125, joint='abdomen_y'),
+            e.Motor(name='abdomen_z', gear=125, joint='abdomen_z'),
+            e.Motor(name='neck_x', gear=20, joint='neck_x'),
+            e.Motor(name='neck_y', gear=20, joint='neck_y'),
+            e.Motor(name='neck_z', gear=20, joint='neck_z'),
+            e.Motor(name='right_shoulder_x', gear=70, joint='right_shoulder_x'),
+            e.Motor(name='right_shoulder_y', gear=70, joint='right_shoulder_y'),
+            e.Motor(name='right_shoulder_z', gear=70, joint='right_shoulder_z'),
+            e.Motor(name='right_elbow', gear=60, joint='right_elbow'),
+            e.Motor(name='left_shoulder_x', gear=70, joint='left_shoulder_x'),
+            e.Motor(name='left_shoulder_y', gear=70, joint='left_shoulder_y'),
+            e.Motor(name='left_shoulder_z', gear=70, joint='left_shoulder_z'),
+            e.Motor(name='left_elbow', gear=60, joint='left_elbow'),
+            e.Motor(name='right_hip_x', gear=125, joint='right_hip_x'),
+            e.Motor(name='right_hip_z', gear=125, joint='right_hip_z'),
+            e.Motor(name='right_hip_y', gear=125, joint='right_hip_y'),
+            e.Motor(name='right_knee', gear=100, joint='right_knee'),
+            e.Motor(name='right_ankle_x', gear=50, joint='right_ankle_x'),
+            e.Motor(name='right_ankle_y', gear=50, joint='right_ankle_y'),
+            e.Motor(name='right_ankle_z', gear=50, joint='right_ankle_z'),
+            e.Motor(name='left_hip_x', gear=125, joint='left_hip_x'),
+            e.Motor(name='left_hip_z', gear=125, joint='left_hip_z'),
+            e.Motor(name='left_hip_y', gear=125, joint='left_hip_y'),
+            e.Motor(name='left_knee', gear=100, joint='left_knee'),
+            e.Motor(name='left_ankle_x', gear=50, joint='left_ankle_x'),
+            e.Motor(name='left_ankle_y', gear=50, joint='left_ankle_y'),
+            e.Motor(name='left_ankle_z', gear=50, joint='left_ankle_z')
+        ]
+        self.actuator.add_children(self.motor_list)
+
+    def get_SRL_dfs(self,):
+        '''
+        根据图结构递归生成SRL机器人
+        SRL附着在pelvis下
+        '''
+        robot_graph = self.robot
+        node_stack  = queue.LifoQueue() # 储存图节点 栈
+        body_stack  = queue.LifoQueue() # 储存xmlbody 栈
+        joint_list  = []
+        node_list   = []
+        # 先创建root body
+        if 'root' not in robot_graph.nodes :
+            raise ValueError('The robot graph does not have root node.') 
+        rootbody, rootgeom = self.get_link(robot_graph.nodes['root']['info'])
+        rootbody.add_child(rootgeom)
+        for n in robot_graph.successors('root'):
+            if robot_graph.nodes[n]['type'] == 'link':
+                if n not in node_list:
+                    node_stack.put(n) # 压栈
+                    body_stack.put(rootbody) # 压栈   
+                    node_list.append(n)
+            if robot_graph.nodes[n]['type'] == 'joint':
+                for p in robot_graph.successors(n):
+                    if p not in node_list:
+                        node_stack.put(p) # 压栈
+                        body_stack.put(rootbody) # 压栈   
+                        node_list.append(p) 
+
+        while not node_stack.empty(): # 当栈不为空
+            current_node = node_stack.get() # 栈顶元素
+            current_father_body = body_stack.get() # 栈顶元素
+            print(robot_graph.nodes[current_node])
+            if robot_graph.nodes[current_node]['type'] == 'link':
+                body,geom = self.get_link(robot_graph.nodes[current_node]['info'])
+                body.add_child(geom)    
+                # 添加该节点上方的joint节点
+                pres = list(robot_graph.predecessors(current_node))[0]
+                if robot_graph.nodes[pres]['type'] == 'joint':
+                    for p in robot_graph.predecessors(current_node):
+                        if p in joint_list: 
+                            continue
+                        joint,actuator = self.get_joint(robot_graph.nodes[p]['info'])
+                        body.add_child(joint)
+                        joint_list.append(p) # 将该关节结点记录，防止重复添加 
+                        self.actuator.add_child(actuator) # 添加驱动
+            current_father_body.add_child(body)
+            # 继续下一个节点
+            if len(list(robot_graph.successors(current_node))) == 0:
+                # 若无子节点，继续循环
+                continue
+            else:
+                for n in robot_graph.successors(current_node):
+                    if robot_graph.nodes[n]['type'] == 'link':
+                        if n not in node_list:
+                            node_stack.put(n) # 压栈
+                            body_stack.put(body) # 压栈   
+                            node_list.append(n)
+                    if robot_graph.nodes[n]['type'] == 'joint':
+                        for p in robot_graph.successors(n):
+                            if p not in node_list:
+                                node_stack.put(p) # 压栈
+                                body_stack.put(body) # 压栈   
+                                node_list.append(p) 
+        self.pelvis_body.add_child(rootbody)     
+
+    def set_sensors(self):
+        # 创建<sensor>元素
+        sensor = e.Sensor()
+
+        # 添加各类传感器元素
+        sensors = [
+            e.sensor.Subtreelinvel(name="pelvis_subtreelinvel", body="pelvis"),
+            e.sensor.Accelerometer(name="root_accel", site="root"),
+            e.sensor.Velocimeter(name="root_vel", site="root"),
+            e.sensor.Gyro(name="root_gyro", site="root"),
+
+            e.sensor.Force(name="left_ankle_force", site="left_ankle"),
+            e.sensor.Force(name="right_ankle_force", site="right_ankle"),
+            e.sensor.Force(name="left_knee_force", site="left_knee"),
+            e.sensor.Force(name="right_knee_force", site="right_knee"),
+            e.sensor.Force(name="left_hip_force", site="left_hip"),
+            e.sensor.Force(name="right_hip_force", site="right_hip"),
+
+            e.sensor.Torque(name="left_ankle_torque", site="left_ankle"),
+            e.sensor.Torque(name="right_ankle_torque", site="right_ankle"),
+            e.sensor.Torque(name="left_knee_torque", site="left_knee"),
+            e.sensor.Torque(name="right_knee_torque", site="right_knee"),
+            e.sensor.Torque(name="left_hip_torque", site="left_hip"),
+            e.sensor.Torque(name="right_hip_torque", site="right_hip"),
+
+            e.sensor.Touch(name="pelvis_touch", site="pelvis"),
+            e.sensor.Touch(name="upper_waist_touch", site="upper_waist"),
+            e.sensor.Touch(name="torso_touch", site="torso"),
+            e.sensor.Touch(name="head_touch", site="head"),
+            e.sensor.Touch(name="right_upper_arm_touch", site="right_upper_arm"),
+            e.sensor.Touch(name="right_lower_arm_touch", site="right_lower_arm"),
+            e.sensor.Touch(name="right_hand_touch", site="right_hand"),
+            e.sensor.Touch(name="left_upper_arm_touch", site="left_upper_arm"),
+            e.sensor.Touch(name="left_lower_arm_touch", site="left_lower_arm"),
+            e.sensor.Touch(name="left_hand_touch", site="left_hand"),
+            e.sensor.Touch(name="right_thigh_touch", site="right_thigh"),
+            e.sensor.Touch(name="right_shin_touch", site="right_shin"),
+            e.sensor.Touch(name="right_foot_touch", site="right_foot"),
+            e.sensor.Touch(name="left_thigh_touch", site="left_thigh"),
+            e.sensor.Touch(name="left_shin_touch", site="left_shin"),
+            e.sensor.Touch(name="left_foot_touch", site="left_foot")
+        ]
+
+        # 将所有传感器元素添加到<sensor>中
+        self.sensor.add_children(sensors)
+
+
+    def gen_basic_humanoid_xml(self):
+        
+        # statistic
+        self.statistic.extent=2
+        self.statistic.center=[0,0,1]
+        # option
+        self.option.timestep=0.00555
+        # default
+        self.set_default()
+        self.get_humanoid_model()
+        self.set_sensors()
+
+
+
     def generate(self):
         '''
         输出xml文档
         '''
         model_xml = self.model.xml()
-        save_path = self.path + self.robot.graph['name'] + '.xml'
+        save_path = self.save_path + self.robot.graph['name'] + '.xml'
         # Output
         with open(save_path, 'w') as fh:
             fh.write(model_xml)
+        print('Model save to:',save_path)
 
 
 if __name__ == '__main__':
 
-    R = RobotGraph(name='antrobot_dfs')
+    R = RobotGraph(name='humanoid_test')
 
     root = RobotLink('root',link_type = 'sphere',size=0.25,body_pos=[0,0,2],geom_pos=[0,0,0])
     R.add_node( node_type='link',node_info = root)
@@ -423,17 +778,14 @@ if __name__ == '__main__':
 
 
     M = ModelGenerator(R)
-    M.set_compiler(angle='degree')
-    M.set_basic_assets()
-    M.set_size()
-    M.set_option(gravity=0)
-    M.set_default()
-    M.set_ground()
-    #M.get_robot(R)
+
+
+    M.gen_basic_humanoid_xml()
     M.get_robot_dfs()
+    #M.get_robot(R)
+    
 
     M.generate()
-    print(M.compiler.angle)
 
     for layer, nodes in enumerate(nx.topological_generations(R)):
     # `multipartite_layout` expects the layer as a node attribute, so add the
