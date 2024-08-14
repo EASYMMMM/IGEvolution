@@ -187,7 +187,7 @@ class SRLAgent(common_agent.CommonAgent):
             'obs' : processed_obs,
             'rnn_states' : self.rnn_states
         }
-        if self._humanoid_obs_masked :
+        if self._humanoid_obs_masked :  # humanoid 部分观测
             masked_input_dict = {
             'is_train': False,
             'prev_actions': None, 
@@ -196,7 +196,7 @@ class SRLAgent(common_agent.CommonAgent):
             }
 
         with torch.no_grad():
-            if self._humanoid_obs_masked :
+            if self._humanoid_obs_masked : # humanoid 部分观测
                 res_dict = self.model(masked_input_dict)
             else:
                 res_dict = self.model(input_dict)

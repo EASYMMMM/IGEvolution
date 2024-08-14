@@ -3,6 +3,19 @@ from mjcf import elements as e
 import networkx as nx
 import matplotlib.pyplot as plt
 import queue
+from scipy.spatial.transform import Rotation 
+ 
+ 
+def euler2quaternion(euler):
+    '''
+    欧拉角转四元数
+    '''
+    r = Rotation.from_euler('xyz', euler, degrees=True)
+    quaternion = r.as_quat()
+    return quaternion
+ 
+ 
+ 
 
 class ModelGenerator():
     '''
@@ -146,35 +159,47 @@ class ModelGenerator():
         添加一个机器人部件的几何体
         return: 该部件的body和geom
         '''
+        quat_np = euler2quaternion(robot_part.euler)
+        quat = [0.00,0.00,0.00,0.00]
+        i = 1
+        for q in quat_np:
+            quat[i] = round(q,5)
+            i = i+1
+            if i > 3:
+                i=0
         body =  e.Body(
-                name=robot_part.name,
+                name="SRL_"+robot_part.name,
                 pos=robot_part.body_pos,
-                euler=robot_part.euler
+                quat=quat
                 )
-        start_point = list(robot_part.start_point)
-        end_point = [start_point[0]+robot_part.length, start_point[1]+0,start_point[2]+0]
-        start_point.extend(end_point)
         if robot_part.link_type == 'capsule': # 如果是胶囊形状
+            start_point = list(robot_part.start_point)
+            end_point = [start_point[0]+robot_part.length, start_point[1]+0,start_point[2]+0]
+            start_point.extend(end_point)
             geom =  e.Geom(
                     fromto = start_point,
-                    name   = "geom"+robot_part.name,
+                    name   = "SRL_geom_"+robot_part.name,
                     size   = robot_part.size,
                     type   = robot_part.link_type
                         )
         if robot_part.link_type == 'sphere': # 如果是胶囊形状
             geom =  e.Geom(
                     pos = robot_part.geom_pos,
-                    name   = "geom"+robot_part.name,
+                    name   = "SRL_geom_"+robot_part.name,
                     size   = robot_part.size,
                     type   = robot_part.link_type
                         )
         if robot_part.link_type == 'box': # 如果是box形状
             geom =  e.Geom(
                     pos = robot_part.geom_pos,
-                    name   = "geom"+robot_part.name,
+                    name   = "SRL_geom_"+robot_part.name,
                     size   = robot_part.size,
                     type   = robot_part.link_type
                         )
+        if robot_part.material != None:   # 添加几何体材料
+            geom.material = robot_part.material
+        if robot_part.density != None:
+            geom.density = robot_part.density
         return body,geom
         
     def get_joint(self, robot_joint: RobotJoint) :
@@ -184,7 +209,7 @@ class ModelGenerator():
         '''
         joint = e.Joint(
                         axis=robot_joint.axis,
-                        name="joint_"+robot_joint.name,
+                        name="SRL_joint_"+robot_joint.name,
                         pos=robot_joint.pos,
                         range=robot_joint.joint_range,
                         type=robot_joint.joint_type
@@ -197,7 +222,7 @@ class ModelGenerator():
         actuator  = e.Motor(
                         ctrllimited=robot_joint.ctrllimited,
                         ctrlrange= robot_joint.ctrlrange,
-                        joint="joint_"+robot_joint.name,
+                        joint="SRL_joint_"+robot_joint.name,
                         
                     )
         return joint,actuator
@@ -229,6 +254,7 @@ class ModelGenerator():
         while not node_stack.empty(): # 当栈不为空
             current_node = node_stack.get() # 栈顶元素
             current_father_body = body_stack.get() # 栈顶元素
+            print(robot_graph.nodes[current_node])
             if robot_graph.nodes[current_node]['type'] == 'link':
                 body,geom = self.get_link(robot_graph.nodes[current_node]['info'])
                 body.add_child(geom)    

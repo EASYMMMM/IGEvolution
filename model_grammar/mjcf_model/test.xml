@@ -1,0 +1,181 @@
+<mujoco model="robot">
+    <compiler angle="degree" inertiafromgeom="true" />
+    <option gravity="0 0 0"/>
+    <default class="decor">
+        <site type="box" rgba="0.5 1 0.5 1" />
+    </default>
+    <asset>
+        <material name="default" rgba="0.97 0.38 0.06 1.0" />
+        <material name="red" rgba="1.0 0.0 0.0 1.0" />
+        <material name="green" rgba="0.0 1.0 0.0 1.0" />
+        <material name="blue" rgba="0.0 0.0 1.0 1.0" />
+        <material name="white" rgba="1.0 1.0 1.0 1.0" />
+        <material name="black" rgba="0.0 0.0 0.0 1.0" />
+    </asset>
+    <worldbody>
+        <body name="root" pos="0.0 0.0 0.52" quat="1.0 0.0 0.0 0.0">
+            <freejoint name="freejoint" />
+            <geom type="cylinder" fromto="-0.2 0.0 0.0 -0.2 0.0 0.2" size="0.5" density="1000.0"
+                friction="1.5 0.005 0.0001" material="white" name="geom0" />
+            <body name="body2" pos="-0.4 -0.2 0.0"
+                quat="0.5000000000000001 0.4999999999999999 -0.5 0.5">
+                <geom type="capsule" fromto="-0.2 0.0 0.0 0.0 0.0 0.0" size="0.035"
+                    density="1000.0" friction="1.5 0.005 0.0001" material="white"
+                    name="geom5" />
+                <joint type="hinge" pos="0.0 0.0 0.0" axis="1.0 0.0 0.0" range="-45.0 45.0"
+                    limited="true" damping="1.0" stiffness="2.0" armature="0.005"
+                    name="joint6" />
+                <joint type="hinge" pos="0.0 0.0 0.0" axis="0.0 1.0 0.0" range="-20.0 20.0"
+                    limited="true" damping="1.0" stiffness="2.0" armature="0.005"
+                    name="joint7" />
+                <joint type="hinge" pos="0.0 0.0 0.0" axis="0.0 0.0 1.0" range="-30.0 30.0"
+                    limited="true" damping="1.0" stiffness="2.0" armature="0.005"
+                    name="joint8" />
+                <site name="site0" type="sphere" pos="0.0 0.0 0.0" size="0.1"
+                    rgba="0.2 1.0 1.0 1.0" />
+                <body name="body3" pos="-0.2 0.0 0.0" quat="1.0 0.0 0.0 0.0">
+                    <geom type="capsule" fromto="-0.2 0.0 0.0 0.0 0.0 0.0" size="0.035"
+                        density="1000.0" friction="1.5 0.005 0.0001" material="blue"
+                        name="geom6" />
+                    <joint type="hinge" pos="0.0 0.0 0.0" axis="0.0 0.0 1.0"
+                        range="-90.0 90.0" limited="true" damping="1.0" stiffness="2.0"
+                        armature="0.005" name="joint9" />
+                    <site type="cylinder" fromto="0.0 0.0 -0.05 0.0 0.0 0.05" size="0.02"
+                        rgba="1.0 0.0 0.0 1.0" />
+                    <body name="right_wheel2" pos="-0.2 0.0 0.0" quat="1.0 0.0 0.0 0.0">
+                        <geom type="cylinder" fromto="0.0 0.0 -0.08 0.0 0.0 0.08"
+                            size="0.1" density="1000.0" friction="1.0 0.005 0.0001"
+                            material="blue" name="geom7" />
+                        <site class="decor" size="0.006 0.05 0.09" />
+                        <joint type="hinge" pos="0.0 0.0 0.0" axis="0.0 0.0 -1.0"
+                            damping="0.01" stiffness="0.0" armature="0.005" name="right2" />
+                        <site type="cylinder" fromto="0.0 0.0 -0.09 0.0 0.0 0.09"
+                            size="0.02" rgba="1.0 0.0 0.0 1.0" />
+                    </body>
+
+                </body>
+            </body>
+            <body name="body4" pos="-0.4 0.2 0.0"
+                quat="0.5000000000000001 -0.4999999999999999 -0.5 -0.5">
+                <geom type="capsule" fromto="-0.2 -0.0 0.0 0.0 -0.0 0.0" size="0.035"
+                    density="1000.0" friction="1.5 0.005 0.0001" material="white"
+                    name="geom8" />
+                <joint type="hinge" pos="0.0 0.0 0.0" axis="-1.0 -0.0 -0.0"
+                    range="-45.0 45.0" limited="true" damping="1.0" stiffness="2.0"
+                    armature="0.005" name="joint10" />
+                <joint type="hinge" pos="0.0 0.0 0.0" axis="0.0 1.0 0.0" range="-20.0 20.0"
+                    limited="true" damping="1.0" stiffness="2.0" armature="0.005"
+                    name="joint11" />
+                <joint type="hinge" pos="0.0 0.0 0.0" axis="-0.0 -0.0 -1.0"
+                    range="-30.0 30.0" limited="true" damping="1.0" stiffness="2.0"
+                    armature="0.005" name="joint12" />
+                <site name="site1" type="sphere" pos="0.0 0.0 0.0" size="0.1"
+                    rgba="0.2 1.0 1.0 1.0" />
+                <body name="body5" pos="-0.2 -0.0 0.0" quat="1.0 0.0 0.0 0.0">
+                    <geom type="capsule" fromto="-0.2 -0.0 0.0 0.0 -0.0 0.0" size="0.035"
+                        density="1000.0" friction="1.5 0.005 0.0001" material="default"
+                        name="geom9" />
+                    <joint type="hinge" pos="0.0 0.0 0.0" axis="-0.0 -0.0 -1.0"
+                        range="-90.0 90.0" limited="true" damping="1.0" stiffness="2.0"
+                        armature="0.005" name="joint13" />
+                    <site type="cylinder" fromto="0.0 0.0 0.05 0.0 0.0 -0.05" size="0.02"
+                        rgba="-1.0 -0.0 -0.0 1.0" />
+                    <body name="left_wheel2" pos="-0.2 0.0 0.0" quat="1.0 0.0 0.0 0.0">
+                        <geom type="cylinder" fromto="0.0 0.0 -0.08 0.0 0.0 0.08"
+                            size="0.1" density="1000.0" friction="1.0 0.005 0.0001"
+                            material="blue" name="geom10" />
+                        <site class="decor" size="0.006 0.05 0.09" />
+                        <joint type="hinge" pos="0.0 0.0 0.0" axis="0.0 0.0 1.0"
+                            damping="0.01" stiffness="0.0" armature="0.005" name="left2" />
+                        <site type="cylinder" fromto="0.0 0.0 -0.09 0.0 0.0 0.09"
+                            size="0.02" rgba="1.0 0.0 0.0 1.0" />
+                    </body>
+                </body>
+            </body>
+
+            <body name="body10" pos="0.0 -0.2 0.0"
+                quat="0.5000000000000001 0.4999999999999999 -0.5 0.5">
+                <geom type="capsule" fromto="-0.2 0.0 0.0 0.0 0.0 0.0" size="0.035" density="1000.0"
+                    friction="1.5 0.005 0.0001" material="white" name="geom11" />
+                <joint type="hinge" pos="0.0 0.0 0.0" axis="1.0 0.0 0.0" range="-45.0 45.0"
+                    limited="true" damping="1.0" stiffness="2.0" armature="0.005" name="joint22" />
+                <joint type="hinge" pos="0.0 0.0 0.0" axis="0.0 1.0 0.0" range="-20.0 20.0"
+                    limited="true" damping="1.0" stiffness="2.0" armature="0.005" name="joint23" />
+                <joint type="hinge" pos="0.0 0.0 0.0" axis="0.0 0.0 1.0" range="-30.0 30.0"
+                    limited="true" damping="1.0" stiffness="2.0" armature="0.005" name="joint24" />
+                <site name="site2" type="sphere" pos="0.0 0.0 0.0" size="0.1" rgba="0.2 1.0 1.0 1.0" />
+                <body name="body11" pos="-0.2 0.0 0.0" quat="1.0 0.0 0.0 0.0">
+                    <geom type="capsule" fromto="-0.2 0.0 0.0 0.0 0.0 0.0" size="0.035"
+                        density="1000.0" friction="1.5 0.005 0.0001" material="blue" name="geom12" />
+                    <joint type="hinge" pos="0.0 0.0 0.0" axis="0.0 0.0 1.0" range="-90.0 90.0"
+                        limited="true" damping="1.0" stiffness="2.0" armature="0.005" name="joint25" />
+                    <site type="cylinder" fromto="0.0 0.0 -0.05 0.0 0.0 0.05" size="0.02"
+                        rgba="1.0 0.0 0.0 1.0" />
+                    <body name="right_wheel" pos="-0.2 0.0 0.0" quat="1.0 0.0 0.0 0.0">
+                        <geom type="cylinder" fromto="0.0 0.0 -0.08 0.0 0.0 0.08" size="0.1"
+                            density="1000.0" friction="1.0 0.005 0.0001" material="blue"
+                            name="geom13" />
+                        <site class="decor" size="0.006 0.05 0.09" />
+                        <joint type="hinge" pos="0.0 0.0 0.0" axis="0.0 0.0 -1.0" damping="0.01"
+                            stiffness="0.0" armature="0.005" name="right" />
+                        <site type="cylinder" fromto="0.0 0.0 -0.09 0.0 0.0 0.09" size="0.02"
+                            rgba="1.0 0.0 0.0 1.0" />
+                    </body>
+                </body>
+            </body>
+            <body name="body12" pos="0.0 0.2 0.0"
+                quat="0.5000000000000001 -0.4999999999999999 -0.5 -0.5">
+                <geom type="capsule" fromto="-0.2 -0.0 0.0 0.0 -0.0 0.0" size="0.035"
+                    density="1000.0" friction="1.5 0.005 0.0001" material="white" name="geom14" />
+                <joint type="hinge" pos="0.0 0.0 0.0" axis="-1.0 -0.0 -0.0" range="-45.0 45.0"
+                    limited="true" damping="1.0" stiffness="2.0" armature="0.005" name="joint26" />
+                <joint type="hinge" pos="0.0 0.0 0.0" axis="0.0 1.0 0.0" range="-20.0 20.0"
+                    limited="true" damping="1.0" stiffness="2.0" armature="0.005" name="joint27" />
+                <joint type="hinge" pos="0.0 0.0 0.0" axis="-0.0 -0.0 -1.0" range="-30.0 30.0"
+                    limited="true" damping="1.0" stiffness="2.0" armature="0.005" name="joint28" />
+                <site name="site3" type="sphere" pos="0.0 0.0 0.0" size="0.1" rgba="0.2 1.0 1.0 1.0" />
+                <body name="body13" pos="-0.2 -0.0 0.0" quat="1.0 0.0 0.0 0.0">
+                    <geom type="capsule" fromto="-0.2 -0.0 0.0 0.0 -0.0 0.0" size="0.035"
+                        density="1000.0" friction="1.5 0.005 0.0001" material="default"
+                        name="geom15" />
+                    <joint type="hinge" pos="0.0 0.0 0.0" axis="-0.0 -0.0 -1.0" range="-90.0 90.0"
+                        limited="true" damping="1.0" stiffness="2.0" armature="0.005" name="joint29" />
+                    <site type="cylinder" fromto="0.0 0.0 0.05 0.0 0.0 -0.05" size="0.02"
+                        rgba="-1.0 -0.0 -0.0 1.0" />
+                    <body name="left_wheel" pos="-0.2 0.0 0.0" quat="1.0 0.0 0.0 0.0">
+                        <geom type="cylinder" fromto="0.0 0.0 -0.08 0.0 0.0 0.08" size="0.1"
+                            density="1000.0" friction="1.0 0.005 0.0001" material="blue"
+                            name="geom16" />
+                        <site class="decor" size="0.006 0.05 0.09" />
+                        <joint type="hinge" pos="0.0 0.0 0.0" axis="0.0 0.0 1.0" damping="0.01"
+                            stiffness="0.0" armature="0.005" name="left" />
+                        <site type="cylinder" fromto="0.0 0.0 -0.09 0.0 0.0 0.09" size="0.02"
+                            rgba="1.0 0.0 0.0 1.0" />
+                    </body>
+                </body>
+            </body>
+        </body>
+    </worldbody>
+    <actuator>
+        <motor ctrllimited="true" ctrlrange="-1 1" gear="22.5" joint="joint6" name="actuator0" />
+        <motor ctrllimited="true" ctrlrange="-1 1" gear="22.5" joint="joint7" name="actuator1" />
+        <motor ctrllimited="true" ctrlrange="-1 1" gear="22.5" joint="joint8" name="actuator2" />
+        <motor ctrllimited="true" ctrlrange="-1 1" gear="22.5" joint="joint9" name="actuator3" />
+        <motor ctrllimited="true" ctrlrange="-1 1" gear="45.0" joint="right2" name="actuator4" />
+        <motor ctrllimited="true" ctrlrange="-1 1" gear="22.5" joint="joint10" name="actuator5" />
+        <motor ctrllimited="true" ctrlrange="-1 1" gear="22.5" joint="joint11" name="actuator6" />
+        <motor ctrllimited="true" ctrlrange="-1 1" gear="22.5" joint="joint12" name="actuator7" />
+        <motor ctrllimited="true" ctrlrange="-1 1" gear="22.5" joint="joint13" name="actuator8" />
+        <motor ctrllimited="true" ctrlrange="-1 1" gear="45.0" joint="left2" name="actuator9" />
+        <motor ctrllimited="true" ctrlrange="-1 1" gear="22.5" joint="joint22" name="actuator10" />
+        <motor ctrllimited="true" ctrlrange="-1 1" gear="22.5" joint="joint23" name="actuator11" />
+        <motor ctrllimited="true" ctrlrange="-1 1" gear="22.5" joint="joint24" name="actuator12" />
+        <motor ctrllimited="true" ctrlrange="-1 1" gear="22.5" joint="joint25" name="actuator13" />
+        <motor ctrllimited="true" ctrlrange="-1 1" gear="45.0" joint="right" name="actuator14" />
+        <motor ctrllimited="true" ctrlrange="-1 1" gear="22.5" joint="joint26" name="actuator15" />
+        <motor ctrllimited="true" ctrlrange="-1 1" gear="22.5" joint="joint27" name="actuator16" />
+        <motor ctrllimited="true" ctrlrange="-1 1" gear="22.5" joint="joint28" name="actuator17" />
+        <motor ctrllimited="true" ctrlrange="-1 1" gear="22.5" joint="joint29" name="actuator18" />
+        <motor ctrllimited="true" ctrlrange="-1 1" gear="45.0" joint="left" name="actuator19" />
+    </actuator>
+</mujoco>

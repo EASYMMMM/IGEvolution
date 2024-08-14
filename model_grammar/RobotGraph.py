@@ -18,17 +18,26 @@ class RobotLink():
                  start_point = [0,0,0], # 起点，capsule用
                  geom_pos = [0,0,0], # 几何体位置，sphere用
                  body_pos = [0,0,0],
-                 euler = [0,0,0]  # body坐标系旋转的欧拉角
+                 euler = [0,0,0],  # body坐标系旋转的欧拉角
+                 material = None,
+                 density = None,
                 ):
         self.name = name
-        self.length = length
-        self.size = size
+        self.length = length 
         self.link_type = link_type
-        self.start_point = start_point
-        self.end_point = start_point + [self.length,0,0]
+        if self.link_type == 'capsule':
+            self.start_point = start_point
+            self.end_point = start_point + [self.length,0,0]
+            self.size = size
+        if self.link_type == 'sphere':
+            self.size = size
+        if self.link_type == 'box':
+            self.size = size
         self.body_pos = body_pos
         self.euler = euler
         self.geom_pos = geom_pos
+        self.material = material
+        self.density = density
 
 
 class RobotJoint():
