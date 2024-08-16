@@ -10,6 +10,7 @@
    `export LD_LIBRARY_PATH=/home/ps/anaconda3/envs/rlgpu/lib`   
    `export LD_LIBRARY_PATH=/home/ps/anaconda3/envs/Mrlgpu/lib`
    `export LD_LIBRARY_PATH=/home/user/miniconda3/envs/mly_isaacgym/lib`
+   `export LD_LIBRARY_PATH=/home/zdh/anaconda3/envs/rlgpu/lib`
 
 - **登录wandb：**
    `wandb login` 
