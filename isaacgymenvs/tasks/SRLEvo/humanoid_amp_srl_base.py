@@ -67,7 +67,7 @@ class HumanoidAMPSRLBase(VecTask):
         self.max_episode_length = self.cfg["env"]["episodeLength"]
         self._local_root_obs = self.cfg["env"]["localRootObs"]
         # self._contact_bodies = self.cfg["env"]["contactBodies"]
-        self._contact_bodies = self.cfg["env"]["contactBodies"] + SRL_CONTACT_BODY_NAMES # TODO: 自动生成外肢体的碰撞
+        self._contact_bodies = self.cfg["env"]["contactBodies"]  
         self._termination_height = self.cfg["env"]["terminationHeight"]
         self._enable_early_termination = self.cfg["env"]["enableEarlyTermination"]
 
@@ -76,6 +76,7 @@ class HumanoidAMPSRLBase(VecTask):
         self._upper_reward_w = self.cfg["env"]["upper_reward_w"]
         self._srl_endpos_obs = self.cfg["env"]["srl_endpos_obs"]
         self._target_v_task = self.cfg["env"]["target_v_task"]
+        self._autogen_model = self.cfg["env"].get("autogen_model", False)
         # --- user defined end ---
 
 
@@ -523,7 +524,12 @@ class HumanoidAMPSRLBase(VecTask):
 
     def _build_srl_endpos_body_ids_tensor(self, env_ptr, actor_handle):
         body_ids = []
-        for body_name in SRL_END_BODY_NAMES:
+        if self._autogen_model:
+            srl_end_body_names = ["SRL_right_end","SRL_left_end"] 
+        else:
+            srl_end_body_names = SRL_END_BODY_NAMES
+        
+        for body_name in srl_end_body_names:
             body_id = self.gym.find_actor_rigid_body_handle(env_ptr, actor_handle, body_name)
             assert(body_id != -1)
             body_ids.append(body_id)
@@ -532,7 +538,12 @@ class HumanoidAMPSRLBase(VecTask):
         return body_ids
 
     def _build_contact_body_ids_tensor(self, env_ptr, actor_handle):
-        body_ids = []
+        body_ids = []       
+        contact_body = self._contact_bodies
+        if self._autogen_model:
+            contact_body = contact_body + ['SRL_root', 'SRL_right_leg1', 'SRL_right_leg2', 'SRL_right_end', 'SRL_left_leg1', 'SRL_left_leg2', 'SRL_left_end']
+        else:
+            contact_body = contact_body + SRL_CONTACT_BODY_NAMES
         for body_name in self._contact_bodies:
             body_id = self.gym.find_actor_rigid_body_handle(env_ptr, actor_handle, body_name)
             assert body_id != -1, f'No agent-body named: {body_name}'
