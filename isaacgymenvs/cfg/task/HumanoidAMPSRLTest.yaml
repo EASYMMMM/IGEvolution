@@ -47,7 +47,7 @@ env:
   upper_reward_w: 1 
   target_v_task: False  # 目标速度跟随任务
   autogen_model: False  # 模型自动生成
-  # -----------------------------------
+  # ------------ ------------
 
 sim:
   dt: 0.0166 # 1/60 s
