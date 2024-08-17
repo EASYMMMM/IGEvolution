@@ -538,13 +538,14 @@ class HumanoidAMPSRLBase(VecTask):
         return body_ids
 
     def _build_contact_body_ids_tensor(self, env_ptr, actor_handle):
-        body_ids = []       
+        body_ids = []      
+        # 添加外肢体碰撞模型 
         contact_body = self._contact_bodies
         if self._autogen_model:
             contact_body = contact_body + ['SRL_root', 'SRL_right_leg1', 'SRL_right_leg2', 'SRL_right_end', 'SRL_left_leg1', 'SRL_left_leg2', 'SRL_left_end']
         else:
             contact_body = contact_body + SRL_CONTACT_BODY_NAMES
-        for body_name in self._contact_bodies:
+        for body_name in contact_body:
             body_id = self.gym.find_actor_rigid_body_handle(env_ptr, actor_handle, body_name)
             assert body_id != -1, f'No agent-body named: {body_name}'
             body_ids.append(body_id)
