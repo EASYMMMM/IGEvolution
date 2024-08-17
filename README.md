@@ -23,8 +23,16 @@
    `sudo systemctl start todeskd.service`
 
 - **通过SCP从服务器传输训练模型：**
-   `scp -r  user@172.18.41.167:/home/user/mly/IGEvolution/isaacgymenvs/runs/SRL_walk_v1.10.1_A100_07-18-57-45  /home/ps/pan1/files/mly/IsaacGymEvo/isaacgymenvs/runs`
-   
+   `scp -r  user@172.18.41.167:/home/user/mly/IGEvolution/isaacgymenvs/runs/SRL_walk_v1.10.1_A100_07-18-57-45  /home/ps/pan1/files/mly/IsaacGymEvo/isaacgydone_indicesmenvs/runs`
+   `scp -r user@172.18.41.167:/home/user/mly/IGEvolution/isaacgymenvs/runs/SRL_walk_v2.0_A100_16-18-37-52  /home/zdh/mly/IGEvolution/isaacgymenvs/runs`
+
+### 0.1 一键配置Titan Ubuntu训练终端
+```bash
+conda activate rlgpu  
+cd isaacgymenvs  
+export LD_LIBRARY_PATH=/home/zdh/anaconda3/envs/rlgpu/lib  
+export WANDB_API_KEY=d9e147c0c0f29ad02ca38e65742ce8ce2bbd52ab  
+```
 ## 1. 环境配置
 [Isaac Gym环境安装和四足机器人模型的训练-CSDN博客](https://blog.csdn.net/weixin_44061195/article/details/131830133?spm=1001.2101.3001.6650.2&utm_medium=distribute.pc_relevant.none-task-blog-2~default~YuanLiJiHua~Position-2-131830133-blog-124605383.235^v38^pc_relevant_sort&depth_1-utm_source=distribute.pc_relevant.none-task-blog-2~default~YuanLiJiHua~Position-2-131830133-blog-124605383.235^v38^pc_relevant_sort&utm_relevant_index=5)
 

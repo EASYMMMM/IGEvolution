@@ -61,7 +61,7 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
 
     def restore(self, fn):
         
-        checkpoint = my_load_checkpoint(fn,map_location='cuda:1')
+        checkpoint = my_load_checkpoint(fn,map_location='cuda:0')
         self.model.load_state_dict(checkpoint['model'])
         if self.normalize_input and 'running_mean_std' in checkpoint:
             self.model.running_mean_std.load_state_dict(checkpoint['running_mean_std'])

@@ -793,7 +793,7 @@ def compute_srl_reward(obs_buf, dof_force_tensor, action):
     r =  torque_reward
     return r
 
-@torch.jit.script
+# @torch.jit.script
 def compute_humanoid_reset(reset_buf, progress_buf, contact_buf, contact_body_ids, rigid_body_pos,
                            max_episode_length, enable_early_termination, termination_height):
     # type: (Tensor, Tensor, Tensor, Tensor, Tensor, float, bool, float) -> Tuple[Tensor, Tensor]
