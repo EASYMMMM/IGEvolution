@@ -570,7 +570,7 @@ class ModelGenerator():
         ]
         self.actuator.add_children(self.motor_list)
 
-    def get_SRL_dfs(self,):
+    def get_SRL_dfs(self, back_load=False):
         '''
         根据图结构递归生成SRL机器人
         SRL附着在pelvis下
@@ -585,6 +585,16 @@ class ModelGenerator():
             raise ValueError('The robot graph does not have root node.') 
         rootbody, rootgeom = self.get_link(robot_graph.nodes['root']['info'])
         rootbody.add_child(rootgeom)
+        if back_load: # 背部负重
+            load_geom =  e.Geom(
+                    pos = [0.20, 0, 0.35],
+                    name   = "SRL_geom_load" ,
+                    size   = [0.13, 0.13, 0.22],
+                    type   = "box",
+                    density= 6000
+                        )
+            rootbody.add_child(load_geom)
+
         for n in robot_graph.successors('root'):
             if robot_graph.nodes[n]['type'] == 'link':
                 if n not in node_list:
@@ -601,7 +611,7 @@ class ModelGenerator():
         while not node_stack.empty(): # 当栈不为空
             current_node = node_stack.get() # 栈顶元素
             current_father_body = body_stack.get() # 栈顶元素
-            print(robot_graph.nodes[current_node])
+            print(robot_graph.nodes[current_node]['info'].name)
             if robot_graph.nodes[current_node]['type'] == 'link':
                 body,geom = self.get_link(robot_graph.nodes[current_node]['info'])
                 body.add_child(geom)    

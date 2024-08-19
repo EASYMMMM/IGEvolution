@@ -124,7 +124,7 @@
 			</body>
 			<body name="SRL_root" pos="-0.07 0 0.05" quat="0.0 0.0 0.0 1.0">
 				<geom density="2500" name="SRL_geom_root" pos="0 0 0" size="0.02 0.095 0.095" type="box"/>
-				<geom name="backpack" type="box" pos="0.20 0 0.35" size="0.13 0.13 0.22" density="6000"  />
+				<geom density="6000" name="SRL_geom_load" pos="0.2 0 0.35" size="0.13 0.13 0.22" type="box"/>
 				<body name="SRL_right_leg1" pos="0.02 0.0475 0" quat="1.0 0.0 0.0 0.0">
 					<geom density="2500" fromto="0 0 0 0.4 0 0" name="SRL_geom_right_leg1" size="0.03" type="capsule"/>
 					<joint axis="0 0 1" name="SRL_joint_right_hipjoint_z" pos="0 0 0" range="-45 45" type="hinge"/>
@@ -132,8 +132,8 @@
 					<body name="SRL_right_leg2" pos="0.4 0 0" quat="0.92388 0.0 0.38268 0.0">
 						<geom density="2500" fromto="0 0 0 0.8 0 0" name="SRL_geom_right_leg2" size="0.03" type="capsule"/>
 						<joint axis="0 1 0" name="SRL_joint_right_kneejoint" pos="0 0 0" range="-45 45" type="hinge"/>
-						<body name="SRL_right_end" pos="0.8 0 0" quat="0.70711 0.0 -0.70711 0.0">
-							<geom density="2500" name="SRL_geom_right_end" pos="0.09 0 -0.045" size="0.12 0.045 0.02" type="box"/>
+						<body name="SRL_right_end" pos="0.8 0 0" quat="0.86603 0.0 -0.5 0.0">
+							<geom density="2500" name="SRL_geom_right_end" pos="0 0 0" size="0.036" type="sphere"/>
 							<joint axis="0 1 0" name="SRL_joint_right_ankle" pos="0 0 0" range="-45 45" type="hinge"/>
 						</body>
 					</body>
