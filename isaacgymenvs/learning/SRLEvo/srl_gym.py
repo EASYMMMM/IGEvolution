@@ -62,8 +62,8 @@ from model_grammar import SRL_mode1,ModelGenerator
 
 if __name__ == '__main__':
     srl_mode = 'mode1'
-    name = 'humanoid_srl_mode1_pretrain'
-    pretrain = True
+    name = 'humanoid_srl_mode1'
+    pretrain = False
     srl_params = {
                     "first_leg_lenth" : 0.40,
                     "first_leg_size"  : 0.03,

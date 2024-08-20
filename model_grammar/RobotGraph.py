@@ -46,7 +46,7 @@ class RobotJoint():
     '''
     def __init__(self,
                  name = 'abdomen_z',
-                 joint_type = 'hinge',
+                 joint_type = None,
                  axis = [0,0,1], # 默认Z轴
                  pos = [0,0,0],  # 关节位置，默认在body坐标系的原点
                  joint_range = [-45,45],
