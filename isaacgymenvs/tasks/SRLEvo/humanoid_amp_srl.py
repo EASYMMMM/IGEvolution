@@ -313,7 +313,7 @@ def dof_to_obs_amp(pose):
 @torch.jit.script
 def build_amp_observations(root_states, dof_pos, dof_vel, key_body_pos, local_root_obs):
     # type: (Tensor, Tensor, Tensor, Tensor, bool) -> Tensor
-    local_root_obs = True  # TODO: 在AMP观测中固定使用局部朝向
+    # local_root_obs = True  # TODO: 在AMP观测中固定使用局部朝向
     
     root_pos = root_states[:, 0:3]
     root_rot = root_states[:, 3:7]

@@ -90,9 +90,9 @@ class SRLAgent(common_agent.CommonAgent):
         self.game_rewards_srl  = torch_ext.AverageMeter(self.value_size, self.games_to_track).to(self.ppo_device)
         self.game_rewards_amp  = torch_ext.AverageMeter(self.value_size, self.games_to_track).to(self.ppo_device)
         self.game_rewards_task = torch_ext.AverageMeter(self.value_size, self.games_to_track).to(self.ppo_device)
-        self.game_rewards_v_p = torch_ext.AverageMeter(self.value_size, self.games_to_track).to(self.ppo_device)  # velocity penalty
-        self.game_rewards_t_c = torch_ext.AverageMeter(self.value_size, self.games_to_track).to(self.ppo_device)  # torque cost
-        self.game_rewards_u_r = torch_ext.AverageMeter(self.value_size, self.games_to_track).to(self.ppo_device)  # upper reward
+        self.game_rewards_v_p  = torch_ext.AverageMeter(self.value_size, self.games_to_track).to(self.ppo_device)  # velocity penalty
+        self.game_rewards_t_c  = torch_ext.AverageMeter(self.value_size, self.games_to_track).to(self.ppo_device)  # torque cost
+        self.game_rewards_u_r  = torch_ext.AverageMeter(self.value_size, self.games_to_track).to(self.ppo_device)  # upper reward
 
         # 观测值标准化
         if self.normalize_value:
@@ -107,6 +107,7 @@ class SRLAgent(common_agent.CommonAgent):
         return
 
     def init_tensors(self):
+        # 初始化张量
         super().init_tensors()
 
         algo_info = {
@@ -138,16 +139,15 @@ class SRLAgent(common_agent.CommonAgent):
         self._build_amp_buffers() # 构建 AMP 缓冲区  
 
         if not self._humanoid_checkpoint == 'None':
-            self._load_humanoid_network()    
+            self._load_humanoid_network(self._humanoid_checkpoint)    
             
         if self.mirror_loss:
             self.tensor_list += ['obses_mirrored']
         return
     
-    def _load_humanoid_network(self):
-        if self._humanoid_checkpoint == None:
-            raise ValueError
-        fn = self._humanoid_checkpoint
+    def _load_humanoid_network(self, fn):
+        # fn: save path
+        # fn = self._humanoid_checkpoint
         checkpoint = my_load_checkpoint(fn,map_location=self.device)
         self.set_weights(checkpoint)
         return

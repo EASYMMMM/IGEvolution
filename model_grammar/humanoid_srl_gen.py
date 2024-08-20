@@ -26,22 +26,16 @@ def SRL_mode1(  name='srl_1',
     R = RobotGraph(name=name)
     backpack_width = 0.19
     backpack_thick = 0.02
-    # first_leg_lenth = 0.10
-    # first_leg_size = 0.03
-    # second_leg_lenth = 0.68
-    # second_leg_size = 0.03
-    # third_leg_lenth = 0.18
-    # third_leg_size = 0.03
 
     root = RobotLink('root',link_type = 'box' , size=[backpack_thick,backpack_width/2,backpack_width/2],body_pos=[-.07, 0, 0.05],geom_pos=[0,0,0],euler=[0,0,180], density=density)
     R.add_node( node_type='link',node_info = root)
 
     # 添加左腿
     # 髋关节
-    left_hipjoint_z = RobotJoint('left_hip_z',axis=[0,0,1],)
+    left_hipjoint_z = RobotJoint('left_hip_z',axis=[0,0,1],joint_range=[-40,0])
     R.add_node( node_type='joint', node_info=left_hipjoint_z)
     R.add_edge(started_node='root',ended_node='left_hip_z')
-    left_hipjoint_y = RobotJoint('left_hip_y',axis=[0,1,0],)
+    left_hipjoint_y = RobotJoint('left_hip_y',axis=[0,1,0],joint_range=[-5,70])
     R.add_node( node_type='joint', node_info=left_hipjoint_y)
     R.add_edge(started_node='root',ended_node='left_hip_y')
     # 大腿
@@ -50,7 +44,7 @@ def SRL_mode1(  name='srl_1',
     R.add_edge(started_node='left_hip_z',ended_node='left_leg1')
     R.add_edge(started_node='left_hip_y',ended_node='left_leg1')
     # 膝关节
-    left_kneejoint = RobotJoint('left_kneejoint',axis=[0,1,0],)
+    left_kneejoint = RobotJoint('left_kneejoint',axis=[0,1,0],joint_range=[-45,45])
     R.add_node( node_type='joint', node_info=left_kneejoint)
     R.add_edge(started_node='left_leg1',ended_node='left_kneejoint')
     # 小腿
@@ -58,7 +52,7 @@ def SRL_mode1(  name='srl_1',
     R.add_node( node_type='link', node_info=left_leg2)
     R.add_edge(started_node='left_kneejoint',ended_node='left_leg2')
     # 踝关节
-    left_ankle = RobotJoint('left_ankle',axis=[0,1,0],)
+    left_ankle = RobotJoint('left_ankle',axis=[0,1,0],joint_range=[-5,5])
     R.add_node( node_type='joint', node_info=left_ankle)
     R.add_edge(started_node='left_leg2',ended_node='left_ankle')
     # 添加末端肢体
@@ -69,10 +63,10 @@ def SRL_mode1(  name='srl_1',
 
     # 添加第二条腿
     # 添加joint01, 髋关节
-    right_hipjoint_z = RobotJoint('right_hipjoint_z',axis=[0,0,1],)
+    right_hipjoint_z = RobotJoint('right_hipjoint_z',axis=[0,0,1],joint_range=[0,40])
     R.add_node( node_type='joint', node_info=right_hipjoint_z)
     R.add_edge(started_node='root',ended_node='right_hipjoint_z')
-    right_hipjoint_y = RobotJoint('right_hipjoint_y',axis=[0,1,0],)
+    right_hipjoint_y = RobotJoint('right_hipjoint_y',axis=[0,1,0],joint_range=[-5,70])
     R.add_node( node_type='joint', node_info=right_hipjoint_y)
     R.add_edge(started_node='root',ended_node='right_hipjoint_y')
     # 大腿
@@ -81,7 +75,7 @@ def SRL_mode1(  name='srl_1',
     R.add_edge(started_node='right_hipjoint_z',ended_node='right_leg1')
     R.add_edge(started_node='right_hipjoint_y',ended_node='right_leg1')
     # 膝关节
-    right_kneejoint = RobotJoint('right_kneejoint',axis=[0,1,0],)
+    right_kneejoint = RobotJoint('right_kneejoint',axis=[0,1,0],joint_range=[-45,45])
     R.add_node( node_type='joint', node_info=right_kneejoint)
     R.add_edge(started_node='right_leg1',ended_node='right_kneejoint')
     # 小腿
@@ -89,7 +83,7 @@ def SRL_mode1(  name='srl_1',
     R.add_node( node_type='link', node_info=right_leg2)
     R.add_edge( started_node='right_kneejoint',ended_node='right_leg2')
     # 踝关节
-    right_ankle = RobotJoint('right_ankle',axis=[0,1,0],)
+    right_ankle = RobotJoint('right_ankle',axis=[0,1,0],joint_range=[-5,5])
     R.add_node( node_type='joint', node_info=right_ankle)
     R.add_edge(started_node='right_leg2',ended_node='right_ankle')
     # 末端

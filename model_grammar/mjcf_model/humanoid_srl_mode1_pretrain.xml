@@ -126,27 +126,27 @@
 				<geom density="10" name="SRL_geom_root" pos="0 0 0" size="0.02 0.095 0.095" type="box"/>
 				<body name="SRL_right_leg1" pos="0.02 0.0475 0" quat="1.0 0.0 0.0 0.0">
 					<geom density="10" fromto="0 0 0 0.4 0 0" name="SRL_geom_right_leg1" size="0.03" type="capsule"/>
-					<joint axis="0 0 1" name="SRL_joint_right_hipjoint_z" pos="0 0 0" range="-45 45" type="hinge"/>
-					<joint axis="0 1 0" name="SRL_joint_right_hipjoint_y" pos="0 0 0" range="-45 45" type="hinge"/>
+					<joint axis="0 0 1" name="SRL_joint_right_hipjoint_z" pos="0 0 0" range="0 40" type="hinge"/>
+					<joint axis="0 1 0" name="SRL_joint_right_hipjoint_y" pos="0 0 0" range="-5 70" type="hinge"/>
 					<body name="SRL_right_leg2" pos="0.4 0 0" quat="0.92388 0.0 0.38268 0.0">
 						<geom density="10" fromto="0 0 0 0.8 0 0" name="SRL_geom_right_leg2" size="0.03" type="capsule"/>
 						<joint axis="0 1 0" name="SRL_joint_right_kneejoint" pos="0 0 0" range="-45 45" type="hinge"/>
 						<body name="SRL_right_end" pos="0.8 0 0" quat="0.86603 0.0 -0.5 0.0">
 							<geom density="10" name="SRL_geom_right_end" pos="0 0 0" size="0.036" type="sphere"/>
-							<joint axis="0 1 0" name="SRL_joint_right_ankle" pos="0 0 0" range="-45 45" type="hinge"/>
+							<joint axis="0 1 0" name="SRL_joint_right_ankle" pos="0 0 0" range="-5 5" type="hinge"/>
 						</body>
 					</body>
 				</body>
 				<body name="SRL_left_leg1" pos="0.02 -0.0475 0" quat="1.0 0.0 0.0 0.0">
 					<geom density="10" fromto="0 0 0 0.4 0 0" name="SRL_geom_left_leg1" size="0.03" type="capsule"/>
-					<joint axis="0 0 1" name="SRL_joint_left_hip_z" pos="0 0 0" range="-45 45" type="hinge"/>
-					<joint axis="0 1 0" name="SRL_joint_left_hip_y" pos="0 0 0" range="-45 45" type="hinge"/>
+					<joint axis="0 0 1" name="SRL_joint_left_hip_z" pos="0 0 0" range="-40 0" type="hinge"/>
+					<joint axis="0 1 0" name="SRL_joint_left_hip_y" pos="0 0 0" range="-5 70" type="hinge"/>
 					<body name="SRL_left_leg2" pos="0.4 0 0" quat="0.92388 0.0 0.38268 0.0">
 						<geom density="10" fromto="0 0 0 0.8 0 0" name="SRL_geom_left_leg2" size="0.03" type="capsule"/>
 						<joint axis="0 1 0" name="SRL_joint_left_kneejoint" pos="0 0 0" range="-45 45" type="hinge"/>
 						<body name="SRL_left_end" pos="0.8 0 0" quat="0.86603 0.0 -0.5 0.0">
 							<geom density="10" name="SRL_geom_left_end" pos="0 0 0" size="0.036" type="sphere"/>
-							<joint axis="0 1 0" name="SRL_joint_left_ankle" pos="0 0 0" range="-45 45" type="hinge"/>
+							<joint axis="0 1 0" name="SRL_joint_left_ankle" pos="0 0 0" range="-5 5" type="hinge"/>
 						</body>
 					</body>
 				</body>
