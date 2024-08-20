@@ -1,7 +1,7 @@
 from collections import OrderedDict
 from inspect import Parameter, signature
 
-from mjcf.lib.xmltodict import unparse  # Patched Fork
+from .lib.xmltodict import unparse  # Patched Fork
 
 
 class Element(object):

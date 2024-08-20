@@ -1,7 +1,7 @@
 from typing import List
 
-from mjcf.element import Element
-from mjcf.utils import capture_kwargs
+from ..element import Element
+from ..utils import capture_kwargs
 
 
 class Include(Element):

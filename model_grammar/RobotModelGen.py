@@ -1,10 +1,10 @@
-from RobotGraph import RobotGraph,RobotJoint,RobotLink
-from mjcf import elements as e
+from .RobotGraph import RobotGraph,RobotJoint,RobotLink
+from .mjcf import elements as e
 import networkx as nx
 import matplotlib.pyplot as plt
 import queue
 from scipy.spatial.transform import Rotation 
- 
+import os
  
 def euler2quaternion(euler):
     '''
@@ -712,6 +712,7 @@ class ModelGenerator():
         '''
         model_xml = self.model.xml()
         save_path = self.save_path + self.robot.graph['name'] + '.xml'
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
         # Output
         with open(save_path, 'w') as fh:
             fh.write(model_xml)

@@ -50,8 +50,9 @@ class RobotJoint():
                  axis = [0,0,1], # 默认Z轴
                  pos = [0,0,0],  # 关节位置，默认在body坐标系的原点
                  joint_range = [-45,45],
-                 stiffness = None,
-                 armature = None,  
+                 stiffness = 300,
+                 damping = 30,
+                 armature = .02,  
                  ctrlrange = [-1,1],
                  ctrllimited = True):
         self.name = name

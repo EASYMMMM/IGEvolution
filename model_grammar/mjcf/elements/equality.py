@@ -1,5 +1,5 @@
-from mjcf.element import Element
-from mjcf.utils import capture_kwargs
+from ..element import Element
+from ..utils import capture_kwargs
 from typing import List
 
 

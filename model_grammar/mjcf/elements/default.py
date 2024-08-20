@@ -1,4 +1,4 @@
-from mjcf.element import Element
+from ..element import Element
 
 
 class Mesh(Element):
