@@ -64,6 +64,7 @@ class RobotJoint():
         self.pos = pos
         self.joint_range = joint_range
         self.stiffness = stiffness
+        self.damping = damping
         self.ctrlrange = ctrlrange
         self.ctrllimited = ctrllimited
 

@@ -232,6 +232,8 @@ class ModelGenerator():
             joint.armature = robot_joint.armature
         if robot_joint.stiffness != None:
             joint.stiffness = robot_joint.stiffness
+        if robot_joint.damping != None:
+            joint.damping = robot_joint.damping
 
         actuator  = e.Motor(name = "SRL_joint_"+robot_joint.name,
                             joint="SRL_joint_"+robot_joint.name,
