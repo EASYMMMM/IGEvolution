@@ -21,6 +21,7 @@ class RobotLink():
                  euler = [0,0,0],  # body坐标系旋转的欧拉角
                  material = None,
                  density = None,
+                 friction = None,
                 ):
         self.name = name
         self.length = length 
@@ -38,6 +39,7 @@ class RobotLink():
         self.geom_pos = geom_pos
         self.material = material
         self.density = density
+        self.friction = friction
 
 
 class RobotJoint():

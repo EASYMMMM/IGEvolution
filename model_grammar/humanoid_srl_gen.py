@@ -14,7 +14,7 @@ def SRL_mode1(  name='srl_1',
                 first_leg_size = 0.03,
                 second_leg_lenth = 0.80,
                 second_leg_size = 0.03,
-                third_leg_size = 0.03,
+                third_leg_size = 0.05,
                 pretrain = False, 
           ):
     if pretrain == False:
@@ -55,7 +55,7 @@ def SRL_mode1(  name='srl_1',
     R.add_node( node_type='joint', node_info=left_ankle)
     R.add_edge(started_node='left_leg2',ended_node='left_ankle')
     # 添加末端肢体
-    left_end =  RobotLink('left_end',link_type='sphere',geom_pos=[0,0,0],size=third_leg_size*1.2,body_pos=[second_leg_lenth,0,0],euler=[0,-60,0],density=density)    
+    left_end =  RobotLink('left_end',link_type='sphere',geom_pos=[0,0,-0.045],size=third_leg_size,body_pos=[second_leg_lenth,0,0],euler=[0,-90,0],density=density,friction=[5.0,0.05,0.05])    
     R.add_node( node_type='link', node_info=left_end)
     R.add_edge(started_node='left_ankle',ended_node='left_end')
 
@@ -85,7 +85,7 @@ def SRL_mode1(  name='srl_1',
     R.add_node( node_type='joint', node_info=right_ankle)
     R.add_edge(started_node='right_leg2',ended_node='right_ankle')
     # 末端
-    right_end =  RobotLink('right_end',link_type='sphere',geom_pos=[0,0,0],size=third_leg_size*1.2,body_pos=[second_leg_lenth,0,0],euler=[0,-60,0],density=density)
+    right_end =  RobotLink('right_end',link_type='sphere',geom_pos=[0,0,-0.045],size=third_leg_size,body_pos=[second_leg_lenth,0,0],euler=[0,-90,0],density=density,friction=[5.0,0.05,0.05])
     R.add_node( node_type='link', node_info=right_end)
     R.add_edge(started_node='right_ankle',ended_node='right_end')
 

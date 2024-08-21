@@ -212,6 +212,8 @@ class ModelGenerator():
             geom.material = robot_part.material
         if robot_part.density != None:
             geom.density = robot_part.density
+        if robot_part.friction != None:
+            geom.friction = robot_part.friction
         return body,geom
         
     def get_joint(self, robot_joint: RobotJoint) :

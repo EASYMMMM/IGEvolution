@@ -22,7 +22,7 @@ from rl_games.algos_torch import central_value
 from tensorboardX import SummaryWriter
 from rl_games.common import datasets
 from gym.spaces.box import Box
-from srl_continuous import SRLAgent
+from .srl_continuous import SRLAgent
 import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../model_grammar')))
@@ -32,6 +32,8 @@ from model_grammar import SRL_mode1,ModelGenerator
 
 class SRLGym(SRLAgent):
     def __init__(self, base_name, params):
+        self.params = params
+        self.gen_SRL_mjcf('hsrl_test_pretrain','mode1',self.SRL_designer(), pretrain=True)
         super.__init__(self, base_name, params)
 
     def train(self):
