@@ -115,4 +115,5 @@ isaacgym_task_map = {
     "Trifinger": Trifinger,
     "HumanoidSRLTest":HumanoidSRLTest,
     "HumanoidAMPSRLTest":HumanoidAMPSRLTest,
+    "HumanoidSRLGym": HumanoidAMPSRLTest,
 }

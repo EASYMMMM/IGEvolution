@@ -33,25 +33,32 @@ from model_grammar import SRL_mode1,ModelGenerator
 class SRLGym(SRLAgent):
     def __init__(self, base_name, params):
         self.params = params
-        self.gen_SRL_mjcf('hsrl_test_pretrain','mode1',self.SRL_designer(), pretrain=True)
-        super.__init__(self, base_name, params)
+        super().__init__( base_name, params)
+        self.mjcf_folder = 'mjcf/humanoid_srl'
+        
 
     def train(self):
-        
-        self.gen_SRL_mjcf('hsrl_test_pretrain','mode1',self.SRL_designer(), pretrain=True)
-        
+        self.create_sim_model('hsrl_test_pretrain','mode1',self.SRL_designer(), pretrain=True)
+        super().train()
 
-
-    def gen_SRL_mjcf(self, name, srl_mode, srl_params, pretrain = False):
+    def generate_SRL_mjcf(self, name, srl_mode, srl_params, pretrain = False):
+        # generate SRL mjcf 'xml' file
         srl_generator = { "mode1": SRL_mode1 }[srl_mode]
         srl_R = srl_generator( name=name, pretrain=pretrain, **srl_params)
-        mjcf_generator = ModelGenerator(srl_R,save_path='..../assets/mjcf/humanoid_srl')
+        abs_path =  os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../assets/'+self.mjcf_folder))  
+        mjcf_generator = ModelGenerator(srl_R,save_path=abs_path)
         back_load = not pretrain
         mjcf_generator.gen_basic_humanoid_xml()
         mjcf_generator.get_SRL_dfs(back_load=back_load)
         mjcf_generator.generate()
         
+    def create_sim_model(self, name, srl_mode, srl_params, pretrain=False):
+        self.generate_SRL_mjcf(name, srl_mode, srl_params, pretrain)
+        self.vec_env.env.cfg["env"]["asset"]["assetFileName"] = self.mjcf_folder+'/'+ name + '.xml'
+         
+        self.vec_env.env.restart_sim()
     
+
     def SRL_designer(self,):
         # 外肢体形态参数生成函数
 

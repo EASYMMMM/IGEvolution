@@ -591,6 +591,20 @@ class HumanoidAMPSRLBase(VecTask):
     def _update_debug_viz(self):
         self.gym.clear_lines(self.viewer)
         return
+    
+    def restart_sim(self,):
+        self.gym.destroy_sim(self.sim)
+        if self.viewer != None:
+            self.gym.destroy_viewer(self.viewer)
+        # create envs, sim and viewer
+        self.gym = gymapi.acquire_gym()
+        self.sim_initialized = False
+        self.create_sim()
+        self.gym.prepare_sim(self.sim)
+        self.sim_initialized = True
+        
+        self.set_viewer()
+
 
 #####################################################################
 ###=========================jit functions=========================###

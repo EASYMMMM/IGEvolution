@@ -715,12 +715,12 @@ class ModelGenerator():
         输出xml文档
         '''
         model_xml = self.model.xml()
-        save_path = self.save_path + self.robot.graph['name'] + '.xml'
+        save_path = os.path.join(self.save_path, self.robot.graph['name'] + '.xml')
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         # Output
         with open(save_path, 'w') as fh:
             fh.write(model_xml)
-        print('Model save to:',save_path)
+        print('MJCF model save to:',save_path)
 
 
 if __name__ == '__main__':
