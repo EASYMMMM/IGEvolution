@@ -100,6 +100,8 @@ def launch_rlg_hydra(cfg: DictConfig):
     from isaacgymenvs.learning.SRLEvo import srl_continuous,srl_models,srl_players
     from isaacgymenvs.learning.SRLEvo import srl_network_builder
     from isaacgymenvs.learning.SRLEvo import srl_gym
+    from isaacgymenvs.learning.SRLEvo.mp_util import subproc_worker 
+    from isaacgymenvs.learning.SRLEvo.srl_gym_runner import SRLGym_Runner
     import isaacgymenvs
 
 
@@ -167,18 +169,18 @@ def launch_rlg_hydra(cfg: DictConfig):
         
         vecenv.register('RLGPU', lambda config_name, num_actors, **kwargs: ComplexObsRLGPUEnv(config_name, num_actors, obs_spec, **kwargs))
     else:
-
         vecenv.register('RLGPU', lambda config_name, num_actors, **kwargs: RLGPUEnv(config_name, num_actors, **kwargs))
 
     # 处理rl_games训练用到的train.cfg配置文件
     rlg_config_dict = omegaconf_to_dict(cfg.train)
     rlg_config_dict = preprocess_train_config(cfg, rlg_config_dict)
-    
-    # 创建observers
+
     observers = [RLGPUAlgoObserver()]
+
     if cfg.pbt.enabled:
         pbt_observer = PbtAlgoObserver(cfg)
         observers.append(pbt_observer)
+
     if cfg.wandb_activate:
         cfg.seed += global_rank
         if global_rank == 0:
@@ -186,33 +188,19 @@ def launch_rlg_hydra(cfg: DictConfig):
             wandb_observer = WandbAlgoObserver(cfg)
             observers.append(wandb_observer)
 
-    # register new AMP network builder and agent
-    def build_runner(algo_observer):
-        runner = Runner(algo_observer)
-        runner.algo_factory.register_builder('amp_continuous', lambda **kwargs : amp_continuous.AMPAgent(**kwargs))
-        runner.player_factory.register_builder('amp_continuous', lambda **kwargs : amp_players.AMPPlayerContinuous(**kwargs))
-        model_builder.register_model('continuous_amp', lambda network, **kwargs : amp_models.ModelAMPContinuous(network))
-        model_builder.register_network('amp', lambda **kwargs : amp_network_builder.AMPBuilder())
-        # SRL 
-        runner.algo_factory.register_builder('srl_continuous', lambda **kwargs : srl_continuous.SRLAgent(**kwargs))
-        runner.algo_factory.register_builder('srl_gym', lambda **kwargs : srl_gym.SRLGym(**kwargs))
-        runner.player_factory.register_builder('srl_continuous', lambda **kwargs : srl_players.SRLPlayerContinuous(**kwargs))
-        model_builder.register_model('continuous_srl', lambda network, **kwargs : srl_models.ModelSRLContinuous(network))
-        model_builder.register_network('amp_humanoid', lambda **kwargs : srl_network_builder.HumanoidBuilder())
-        model_builder.register_network('srl', lambda **kwargs : srl_network_builder.SRLBuilder())
-        return runner
-
     # convert CLI arguments into dictionary
-    # create runner and set the settings
-    runner = build_runner(MultiObserver(observers))
+    # runner = SRLGym_Runner(MultiObserver(observers))
+    # runner.load(rlg_config_dict)
+    # runner.reset()
+    subproc_cls_runner = subproc_worker(SRLGym_Runner, ctx="spawn", daemon=True)
+    runner = subproc_cls_runner(MultiObserver(observers))
     runner.load(rlg_config_dict)
-    runner.reset()
-
-    # 创建保存文件夹 
+    runner.reset().results
+    # dump config dict 
     if not cfg.test:
         experiment_dir = os.path.join('runs', cfg.train.params.config.name + 
         '_{date:%d-%H-%M-%S}'.format(date=datetime.now()))
-        # dump config dict 
+
         os.makedirs(experiment_dir, exist_ok=True)
         with open(os.path.join(experiment_dir, 'config.yaml'), 'w') as f:
             f.write(OmegaConf.to_yaml(cfg))
@@ -222,7 +210,9 @@ def launch_rlg_hydra(cfg: DictConfig):
         'play': cfg.test,
         'checkpoint': cfg.checkpoint,
         'sigma': cfg.sigma if cfg.sigma != '' else None
-    })
+    }).results
+    
+    runner.close()
 
 
 if __name__ == "__main__":
