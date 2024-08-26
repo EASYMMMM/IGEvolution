@@ -1,13 +1,13 @@
-
+from isaacgymenvs.utils.torch_jit_utils import to_torch
 from rl_games.algos_torch.running_mean_std import RunningMeanStd
 from rl_games.algos_torch import torch_ext
 from rl_games.common import a2c_common
 from rl_games.common import schedulers
 from rl_games.common import vecenv
 from rl_games.common.experience import ExperienceBuffer
-
-from isaacgymenvs.utils.torch_jit_utils import to_torch
-
+from rl_games.common.interval_summary_writer import IntervalSummaryWriter
+from rl_games.common import common_losses
+from rl_games.algos_torch.moving_mean_std import GeneralizedMovingStats
 import time
 from datetime import datetime
 import numpy as np
@@ -22,6 +22,11 @@ from .. import amp_datasets as amp_datasets
 from tensorboardX import SummaryWriter
 from rl_games.common import datasets
 from gym.spaces.box import Box
+from rl_games.algos_torch.self_play_manager import SelfPlayManager
+import torch.distributed as dist
+from rl_games.common.diagnostics import DefaultDiagnostics, PpoDiagnostics
+import gym
+from .mp_util import WandbWriter
 
 def my_safe_load(filename, **kwargs):
     return torch_ext.safe_filesystem_op(torch.load, filename, **kwargs)
@@ -33,7 +38,7 @@ def my_load_checkpoint(filename,**kwargs):
 
 class SRLAgent(common_agent.CommonAgent):
 
-    def __init__(self, base_name, params):
+    def __init__(self, base_name, params, cfg = None):
         # super().__init__(base_name, params)
 
         # CommonAgent.__init__
@@ -102,6 +107,9 @@ class SRLAgent(common_agent.CommonAgent):
 
         if self._normalize_amp_input:
             self._amp_input_mean_std = RunningMeanStd(self._amp_observation_space.shape).to(self.ppo_device)
+
+        if self._wandb_writer_only:
+            self.set_wandb_writer()
 
         self._srl_dof = 8
         return
@@ -809,9 +817,16 @@ class SRLAgent(common_agent.CommonAgent):
         }
         return info
 
+    def set_wandb_writer(self):
+        # self.writer.close()  # 关闭 SummaryWriter
+        # self.writer = None   
+        self.writer = WandbWriter()
+
     def _load_config_params(self, config):
         super()._load_config_params(config)
-        
+
+        self._wandb_writer_only = config.get('wandb_writer_only', False)
+        self._start_frame = config.get('start_frame',0)
         self._task_reward_w = config['task_reward_w']
         self._disc_reward_w = config['disc_reward_w']
 
@@ -894,7 +909,7 @@ class SRLAgent(common_agent.CommonAgent):
         start_time = time.time()
         total_time = 0
         rep_count = 0
-        self.frame = 0
+        self.frame = self._start_frame
         self.obs = self.env_reset()
         self.curr_frames = self.batch_size_envs
  
@@ -968,7 +983,7 @@ class SRLAgent(common_agent.CommonAgent):
                 if epoch_num > self.max_epochs:
                     self.save(self.model_output_file)
                     print('MAX EPOCHS NUM!')
-                    return self.last_mean_rewards, epoch_num
+                    return self.last_mean_rewards, epoch_num, self.frame
 
                 update_time = 0
         return

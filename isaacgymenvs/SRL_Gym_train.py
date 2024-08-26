@@ -192,27 +192,37 @@ def launch_rlg_hydra(cfg: DictConfig):
     # runner = SRLGym_Runner(MultiObserver(observers))
     # runner.load(rlg_config_dict)
     # runner.reset()
-    subproc_cls_runner = subproc_worker(SRLGym_Runner, ctx="spawn", daemon=True)
-    runner = subproc_cls_runner(MultiObserver(observers))
-    runner.load(rlg_config_dict)
-    runner.reset().results
-    # dump config dict 
-    if not cfg.test:
-        experiment_dir = os.path.join('runs', cfg.train.params.config.name + 
-        '_{date:%d-%H-%M-%S}'.format(date=datetime.now()))
+    try:
+        
+        subproc_cls_runner = subproc_worker(SRLGym_Runner, ctx="spawn", daemon=False)
+        runner = subproc_cls_runner(MultiObserver(observers))
+        runner.load(rlg_config_dict)
+        runner.reset().results
+        # dump config dict 
+        if not cfg.test:
+            experiment_dir = os.path.join('runs', cfg.train.params.config.name + 
+            '_{date:%d-%H-%M-%S}'.format(date=datetime.now()))
 
-        os.makedirs(experiment_dir, exist_ok=True)
-        with open(os.path.join(experiment_dir, 'config.yaml'), 'w') as f:
-            f.write(OmegaConf.to_yaml(cfg))
+            os.makedirs(experiment_dir, exist_ok=True)
+            with open(os.path.join(experiment_dir, 'config.yaml'), 'w') as f:
+                f.write(OmegaConf.to_yaml(cfg))
 
-    runner.run({
-        'train': not cfg.test,
-        'play': cfg.test,
-        'checkpoint': cfg.checkpoint,
-        'sigma': cfg.sigma if cfg.sigma != '' else None
-    }).results
-    
-    runner.close()
+        runner.run({
+            'train': not cfg.test,
+            'play': cfg.test,
+            'checkpoint': cfg.checkpoint,
+            'sigma': cfg.sigma if cfg.sigma != '' else None,
+            'cfg':cfg
+        }).results
+
+        runner.join()  # 等待子进程完成
+        
+        if runner.exitcode != 0:
+            print("Subprocess exited with error.")
+            runner.close()
+            # 可以在这里添加处理错误的代码，比如重启进程或清理资源
+    finally:
+        runner.close()
 
 
 if __name__ == "__main__":

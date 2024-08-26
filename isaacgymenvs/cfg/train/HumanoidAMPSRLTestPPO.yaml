@@ -102,6 +102,8 @@ params:
     mirror_loss: True
     sym_loss_coef: 1
     humanoid_obs_masked: False
+    wandb_writer_only: False
+    start_frame: 0
     # -----------------------
 
 
