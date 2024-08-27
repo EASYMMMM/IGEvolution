@@ -1,3 +1,6 @@
+'''
+Neural Network Model
+'''
 # Copyright (c) 2018-2023, NVIDIA Corporation
 # All rights reserved.
 #

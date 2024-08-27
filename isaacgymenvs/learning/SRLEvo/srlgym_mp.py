@@ -1,10 +1,15 @@
-
-
+'''
+SRL Gym train/evaluate multi-process
+'''
 import hydra
 
 from omegaconf import DictConfig, OmegaConf
-from omegaconf import DictConfig, OmegaConf
 import time
+from rl_games.common.algo_observer import AlgoObserver
+from rl_games.torch_runner import _restore, _override_sigma
+from isaacgymenvs.utils.utils import retry
+from isaacgymenvs.utils.reformat import omegaconf_to_dict
+import wandb
 
 def preprocess_train_config(cfg, config_dict):
     """
@@ -37,37 +42,6 @@ def preprocess_train_config(cfg, config_dict):
         pass
 
     return config_dict
-
-from rl_games.common.algo_observer import AlgoObserver
-from rl_games.torch_runner import _restore, _override_sigma
-
-from isaacgymenvs.utils.utils import retry
-from isaacgymenvs.utils.reformat import omegaconf_to_dict
-
-def retry(times, exceptions):
-    """
-    Retry Decorator https://stackoverflow.com/a/64030200/1645784
-    Retries the wrapped function/method `times` times if the exceptions listed
-    in ``exceptions`` are thrown
-    :param times: The number of times to repeat the wrapped function/method
-    :type times: Int
-    :param exceptions: Lists of exceptions that trigger a retry attempt
-    :type exceptions: Tuple of Exceptions
-    """
-    def decorator(func):
-        def newfn(*args, **kwargs):
-            attempt = 0
-            while attempt < times:
-                try:
-                    return func(*args, **kwargs)
-                except exceptions:
-                    print(f'Exception thrown when attempting to run {func}, attempt {attempt} out of {times}')
-                    time.sleep(min(2 ** attempt, 30))
-                    attempt += 1
-
-            return func(*args, **kwargs)
-        return newfn
-    return decorator
 
 class MyWandbAlgoObserver(AlgoObserver):
     """Need this to propagate the correct experiment name after initialization."""
@@ -120,10 +94,8 @@ class MyWandbAlgoObserver(AlgoObserver):
         else:
             wandb.config.update(omegaconf_to_dict(self.cfg), allow_val_change=True)
 
-
-import wandb
 class SRLGym_process():
-    def __init__(self,cfg):
+    def __init__(self, cfg):
         self.cfg = cfg
 
     def test(self):
@@ -252,7 +224,6 @@ class SRLGym_process():
         dict_cls = ige_env_cls.dict_obs_cls if hasattr(ige_env_cls, 'dict_obs_cls') and ige_env_cls.dict_obs_cls else False
         # 检查env环境中是否定义了dict_obs_cls=True
         if dict_cls:
-            
             obs_spec = {}
             actor_net_cfg = cfg.train.params.network
             obs_spec['obs'] = {'names': list(actor_net_cfg.inputs.keys()), 'concat': not actor_net_cfg.name == "complex_net", 'space_name': 'observation_space'}
@@ -262,7 +233,6 @@ class SRLGym_process():
             
             vecenv.register('RLGPU', lambda config_name, num_actors, **kwargs: ComplexObsRLGPUEnv(config_name, num_actors, obs_spec, **kwargs))
         else:
-
             vecenv.register('RLGPU', lambda config_name, num_actors, **kwargs: RLGPUEnv(config_name, num_actors, **kwargs))
 
         # 处理rl_games训练用到的train.cfg配置文件
@@ -312,19 +282,14 @@ class SRLGym_process():
             with open(os.path.join(experiment_dir, 'config.yaml'), 'w') as f:
                 f.write(OmegaConf.to_yaml(cfg))
 
-        # runner.run({
-        #     'train': not cfg.test,
-        #     'play': cfg.test,
-        #     'checkpoint': cfg.checkpoint,
-        #     'sigma': cfg.sigma if cfg.sigma != '' else None
-        # })
-        last_mean_rewards, epoch_num, frame = self.run(runner, {  'train': not cfg.test,
-                            'play': cfg.test,
-                            'checkpoint': cfg.checkpoint,
-                            'sigma': cfg.sigma if cfg.sigma != '' else None
-                         })
-        wandb.finish() # 子进程中手动结束wandb
-        return last_mean_rewards, epoch_num, frame
+ 
+        _, __, frame = self.run(runner, {  'train': not cfg.test,
+                                            'play': cfg.test,
+                                            'checkpoint': cfg.checkpoint,
+                                            'sigma': cfg.sigma if cfg.sigma != '' else None
+                                        })
+        wandb.finish()  # finish wandb in subprocess
+        return _, __, frame
  
     def run(self , runner, args):
         if args['train']:

@@ -1,40 +1,18 @@
-from rl_games.algos_torch.running_mean_std import RunningMeanStd
-from rl_games.algos_torch import torch_ext
-from rl_games.common import a2c_common
-from rl_games.common import schedulers
-from rl_games.common import vecenv
-from rl_games.common.experience import ExperienceBuffer
 
-# from isaacgymenvs.utils.torch_jit_utils import to_torch
-
-
-import time
-from datetime import datetime
-import numpy as np
-from torch import optim
-import torch 
-from torch import nn
 import os
-from rl_games.algos_torch import central_value
-# import isaacgymenvs.learning.replay_buffer as replay_buffer
-# import isaacgymenvs.learning.common_agent as common_agent 
-# from .. import amp_datasets as amp_datasets
-from tensorboardX import SummaryWriter
-from rl_games.common import datasets
-from gym.spaces.box import Box
 from .srl_continuous import SRLAgent
 import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../model_grammar')))
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
 from model_grammar import SRL_mode1,ModelGenerator
- 
+from isaacgymenvs.learning.SRLEvo.srlgym_mp import SRLGym_process
 
-class SRLGym(SRLAgent):
-    def __init__(self, base_name, params):
-        self.params = params
-        super().__init__( base_name, params)
+class SRLGym( ):
+    def __init__(self, cfg):
+        self.cfg = cfg 
         self.mjcf_folder = 'mjcf/humanoid_srl'
+        self.process_cls = SRLGym_process
         
 
     def train(self):

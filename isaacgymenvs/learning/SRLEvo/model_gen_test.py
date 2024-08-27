@@ -1,3 +1,7 @@
+'''
+MJCF模型生成测试
+'''
+
 if __name__ == '__main__':
     import sys
     import os
