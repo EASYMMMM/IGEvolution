@@ -39,6 +39,7 @@ def preprocess_train_config(cfg, config_dict):
     return config_dict
 
 from rl_games.common.algo_observer import AlgoObserver
+from rl_games.torch_runner import _restore, _override_sigma
 
 from isaacgymenvs.utils.utils import retry
 from isaacgymenvs.utils.reformat import omegaconf_to_dict
@@ -71,7 +72,8 @@ def retry(times, exceptions):
 class MyWandbAlgoObserver(AlgoObserver):
     """Need this to propagate the correct experiment name after initialization."""
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, wandb_exp_name):
+        self.wandb_exp_name = wandb_exp_name
         super().__init__()
         self.cfg = cfg
 
@@ -81,7 +83,43 @@ class MyWandbAlgoObserver(AlgoObserver):
         sync_tensorboard does not work.
         """
 
-        pass
+        import wandb
+        experiment_name = self.wandb_exp_name
+        wandb_unique_id = f"uid_{experiment_name}"
+        print(f"Wandb using unique id {wandb_unique_id}")
+
+        cfg = self.cfg
+
+        # this can fail occasionally, so we try a couple more times
+        @retry(3, exceptions=(Exception,))
+        def init_wandb():
+            wandb.init(
+                project=cfg.wandb_project,
+                #entity=cfg.wandb_entity,
+                group=cfg.wandb_group,
+                tags=cfg.wandb_tags,
+                sync_tensorboard=True,
+                id=wandb_unique_id,
+                name=experiment_name,
+                resume=True,
+                settings=wandb.Settings(start_method='fork'),
+            )
+       
+            if cfg.wandb_logcode_dir:
+                wandb.run.log_code(root=cfg.wandb_logcode_dir)
+                print('wandb running directory........', wandb.run.dir)
+
+        print('Initializing WandB...')
+        try:
+            init_wandb()
+        except Exception as exc:
+            print(f'Could not initialize WandB! {exc}')
+
+        if isinstance(self.cfg, dict):
+            wandb.config.update(self.cfg, allow_val_change=True)
+        else:
+            wandb.config.update(omegaconf_to_dict(self.cfg), allow_val_change=True)
+
 
 import wandb
 class SRLGym_process():
@@ -96,8 +134,6 @@ class SRLGym_process():
         cfg = self.cfg
         wandb_unique_id = f"uid_{wandb_experiment_name}"
         print(f"Wandb using unique id {wandb_unique_id}")
-
-
         # this can fail occasionally, so we try a couple more times
         @retry(3, exceptions=(Exception,))
         def my_init_wandb():
@@ -123,10 +159,11 @@ class SRLGym_process():
             wandb.config.update(cfg, allow_val_change=True)
         else:
             wandb.config.update(omegaconf_to_dict(cfg), allow_val_change=True)
+    
     def finish_wandb(self):
         wandb.finish()
 
-    def rlgpu(self):
+    def rlgpu(self, wandb_exp_name):
         print('SUBPROCESS RLGPU')
         cfg = self.cfg
         import logging
@@ -169,8 +206,8 @@ class SRLGym_process():
             cfg.checkpoint = to_absolute_path(cfg.checkpoint)
 
         cfg_dict = omegaconf_to_dict(cfg)
-        print('cfg_dict:')
-        print_dict(cfg_dict)
+        # print('cfg_dict:')
+        # print_dict(cfg_dict)
 
         # set numpy formatting for printing only
         set_np_formatting()
@@ -241,7 +278,7 @@ class SRLGym_process():
             cfg.seed += global_rank
             if global_rank == 0:
                 # initialize wandb only once per multi-gpu run
-                wandb_observer = MyWandbAlgoObserver(cfg)
+                wandb_observer = MyWandbAlgoObserver(cfg, wandb_exp_name)
                 observers.append(wandb_observer)
 
         # register new AMP network builder and agent
@@ -275,12 +312,39 @@ class SRLGym_process():
             with open(os.path.join(experiment_dir, 'config.yaml'), 'w') as f:
                 f.write(OmegaConf.to_yaml(cfg))
 
-        runner.run({
-            'train': not cfg.test,
-            'play': cfg.test,
-            'checkpoint': cfg.checkpoint,
-            'sigma': cfg.sigma if cfg.sigma != '' else None
-        })
+        # runner.run({
+        #     'train': not cfg.test,
+        #     'play': cfg.test,
+        #     'checkpoint': cfg.checkpoint,
+        #     'sigma': cfg.sigma if cfg.sigma != '' else None
+        # })
+        last_mean_rewards, epoch_num, frame = self.run(runner, {  'train': not cfg.test,
+                            'play': cfg.test,
+                            'checkpoint': cfg.checkpoint,
+                            'sigma': cfg.sigma if cfg.sigma != '' else None
+                         })
+        wandb.finish() # 子进程中手动结束wandb
+        return last_mean_rewards, epoch_num, frame
+ 
+    def run(self , runner, args):
+        if args['train']:
+            print(runner.algo_name)
+            agent = runner.algo_factory.create(runner.algo_name, base_name='run', params=runner.params)
+            _restore(agent, args)
+            _override_sigma(agent, args)
+            last_mean_rewards, epoch_num, frame = agent.train()
+            return last_mean_rewards, epoch_num, frame
+        elif args['play']:
+            runner.run_play(args)
+            return 0, 0, 0
+        else:
+            print(runner.algo_name)
+            agent = runner.algo_factory.create(runner.algo_name, base_name='run', params=runner.params)
+            _restore(agent, args)
+            _override_sigma(agent, args)
+            last_mean_rewards, epoch_num, frame = agent.train()
+            return last_mean_rewards, epoch_num, frame
+         
 
 
  

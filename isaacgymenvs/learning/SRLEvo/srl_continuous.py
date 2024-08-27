@@ -903,7 +903,7 @@ class SRLAgent(common_agent.CommonAgent):
         return disc_info
 
     def train(self):
-        # 原本使用的是common_agent中的train函数。为了方便修改和查看，在该类中重写train函数
+        
         self.init_tensors()
         self.last_mean_rewards = -100500
         start_time = time.time()
@@ -972,7 +972,7 @@ class SRLAgent(common_agent.CommonAgent):
                         self.writer.add_scalar('rewards/AMP'.format(i), mean_rewards_amp[i], frame)
                     self.writer.add_scalar('episode_lengths/frame', mean_lengths, frame)
                     self.writer.add_scalar('episode_lengths/iter', mean_lengths, epoch_num)
-
+                    
                     if self.has_self_play_config:
                         self.self_play_manager.update(self)
 
@@ -983,10 +983,11 @@ class SRLAgent(common_agent.CommonAgent):
                 if epoch_num > self.max_epochs:
                     self.save(self.model_output_file)
                     print('MAX EPOCHS NUM!')
+                    self.writer.close()
                     return self.last_mean_rewards, epoch_num, self.frame
 
                 update_time = 0
-        return
+         
 
     def save(self, fn):
         state = self.get_full_state_weights()

@@ -52,33 +52,31 @@ def my_init_wandb(cfg, experiment_name):
 def main(cfg: DictConfig):
 
     print(cfg['experiment'])
- 
-    experiment_name = cfg['experiment'] + datetime.now().strftime("_%d-%H-%M-%S")
-    #my_init_wandb(cfg, experiment_name)
+    wandb_exp_name = cfg['experiment'] + datetime.now().strftime("_%d-%H-%M-%S")
+    # my_init_wandb(cfg, experiment_name)  # 主进程初始化wandb
     subproc_cls_runner = subproc_worker(SRLGym_process, ctx="spawn", daemon=False)
     runner = subproc_cls_runner(cfg)
     try:
-        runner.init_wandb(experiment_name)
-        _, _, frame = runner.rlgpu().results
+        _, _, frame = runner.rlgpu(wandb_exp_name).results
+        print('frame=',frame)
     except Exception as e:
         print(f"Error during execution: {e}")
     finally:
-        runner.finish_wandb().results
         runner.close()
         print('close runner')
     
     cfg['train']['params']['config']['start_frame'] = frame+1
+    subproc_cls_runner = subproc_worker(SRLGym_process, ctx="spawn", daemon=False)
     runner = subproc_cls_runner(cfg)
     try:
-        runner.init_wandb(experiment_name)
-        runner.rlgpu().results
+        _, _, frame = runner.rlgpu(wandb_exp_name).results
+        print('frame=',frame)
     except Exception as e:
         print(f"Error during execution: {e}")
     finally:
-        runner.finish_wandb().results
         runner.close()
         print('close runner')
-     
+
     print('----------END----------')
     
     # srlgym_process = SRLGym_process(cfg)
