@@ -89,10 +89,7 @@ class MyWandbAlgoObserver(AlgoObserver):
         except Exception as exc:
             print(f'Could not initialize WandB! {exc}')
 
-        if isinstance(self.cfg, dict):
-            wandb.config.update(self.cfg, allow_val_change=True)
-        else:
-            wandb.config.update(omegaconf_to_dict(self.cfg), allow_val_change=True)
+
 
 class SRLGym_process():
     def __init__(self, cfg):
@@ -135,7 +132,18 @@ class SRLGym_process():
     def finish_wandb(self):
         wandb.finish()
 
-    def rlgpu(self, wandb_exp_name):
+    def _log_design_param(self,design_param,step):
+        info_dict = {
+                "design/leg1_lenth" : design_param["first_leg_lenth"],
+                "design/leg1_size"  : design_param["first_leg_size"],
+                "design/leg2_lenth": design_param["second_leg_lenth"],
+                "design/leg2_size" : design_param["second_leg_size"],
+                "design/end_size"  : design_param["third_leg_size"],
+                "global_step" :  step
+        }
+        wandb.log(info_dict )
+
+    def rlgpu(self, wandb_exp_name, design_params=None):
         print('SUBPROCESS RLGPU')
         cfg = self.cfg
         import logging
@@ -275,21 +283,30 @@ class SRLGym_process():
 
         # 创建保存文件夹 
         if not cfg.test:
-            experiment_dir = os.path.join('runs', cfg.train.params.config.name + 
-            '_{date:%d-%H-%M-%S}'.format(date=datetime.now()))
+            exp_dir = cfg.get('experiment_dir',False)
+            if exp_dir:
+                experiment_dir = exp_dir
+            else:
+                experiment_dir = os.path.join('runs', cfg.train.params.config.name + 
+                '_{date:%d-%H-%M-%S}'.format(date=datetime.now()))
             # dump config dict 
             os.makedirs(experiment_dir, exist_ok=True)
             with open(os.path.join(experiment_dir, 'config.yaml'), 'w') as f:
                 f.write(OmegaConf.to_yaml(cfg))
 
  
-        _, __, frame = self.run(runner, {  'train': not cfg.test,
-                                            'play': cfg.test,
-                                            'checkpoint': cfg.checkpoint,
-                                            'sigma': cfg.sigma if cfg.sigma != '' else None
-                                        })
+        last_mean_rewards, epoch_num, frame = self.run(runner, { 'train': not cfg.test,
+                                                        'play': cfg.test,
+                                                        'checkpoint': cfg.checkpoint,
+                                                        'sigma': cfg.sigma if cfg.sigma != '' else None
+                                                        })
+        
+        if design_params:
+            self._log_design_param(design_params, frame)
+        wandb.log({'Evolution/reward':last_mean_rewards, 'global_step': frame} )
+                
         wandb.finish()  # finish wandb in subprocess
-        return _, __, frame
+        return last_mean_rewards, epoch_num, frame
  
     def run(self , runner, args):
         if args['train']:

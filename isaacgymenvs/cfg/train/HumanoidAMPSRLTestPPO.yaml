@@ -93,17 +93,18 @@ params:
     task_reward_w: 1.0
     disc_reward_w: 1.0
 
-
     # ---- user defined ----
     actions_num_humanoid: 28
     actions_num_srl: 8
     train_srl_only: False
-    humanoid_checkpoint: None
+    humanoid_checkpoint: False
+    hsrl_checkpoint: False
     mirror_loss: True
     sym_loss_coef: 1
     humanoid_obs_masked: False
-    wandb_writer_only: False
     start_frame: 0
+    model_output_file: False
+    train_dir: runs
     # -----------------------
 
 

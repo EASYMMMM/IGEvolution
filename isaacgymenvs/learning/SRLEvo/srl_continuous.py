@@ -112,8 +112,7 @@ class SRLAgent(common_agent.CommonAgent):
         if self._normalize_amp_input:
             self._amp_input_mean_std = RunningMeanStd(self._amp_observation_space.shape).to(self.ppo_device)
 
-        if self._wandb_writer_only:
-            self.set_wandb_writer()
+ 
 
         self._srl_dof = 8
         return
@@ -150,8 +149,10 @@ class SRLAgent(common_agent.CommonAgent):
 
         self._build_amp_buffers() # 构建 AMP 缓冲区  
 
-        if not self._humanoid_checkpoint == 'None':
+        if self._humanoid_checkpoint :
             self._load_humanoid_network(self._humanoid_checkpoint)    
+        if self._hsrl_checkpoint :
+            self._load_hsrl_checkpoint(self._hsrl_checkpoint)
             
         if self.mirror_loss:
             self.tensor_list += ['obses_mirrored']
@@ -333,6 +334,7 @@ class SRLAgent(common_agent.CommonAgent):
             not_dones = 1.0 - self.dones.float()
 
             ''' If env is done, reset current_reward '''
+            # TODO：可以在这里添加评估指标
             self.current_rewards = self.current_rewards * not_dones.unsqueeze(1)
             # self.current_rewards_srl = self.current_rewards_srl * not_dones.unsqueeze(1)
             self.current_rewards_amp = self.current_rewards_amp * not_dones.unsqueeze(1)
@@ -821,15 +823,10 @@ class SRLAgent(common_agent.CommonAgent):
         }
         return info
 
-    def set_wandb_writer(self):
-        # self.writer.close()  # 关闭 SummaryWriter
-        # self.writer = None   
-        self.writer = WandbWriter()
 
     def _load_config_params(self, config):
         super()._load_config_params(config)
 
-        self._wandb_writer_only = config.get('wandb_writer_only', False)
         self._start_frame = config.get('start_frame',0)
         self._task_reward_w = config['task_reward_w']
         self._disc_reward_w = config['disc_reward_w']
@@ -847,7 +844,8 @@ class SRLAgent(common_agent.CommonAgent):
         self._normalize_amp_input = config.get('normalize_amp_input', True)
 
         self._train_srl_only = config['train_srl_only']
-        self._humanoid_checkpoint = config['humanoid_checkpoint']
+        self._humanoid_checkpoint = config.get('humanoid_checkpoint',False)
+        self._hsrl_checkpoint = config.get('hsrl_checkpoint',False)
 
         self.mirror_loss = config.get('mirror_loss', False)
         self._humanoid_obs_masked = config.get('humanoid_obs_masked', False)
@@ -920,6 +918,8 @@ class SRLAgent(common_agent.CommonAgent):
 
         self.model_output_file = os.path.join(self.network_path, 
             self.config['name'] + '_{date:%d-%H-%M-%S}'.format(date=datetime.now()))
+        if self.config.get('model_output_file', False):
+            self.model_output_file = self.config.get('model_output_file')
 
         self._init_train()
 
@@ -992,6 +992,14 @@ class SRLAgent(common_agent.CommonAgent):
 
                 update_time = 0
          
+
+    def _load_hsrl_checkpoint(self, fn,):
+        # restore nn of humanoid & srl
+        checkpoint = my_load_checkpoint(fn,map_location=self.device)
+        self.model.load_state_dict(checkpoint['model'])
+        self.model_srl.load_state_dict(checkpoint['model_srl'])
+         
+
 
     def save(self, fn):
         state = self.get_full_state_weights()
