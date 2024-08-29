@@ -14,7 +14,8 @@ from isaacgymenvs.learning.SRLEvo.srl_gym import SRLGym
 def main(cfg: DictConfig):
 
     srl_gym = SRLGym(cfg)
-    srl_gym.train_test()
+    # srl_gym.train_test()
+    srl_gym.train_GA_test()
     return
 
 

@@ -107,6 +107,8 @@ params:
     train_dir: runs
     # -----------------------
 
+gym:
+  design_opt: 'random'  # SRL designer optimizer
 
     
     

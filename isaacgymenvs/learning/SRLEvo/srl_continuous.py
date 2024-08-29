@@ -31,6 +31,8 @@ import torch.distributed as dist
 from rl_games.common.diagnostics import DefaultDiagnostics, PpoDiagnostics
 import gym
 from .mp_util import WandbWriter
+from collections import deque
+
 
 def my_safe_load(filename, **kwargs):
     return torch_ext.safe_filesystem_op(torch.load, filename, **kwargs)
@@ -112,9 +114,9 @@ class SRLAgent(common_agent.CommonAgent):
         if self._normalize_amp_input:
             self._amp_input_mean_std = RunningMeanStd(self._amp_observation_space.shape).to(self.ppo_device)
 
- 
-
         self._srl_dof = 8
+
+        self.evaluate_rewards = deque(maxlen=100)  # Reward used to evaluate the design
         return
 
     def init_tensors(self):
@@ -309,8 +311,8 @@ class SRLAgent(common_agent.CommonAgent):
             # calculate total reward
             _total_rewards = self._combine_rewards(rewards,_amp_rewards)
             # store reward
-            self.current_rewards_task += rewards
-            self.current_rewards      += _total_rewards
+            self.current_rewards_task += rewards     # task reward
+            self.current_rewards      += _total_rewards  # task reward + amp reward
             self.current_rewards_amp  += _amp_rewards['disc_rewards']
             self.current_rewards_t_c  += _torque_cost.unsqueeze(1)       # 分量 
             self.current_rewards_v_p  += _velocity_penalty.unsqueeze(1)  # 分量
@@ -332,9 +334,13 @@ class SRLAgent(common_agent.CommonAgent):
             self.algo_observer.process_infos(infos, done_indices)
 
             not_dones = 1.0 - self.dones.float()
-
-            ''' If env is done, reset current_reward '''
             # TODO：可以在这里添加评估指标
+            for idx in done_indices:
+                reward = self.current_rewards[idx].item()
+                # 添加新的 reward 到队列中
+                self.evaluate_rewards.append(reward)
+            ''' If env is done, reset current_reward '''
+            
             self.current_rewards = self.current_rewards * not_dones.unsqueeze(1)
             # self.current_rewards_srl = self.current_rewards_srl * not_dones.unsqueeze(1)
             self.current_rewards_amp = self.current_rewards_amp * not_dones.unsqueeze(1)
@@ -343,7 +349,7 @@ class SRLAgent(common_agent.CommonAgent):
             self.current_rewards_t_c = self.current_rewards_t_c * not_dones.unsqueeze(1)
             self.current_rewards_u_r = self.current_rewards_u_r * not_dones.unsqueeze(1)
             self.current_lengths = self.current_lengths * not_dones
-        
+
             if (self.vec_env.env.viewer and (n == (self.horizon_length - 1))):
                 self._amp_debug(infos)
 
@@ -480,7 +486,7 @@ class SRLAgent(common_agent.CommonAgent):
 
         for _ in range(0, self.mini_epochs_num):
             ep_kls = []
-            for i in range(len(self.dataset)): # TODO:7-18 已经把镜像obs存储到dataset_srl中。下一步需要在训练更新网络时计算对称损失。
+            for i in range(len(self.dataset)):  
                 # 调用 train_actor_critic 方法执行一次训练步骤
 
                 curr_train_info = self.train_actor_critic(self.dataset[i],self.dataset_srl[i])
@@ -618,7 +624,7 @@ class SRLAgent(common_agent.CommonAgent):
         # self.scaler.update()                # 3. 更新缩放因子，根据训练情况调整缩放因子以适应下一次迭代
 
         self.scaler_srl.scale(loss).backward()
-        #TODO: Refactor this ugliest code of the year
+         
         if self.truncate_grads:
             # multiGPU 相关代码已删除
             self.scaler_srl.unscale_(self.optimizer_srl)
@@ -652,7 +658,7 @@ class SRLAgent(common_agent.CommonAgent):
         return        
 
     def sym_loss(self, mus, mus_mirrored):
-        # TODO: 7-19 完成对称损失
+         
         # 计算mus和mus_mirrored之间的平方误差
  
         mus_perm = torch.matmul(mus_mirrored, self.vec_env.env.mirror_act_srl_mat)
@@ -749,7 +755,7 @@ class SRLAgent(common_agent.CommonAgent):
 
         if not self._train_srl_only:
             self.scaler.scale(loss).backward()
-            #TODO: Refactor this ugliest code of the year
+             
             if self.truncate_grads:
                 # multiGPU相关代码已删除
                 self.scaler.unscale_(self.optimizer)
@@ -988,7 +994,8 @@ class SRLAgent(common_agent.CommonAgent):
                     self.save(self.model_output_file)
                     print('MAX EPOCHS NUM!')
                     self.writer.close()
-                    return self.last_mean_rewards, epoch_num, self.frame
+                    avg_recent_rewards = sum(self.evaluate_rewards) / len(self.evaluate_rewards)
+                    return avg_recent_rewards, epoch_num, self.frame
 
                 update_time = 0
          

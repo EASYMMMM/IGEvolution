@@ -413,10 +413,10 @@ class HumanoidAMPSRLBase(VecTask):
             dof_pos = self._dof_pos
             dof_vel = self._dof_vel
             key_body_pos = self._rigid_body_pos[:, self._key_body_ids, :]
-            if self._srl_endpos_obs:
+            if self._srl_endpos_obs: # Add cartisian pos of SRL-end to OBS
                 srl_end_body_pos = self._rigid_body_pos[:,self._srl_endpos_ids, :]
                 key_body_pos = torch.cat((key_body_pos, srl_end_body_pos), dim=1)
-            target_v = self.get_task_target_v()
+            target_v = self.get_task_target_v() # Target speed
         else:
             root_states = self._root_states[env_ids]
             dof_pos = self._dof_pos[env_ids]
@@ -425,7 +425,7 @@ class HumanoidAMPSRLBase(VecTask):
             if self._srl_endpos_obs:
                 srl_end_body_pos = self._rigid_body_pos[env_ids][:,self._srl_endpos_ids, :]
                 key_body_pos = torch.cat((key_body_pos, srl_end_body_pos), dim=1)
-            target_v = self.get_task_target_v(env_ids)
+            target_v = self.get_task_target_v(env_ids) # Target speed
         
         obs = compute_humanoid_observations(root_states, dof_pos, dof_vel,
                                             key_body_pos, self._local_root_obs)

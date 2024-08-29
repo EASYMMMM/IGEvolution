@@ -295,7 +295,7 @@ class SRLGym_process():
                 f.write(OmegaConf.to_yaml(cfg))
 
  
-        last_mean_rewards, epoch_num, frame = self.run(runner, { 'train': not cfg.test,
+        evaluate_reward, epoch_num, frame = self.run(runner, { 'train': not cfg.test,
                                                         'play': cfg.test,
                                                         'checkpoint': cfg.checkpoint,
                                                         'sigma': cfg.sigma if cfg.sigma != '' else None
@@ -303,19 +303,19 @@ class SRLGym_process():
         
         if design_params:
             self._log_design_param(design_params, frame)
-        wandb.log({'Evolution/reward':last_mean_rewards, 'global_step': frame} )
+        wandb.log({'Evolution/reward':evaluate_reward, 'global_step': frame} )
                 
         wandb.finish()  # finish wandb in subprocess
-        return last_mean_rewards, epoch_num, frame
+        return evaluate_reward, epoch_num, frame
  
-    def run(self , runner, args):
+    def run(self, runner, args):
         if args['train']:
             print(runner.algo_name)
             agent = runner.algo_factory.create(runner.algo_name, base_name='run', params=runner.params)
             _restore(agent, args)
             _override_sigma(agent, args)
-            last_mean_rewards, epoch_num, frame = agent.train()
-            return last_mean_rewards, epoch_num, frame
+            evaluate_reward, epoch_num, frame = agent.train()
+            return evaluate_reward, epoch_num, frame
         elif args['play']:
             runner.run_play(args)
             return 0, 0, 0
