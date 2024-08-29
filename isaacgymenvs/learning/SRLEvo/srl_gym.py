@@ -99,8 +99,8 @@ class SRLGym( ):
     def train_GA_test(self):
         design_opt = GeneticAlgorithmOptimizer(self.default_SRL_designer(),
                                                self.design_evaluate,
-                                               population_size=2,
-                                               num_iterations=2)
+                                               population_size=20,
+                                               num_iterations=10)
         best_params = design_opt.optimize()
         save_path =  os.path.join(self.experiment_dir,  'best_param.txt')
         with open(save_path, 'w') as f:
