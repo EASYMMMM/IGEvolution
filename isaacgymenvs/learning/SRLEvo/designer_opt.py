@@ -44,7 +44,8 @@ class GeneticAlgorithmOptimizer(MorphologyOptimizer):
                   population_size=20, 
                   mutation_rate=0.1,
                   crossover_rate=0.7,
-                  num_iterations=10):
+                  num_iterations=10,
+                  bounds_scale=0.3):
         super().__init__(base_design_params)
         self.population_size = population_size
         self.evaluate_design_method = evaluate_design_method
@@ -54,12 +55,18 @@ class GeneticAlgorithmOptimizer(MorphologyOptimizer):
         self.population = self.init_population()
 
     def init_population(self):
-        """初始化种群"""
+        """初始化种群，参数在基础参数的上下bounds_scale范围内"""
         population = []
         population.append(self.base_params.copy())
-        for _ in range(self.population_size-1):
-            individual = {key: np.random.uniform(0.5 * val, 1.5 * val) for key, val in self.base_params.items()}
+        
+        for _ in range(self.population_size - 1):
+            individual = {}
+            for key, val in self.base_params.items():
+                lower_bound = (1 - self.bounds_scale) * val
+                upper_bound = (1 + self.bounds_scale) * val
+                individual[key] = np.random.uniform(lower_bound, upper_bound)
             population.append(individual)
+            
         return population
 
     def sample_population(self):
@@ -71,10 +78,14 @@ class GeneticAlgorithmOptimizer(MorphologyOptimizer):
         return population
     
     def mutate(self, individual):
-        """个体变异"""
+        """个体变异，参数裁剪到基础参数的上下bounds_scale范围内"""
         for key in individual.keys():
             if random.random() < self.mutation_rate:
                 individual[key] *= np.random.uniform(0.9, 1.1)
+                # 裁剪参数到指定范围内
+                lower_bound = (1 - self.bounds_scale) * self.base_params[key]
+                upper_bound = (1 + self.bounds_scale) * self.base_params[key]
+                individual[key] = np.clip(individual[key], lower_bound, upper_bound)
         return individual
 
     def crossover(self, parent1, parent2):
