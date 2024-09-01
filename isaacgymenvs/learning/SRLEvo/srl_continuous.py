@@ -952,11 +952,12 @@ class SRLAgent(common_agent.CommonAgent):
                     fps_step = curr_frames / scaled_play_time
                     fps_total = curr_frames / scaled_time
                     print(f'fps step: {fps_step:.1f} fps total: {fps_total:.1f}')
-
+                print('logging to tensorboard ... ')
                 self.writer.add_scalar('performance/total_fps', curr_frames / scaled_time, frame)
                 self.writer.add_scalar('performance/step_fps', curr_frames / scaled_play_time, frame)
                 self.writer.add_scalar('info/epochs', epoch_num, frame)
                 self._log_train_info(train_info, frame)
+                print('logging done ')
 
                 self.algo_observer.after_print_stats(frame, epoch_num, total_time)
                 

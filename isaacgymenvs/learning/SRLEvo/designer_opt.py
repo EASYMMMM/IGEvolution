@@ -3,6 +3,8 @@ import numpy as np
 import random
 import csv
 import os
+import time
+
 class MorphologyOptimizer(abc.ABC):
     def __init__(self, base_params):
         self.base_params = base_params
@@ -152,7 +154,12 @@ class GeneticAlgorithmOptimizer(MorphologyOptimizer):
       
         for i in range(self.num_iterations):
             # 评估当前种群
-            scores = [self.evaluate_design_method(individual) for individual in self.population]
+            scores = []
+            for individual in self.population:
+                score = self.evaluate_design_method(individual)
+                scores.append(score)
+                time.sleep(10)  # 每次评估后延时10秒
+        
             # 基于当前种群和得分更新种群
             self.update(self.population, scores)
             print(f"Iteration {i+1}/{self.num_iterations}, Best Score: {self.best_score}")
