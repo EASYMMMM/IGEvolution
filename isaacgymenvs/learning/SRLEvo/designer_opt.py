@@ -52,8 +52,9 @@ class GeneticAlgorithmOptimizer(MorphologyOptimizer):
         self.mutation_rate = mutation_rate
         self.crossover_rate = crossover_rate
         self.num_iterations = num_iterations
-        self.population = self.init_population()
         self.bounds_scale = bounds_scale
+        self.population = self.init_population()
+        
          
     def init_population(self):
         """初始化种群，参数在基础参数的上下bounds_scale范围内"""
