@@ -146,30 +146,19 @@ class GeneticAlgorithmOptimizer(MorphologyOptimizer):
             if current > pick:
                 return individual
 
-    def optimize(self, csv_filepath="", csv_filename="GA_optimize_result.csv"):
+    def optimize(self,):
         """运行优化算法并将每一代的最优设计及其评估值保存在CSV文件中"""
         best_individuals_over_time = []  # 用于保存每一代的最优设计及其评估值
-        csv_file =  os.path.join(csv_filepath, csv_filename)
-        # 打开CSV文件，准备写入
-        with open(csv_file, mode='w', newline='') as file:
-            writer = csv.writer(file)
-            # 写入CSV文件头
-            header = ['Generation', 'Best_Score'] + list(self.base_params.keys())
-            writer.writerow(header)
-            
-            for i in range(self.num_iterations):
-                # 评估当前种群
-                scores = [self.evaluate_design_method(individual) for individual in self.population]
-                # 基于当前种群和得分更新种群
-                self.update(self.population, scores)
-                print(f"Iteration {i+1}/{self.num_iterations}, Best Score: {self.best_score}")
+      
+        for i in range(self.num_iterations):
+            # 评估当前种群
+            scores = [self.evaluate_design_method(individual) for individual in self.population]
+            # 基于当前种群和得分更新种群
+            self.update(self.population, scores)
+            print(f"Iteration {i+1}/{self.num_iterations}, Best Score: {self.best_score}")
+            # 保存当前代的最优设计及其评估值
+            best_individuals_over_time.append((self.best_params.copy(), self.best_score))
                 
-                # 保存当前代的最优设计及其评估值
-                best_individuals_over_time.append((self.best_params.copy(), self.best_score))
-                
-                # 写入CSV文件每一代的数据
-                row = [i + 1, self.best_score] + list(self.best_params.values())
-                writer.writerow(row)
         
         return best_individuals_over_time
 

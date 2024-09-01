@@ -16,6 +16,7 @@ from isaacgymenvs.utils.reformat import omegaconf_to_dict
 import time
 import random
 import shutil
+import csv
 
 class SRLGym( ):
     def __init__(self, cfg):
@@ -98,18 +99,25 @@ class SRLGym( ):
 
     def train_GA_test(self):
         design_opt = GeneticAlgorithmOptimizer(self.default_SRL_designer(),
-                                               self.design_evaluate,
-                                               population_size=20,
-                                               num_iterations=10)
-        best_individuals = design_opt.optimize(csv_filepath=self.experiment_dir)
+                                            self.design_evaluate,
+                                            population_size=20,
+                                            num_iterations=10)
+        best_individuals = design_opt.optimize()
+
+        # 记录每一代的最优设计及其评估值到CSV文件
         best_params = best_individuals[-1][0]  # 获取最后一代的最优参数
-        
-        save_path = os.path.join(self.experiment_dir, 'best_param.txt')
-        with open(save_path, 'w') as f:
-            for key, value in best_params.items():
-                f.write(f"{key}: {value}\n")
-        print(f"Best parameters saved to {save_path}")
-        
+        csv_file = os.path.join(self.experiment_dir, "GA_optimize_result.csv")
+        with open(csv_file, mode='w', newline='') as file:
+            writer = csv.writer(file)
+            header = ['Generation', 'Best_Score'] + list(best_params.keys())
+            writer.writerow(header)
+            
+            for i, (params, score) in enumerate(best_individuals):
+                row = [i + 1, score] + list(params.values())
+                writer.writerow(row)
+
+        print(f"Optimization results saved to {csv_file}")
+
     def generate_SRL_xml(self, name, srl_mode, srl_params, pretrain = False):
         # generate SRL mjcf xml file
         srl_generator = { "mode1": SRL_mode1 }[srl_mode]
