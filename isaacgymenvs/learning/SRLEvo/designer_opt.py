@@ -1,7 +1,8 @@
 import abc
 import numpy as np
 import random
-
+import csv
+import os
 class MorphologyOptimizer(abc.ABC):
     def __init__(self, base_params):
         self.base_params = base_params
@@ -55,7 +56,8 @@ class GeneticAlgorithmOptimizer(MorphologyOptimizer):
     def init_population(self):
         """初始化种群"""
         population = []
-        for _ in range(self.population_size):
+        population.append(self.base_params.copy())
+        for _ in range(self.population_size-1):
             individual = {key: np.random.uniform(0.5 * val, 1.5 * val) for key, val in self.base_params.items()}
             population.append(individual)
         return population
@@ -86,28 +88,43 @@ class GeneticAlgorithmOptimizer(MorphologyOptimizer):
         return child
 
     def update(self, population, scores):
-        """基于评估值更新优化参数"""
-        best_index = np.argmax(scores)
-        best_individual = population[best_index]
-        best_score = scores[best_index]
+        """基于评估值更新优化参数，保留表现最好的两个个体"""
+        # 获取表现最好的两个个体
+        sorted_indices = np.argsort(scores)[::-1]  # 从大到小排序
+        best_individuals = [population[sorted_indices[0]], population[sorted_indices[1]]]
+        best_scores = [scores[sorted_indices[0]], scores[sorted_indices[1]]]
 
-        if best_score > self.best_score:
-            self.best_score = best_score
-            self.best_params = best_individual
+        # 如果有更好的个体，更新最佳参数
+        if best_scores[0] > self.best_score:
+            self.best_score = best_scores[0]
+            self.best_params = best_individuals[0]
 
-        new_population = []
-        for _ in range(self.population_size // 2):
+        # 新种群包含两个精英个体
+        new_population = best_individuals.copy()
+
+        # 通过交叉和变异生成其余的个体
+        while len(new_population) < self.population_size:
             parent1 = self.select(population, scores)
             parent2 = self.select(population, scores)
             child1 = self.crossover(parent1, parent2)
             child2 = self.crossover(parent1, parent2)
             new_population.append(self.mutate(child1))
-            new_population.append(self.mutate(child2))
+            if len(new_population) < self.population_size:
+                new_population.append(self.mutate(child2))
 
         self.population = new_population
 
     def select(self, population, scores):
-        """轮盘赌选择个体"""
+        """标准化选择"""
+        min_score = min(scores)
+        max_score = max(scores)
+        
+        # 如果所有分数相同，则平等分配选择概率
+        if max_score > min_score:
+            scores = [(score - min_score) / (max_score - min_score) for score in scores]
+        else:
+            scores = [1 for _ in scores]  # 所有分数相同的情况，给予等同的概率
+        
         total_fitness = sum(scores)
         pick = random.uniform(0, total_fitness)
         current = 0
@@ -115,18 +132,33 @@ class GeneticAlgorithmOptimizer(MorphologyOptimizer):
             current += score
             if current > pick:
                 return individual
-            
 
-    def optimize(self):
-        """运行优化算法"""
-        for i in range(self.num_iterations):
-            # 评估当前种群
-            scores = [self.evaluate_design_method(individual) for individual in self.population]
-            # 基于当前种群和得分更新种群
-            self.update(self.population, scores)
-            print(f"Iteration {i+1}/{self.num_iterations}, Best Score: {self.best_score}")
+    def optimize(self, csv_filepath="", csv_filename="GA_optimize_result.csv"):
+        """运行优化算法并将每一代的最优设计及其评估值保存在CSV文件中"""
+        best_individuals_over_time = []  # 用于保存每一代的最优设计及其评估值
+        csv_file =  os.path.join(csv_filepath, csv_filename)
+        # 打开CSV文件，准备写入
+        with open(csv_file, mode='w', newline='') as file:
+            writer = csv.writer(file)
+            # 写入CSV文件头
+            header = ['Generation', 'Best_Score'] + list(self.base_params.keys())
+            writer.writerow(header)
+            
+            for i in range(self.num_iterations):
+                # 评估当前种群
+                scores = [self.evaluate_design_method(individual) for individual in self.population]
+                # 基于当前种群和得分更新种群
+                self.update(self.population, scores)
+                print(f"Iteration {i+1}/{self.num_iterations}, Best Score: {self.best_score}")
+                
+                # 保存当前代的最优设计及其评估值
+                best_individuals_over_time.append((self.best_params.copy(), self.best_score))
+                
+                # 写入CSV文件每一代的数据
+                row = [i + 1, self.best_score] + list(self.best_params.values())
+                writer.writerow(row)
         
-        return self.best_params
+        return best_individuals_over_time
 
 
 class GA_Design_Optim():

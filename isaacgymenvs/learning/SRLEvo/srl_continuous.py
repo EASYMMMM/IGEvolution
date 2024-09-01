@@ -336,7 +336,9 @@ class SRLAgent(common_agent.CommonAgent):
             not_dones = 1.0 - self.dones.float()
             # TODO：可以在这里添加评估指标
             for idx in done_indices:
-                reward = self.current_rewards[idx].item()
+                evaluate_t_c = self.current_rewards_t_c[idx].item()
+                evaluate_u_r = self.current_rewards_u_r[idx].item()
+                reward = evaluate_t_c*2 + evaluate_u_r
                 # 添加新的 reward 到队列中
                 self.evaluate_rewards.append(reward)
             ''' If env is done, reset current_reward '''

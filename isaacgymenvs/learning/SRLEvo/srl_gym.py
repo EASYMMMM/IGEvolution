@@ -101,13 +101,15 @@ class SRLGym( ):
                                                self.design_evaluate,
                                                population_size=20,
                                                num_iterations=10)
-        best_params = design_opt.optimize()
-        save_path =  os.path.join(self.experiment_dir,  'best_param.txt')
+        best_individuals = design_opt.optimize(csv_filepath=self.experiment_dir)
+        best_params = best_individuals[-1][0]  # 获取最后一代的最优参数
+        
+        save_path = os.path.join(self.experiment_dir, 'best_param.txt')
         with open(save_path, 'w') as f:
             for key, value in best_params.items():
                 f.write(f"{key}: {value}\n")
         print(f"Best parameters saved to {save_path}")
-
+        
     def generate_SRL_xml(self, name, srl_mode, srl_params, pretrain = False):
         # generate SRL mjcf xml file
         srl_generator = { "mode1": SRL_mode1 }[srl_mode]
