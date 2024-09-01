@@ -41,10 +41,10 @@ class GeneticAlgorithmOptimizer(MorphologyOptimizer):
     def __init__(self,
                   base_design_params, 
                   evaluate_design_method,
-                  population_size=20, 
+                  population_size=10, 
                   mutation_rate=0.1,
                   crossover_rate=0.7,
-                  num_iterations=10,
+                  num_iterations=7,
                   bounds_scale=0.3):
         super().__init__(base_design_params)
         self.population_size = population_size
@@ -53,7 +53,8 @@ class GeneticAlgorithmOptimizer(MorphologyOptimizer):
         self.crossover_rate = crossover_rate
         self.num_iterations = num_iterations
         self.population = self.init_population()
-
+        self.bounds_scale = bounds_scale
+         
     def init_population(self):
         """初始化种群，参数在基础参数的上下bounds_scale范围内"""
         population = []
