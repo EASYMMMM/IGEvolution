@@ -87,6 +87,7 @@ class SRLGym( ):
         wandb_exp_name = self.wandb_exp_name
         self.init_wandb(cfg,wandb_exp_name )
         curr_frame = 1
+        iteration = 1
         cfg['wandb_activate'] = False
         model_output_path =  os.path.join(self.experiment_dir,  'nn')
         logs_output_path = os.path.join(self.experiment_dir, 'logs')
@@ -127,6 +128,9 @@ class SRLGym( ):
                 runner.close()
                 print('close runner')
             curr_frame = curr_frame + frame
+            self._log_design_param(srl_params,iteration)
+            wandb.log({'Evolution/reward':evaluate_reward, 'iteration': iteration} )
+            iteration = iteration+1
         sync_tensorboard_logs(logs_output_path)
         wandb.finish()
 
