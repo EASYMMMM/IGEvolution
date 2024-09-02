@@ -46,7 +46,7 @@ class GeneticAlgorithmOptimizer(MorphologyOptimizer):
                   population_size=12, 
                   mutation_rate=0.1,
                   crossover_rate=0.7,
-                  num_iterations=7,
+                  num_iterations=10,
                   bounds_scale=0.3):
         super().__init__(base_design_params)
         self.population_size = population_size
