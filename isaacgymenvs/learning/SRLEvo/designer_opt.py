@@ -43,7 +43,7 @@ class GeneticAlgorithmOptimizer(MorphologyOptimizer):
     def __init__(self,
                   base_design_params, 
                   evaluate_design_method,
-                  population_size=10, 
+                  population_size=12, 
                   mutation_rate=0.1,
                   crossover_rate=0.7,
                   num_iterations=7,
