@@ -134,7 +134,9 @@ class SRLGym( ):
         cfg = self.cfg
         xml_name = 'hsrl_mode1'
         train_cfg = deepcopy(cfg)
-        train_cfg['train']['params']['config']['start_frame'] = self.curr_frame + 1
+        # FIXME: Frame数值爆炸
+        # train_cfg['train']['params']['config']['start_frame'] = self.curr_frame + 1
+        train_cfg['train']['params']['config']['start_frame'] =  1
         srl_params = design_params
         # 生成xml模型
         self.generate_SRL_xml(xml_name,'mode1',srl_params,pretrain=False)
