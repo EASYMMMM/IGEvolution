@@ -161,50 +161,6 @@ python train.py task=Ant checkpoint=runs/Ant/nn/Ant.pth test=True num_envs=64
 python train.py task=HumanoidAMP ++task.env.motion_file=amp_humanoid_run.npy experiment=AMP_run rl_device=cuda:1 sim_device=cuda:1
 ```
 
-logging done 
-=> saving checkpoint 'runs/SRLGym_TEST_4090_Evo_02-11-17-52/nn/mode1_id.pth'
-MAX EPOCHS NUM!
-wandb: Waiting for W&B process to finish... (success).
-^Cclose runner MB of 0.874 MB uploaded (0.000 MB deduped))
-wandb: ERROR Control-C detected -- Run data was not synced
-Traceback (most recent call last):
-  File "SRLGym_train.py", line 24, in <module>
-    main()
-  File "/home/ps/anaconda3/envs/Mrlgpu/lib/python3.7/site-packages/hydra/main.py", line 99, in decorated_main
-    config_name=config_name,
-  File "/home/ps/anaconda3/envs/Mrlgpu/lib/python3.7/site-packages/hydra/_internal/utils.py", line 401, in _run_hydra
-    overrides=overrides,
-  File "/home/ps/anaconda3/envs/Mrlgpu/lib/python3.7/site-packages/hydra/_internal/utils.py", line 458, in _run_app
-    lambda: hydra.run(
-  File "/home/ps/anaconda3/envs/Mrlgpu/lib/python3.7/site-packages/hydra/_internal/utils.py", line 220, in run_and_report
-    return func()
-  File "/home/ps/anaconda3/envs/Mrlgpu/lib/python3.7/site-packages/hydra/_internal/utils.py", line 461, in <lambda>
-    overrides=overrides,
-  File "/home/ps/anaconda3/envs/Mrlgpu/lib/python3.7/site-packages/hydra/_internal/hydra.py", line 127, in run
-    configure_logging=with_log_configuration,
-  File "/home/ps/anaconda3/envs/Mrlgpu/lib/python3.7/site-packages/hydra/core/utils.py", line 186, in run_job
-    ret.return_value = task_function(task_cfg)
-  File "SRLGym_train.py", line 18, in main
-    srl_gym.train_GA_test()
-  File "/home/ps/pan1/files/mly/IsaacGymEvo/isaacgymenvs/learning/SRLEvo/srl_gym.py", line 105, in train_GA_test
-    best_individuals = design_opt.optimize()
-  File "/home/ps/pan1/files/mly/IsaacGymEvo/isaacgymenvs/learning/SRLEvo/designer_opt.py", line 159, in optimize
-    score = self.evaluate_design_method(individual)
-  File "/home/ps/pan1/files/mly/IsaacGymEvo/isaacgymenvs/learning/SRLEvo/srl_gym.py", line 158, in design_evaluate
-    evaluate_reward, _, frame = runner.rlgpu(self.wandb_exp_name,design_params=srl_params).results
-  File "/home/ps/pan1/files/mly/IsaacGymEvo/isaacgymenvs/learning/SRLEvo/mp_util.py", line 139, in results
-    return self._ledger.get_results(self.job_id)
-  File "/home/ps/pan1/files/mly/IsaacGymEvo/isaacgymenvs/learning/SRLEvo/mp_util.py", line 104, in get_results
-    self._add_result()
-  File "/home/ps/pan1/files/mly/IsaacGymEvo/isaacgymenvs/learning/SRLEvo/mp_util.py", line 97, in _add_result
-    data = self._remote.recv()
-  File "/home/ps/anaconda3/envs/Mrlgpu/lib/python3.7/multiprocessing/connection.py", line 250, in recv
-    buf = self._recv_bytes()
-  File "/home/ps/anaconda3/envs/Mrlgpu/lib/python3.7/multiprocessing/connection.py", line 407, in _recv_bytes
-    buf = self._recv(4)
-  File "/home/ps/anaconda3/envs/Mrlgpu/lib/python3.7/multiprocessing/connection.py", line 379, in _recv
-    chunk = read(handle, remaining)
-KeyboardInterrupt
 
 
 

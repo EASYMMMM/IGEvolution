@@ -49,6 +49,83 @@ class SRLGym( ):
 
     def design_train(self,):
         pass
+    
+    def init_wandb(self,wandb_experiment_name):
+        cfg = self.cfg
+        wandb_unique_id = f"uid_{wandb_experiment_name}"
+        print(f"Wandb using unique id {wandb_unique_id}")
+        # this can fail occasionally, so we try a couple more times
+        @retry(3, exceptions=(Exception,))
+        def my_init_wandb():
+            wandb.init(
+                project=cfg.wandb_project,
+                #entity=cfg.wandb_entity,
+                group=cfg.wandb_group,
+                tags=cfg.wandb_tags,
+                sync_tensorboard=False,
+                id=wandb_unique_id,
+                name=wandb_experiment_name,
+                resume=True,
+                settings=wandb.Settings(start_method='spawn'),
+            )
+
+        print('Initializing WandB...')
+        try:
+            my_init_wandb()
+        except Exception as exc:
+            print(f'Could not initialize WandB! {exc}')
+
+        if isinstance(cfg, dict):
+            wandb.config.update(cfg, allow_val_change=True)
+        else:
+            wandb.config.update(omegaconf_to_dict(cfg), allow_val_change=True)
+ 
+
+    def train_wandb_test(self):
+        cfg = self.cfg
+        wandb_exp_name = self.wandb_exp_name
+        self.init_wandb(cfg,wandb_exp_name )
+        curr_frame = 1
+        cfg['wandb_activate'] = False
+        model_output_path =  os.path.join(self.experiment_dir,  'nn')
+        os.makedirs(model_output_path, exist_ok=True)  # 创建输出文件夹
+
+        design_opt = {"random":self.random_SRL_designer,
+                      "GA":self.GA_SRL_design_opt, }['random']
+
+        subproc_cls_runner = subproc_worker(SRLGym_process, ctx="spawn", daemon=False)
+        
+        # 在预先训练模型上进行第二步训练
+        for i in range(2):
+
+            cfg['train']['params']['config']['start_frame'] = curr_frame+1
+            xml_name = 'hsrl_mode1'
+            train_cfg = deepcopy(cfg)
+            srl_params = design_opt()
+            # 生成xml模型
+            self.generate_SRL_xml(xml_name,'mode1',srl_params,pretrain=False)
+            # 设置xml路径
+            train_cfg['task']['env']['asset']['assetFileName'] = self.mjcf_folder + '/' + xml_name + '.xml'  # XML模型路径
+            # 设置hsrl预训练
+            train_cfg['train']['params']['config']['hsrl_checkpoint'] = 'runs/SRL_walk_v1.8.3_4090_03-17-37-52/nn/SRL_walk_v1.8.3_4090_03-17-37-58.pth'   # 预训练加载点
+
+            # 设置模型输出路径
+            model_name = 'mode1_id'+ str(i)
+            model_output_file = os.path.join(model_output_path, model_name)
+            train_cfg['train']['params']['config']['model_output_file'] = model_output_file  # 模型输出路径
+            train_cfg['train']['params']['config']['train_dir'] =  os.path.join(self.experiment_dir, 'logs')
+        
+            runner = subproc_cls_runner(train_cfg)
+            try:
+                evaluate_reward, _, frame = runner.rlgpu(wandb_exp_name,design_params=srl_params).results
+                print('frame=',frame)
+            except Exception as e:
+                print(f"Error during execution: {e}")
+            finally:
+                runner.close()
+                print('close runner')
+            curr_frame = curr_frame + frame
+        wandb.finish
 
     def train_test(self):
         cfg = self.cfg
@@ -64,8 +141,6 @@ class SRLGym( ):
 
         subproc_cls_runner = subproc_worker(SRLGym_process, ctx="spawn", daemon=False)
         
-
-
         # 在预先训练模型上进行第二步训练
         for i in range(2):
 
