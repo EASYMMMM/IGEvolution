@@ -50,12 +50,11 @@ class SRLGym( ):
     def design_train(self,):
         pass
     
-    def init_wandb(self,wandb_experiment_name):
-        cfg = self.cfg
+    def init_wandb(self,cfg, wandb_experiment_name):
+        
         wandb_unique_id = f"uid_{wandb_experiment_name}"
         print(f"Wandb using unique id {wandb_unique_id}")
         # this can fail occasionally, so we try a couple more times
-        @retry(3, exceptions=(Exception,))
         def my_init_wandb():
             wandb.init(
                 project=cfg.wandb_project,
@@ -91,7 +90,7 @@ class SRLGym( ):
         os.makedirs(model_output_path, exist_ok=True)  # 创建输出文件夹
 
         design_opt = {"random":self.random_SRL_designer,
-                      "GA":self.GA_SRL_design_opt, }['random']
+                      }['random']
 
         subproc_cls_runner = subproc_worker(SRLGym_process, ctx="spawn", daemon=False)
         

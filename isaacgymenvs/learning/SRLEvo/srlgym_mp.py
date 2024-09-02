@@ -301,11 +301,11 @@ class SRLGym_process():
                                                         'sigma': cfg.sigma if cfg.sigma != '' else None
                                                         })
         
-        if design_params:
-            self._log_design_param(design_params, frame)
-        wandb.log({'Evolution/reward':evaluate_reward, 'global_step': frame} )
+        # if design_params:
+        #     self._log_design_param(design_params, frame)
+        # wandb.log({'Evolution/reward':evaluate_reward, 'global_step': frame} )
                 
-        wandb.finish()  # finish wandb in subprocess
+        # wandb.finish()  # finish wandb in subprocess
         return evaluate_reward, epoch_num, frame
  
     def run(self, runner, args):
