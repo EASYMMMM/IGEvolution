@@ -255,7 +255,7 @@ class SRLGym( ):
         model_output_file = os.path.join(model_output_path, model_name)
         train_cfg['train']['params']['config']['model_output_file'] = model_output_file  # 模型输出路径
         train_cfg['train']['params']['config']['train_dir'] =  os.path.join(self.experiment_dir, 'logs')
-        subproc_cls_runner = subproc_worker(SRLGym_process, ctx="spawn", daemon=False)
+        subproc_cls_runner = subproc_worker(SRLGym_process, ctx="spawn", daemon=True)
         runner = subproc_cls_runner(train_cfg)
         try:
             evaluate_reward, _, frame, summary_dir = runner.rlgpu(self.wandb_exp_name,design_params=srl_params).results
