@@ -17,6 +17,16 @@ import time
 import random
 import shutil
 import csv
+import glob
+
+def sync_tensorboard_logs(main_log_dir):
+    """手动同步子进程生成的 TensorBoard 日志到 WandB"""
+    # 查找所有的 tfevent 文件
+    log_files = glob.glob(os.path.join(main_log_dir, '**','summaries', 'events.out.tfevents.*'), recursive=True)
+    for log_file in log_files:
+        print(f"Syncing file: {log_file}")
+        # 将文件保存到 WandB
+        wandb.save(log_file)
 
 class SRLGym( ):
     def __init__(self, cfg):
@@ -29,15 +39,7 @@ class SRLGym( ):
         self.curr_frame = 0
         self.best_evaluate_reward = -100500
 
-    def log_design_param(self,design_param,step):
-        info_dict = {
-                "design/leg1_lenth" : design_param["first_leg_lenth"],
-                "design/leg1_size"  : design_param["first_leg_size"],
-                "design/leg2_lenth": design_param["second_leg_lenth"],
-                "design/leg2_size" : design_param["second_leg_size"],
-                "design/end_size"  : design_param["third_leg_size"],
-        }
-        wandb.log(info_dict,step=step)
+ 
          
 
     def init_cfg(self):
@@ -87,6 +89,7 @@ class SRLGym( ):
         curr_frame = 1
         cfg['wandb_activate'] = False
         model_output_path =  os.path.join(self.experiment_dir,  'nn')
+        logs_output_path = os.path.join(self.experiment_dir, 'logs')
         os.makedirs(model_output_path, exist_ok=True)  # 创建输出文件夹
 
         design_opt = {"random":self.random_SRL_designer,
@@ -112,7 +115,7 @@ class SRLGym( ):
             model_name = 'mode1_id'+ str(i)
             model_output_file = os.path.join(model_output_path, model_name)
             train_cfg['train']['params']['config']['model_output_file'] = model_output_file  # 模型输出路径
-            train_cfg['train']['params']['config']['train_dir'] =  os.path.join(self.experiment_dir, 'logs')
+            train_cfg['train']['params']['config']['train_dir'] =  logs_output_path
         
             runner = subproc_cls_runner(train_cfg)
             try:
@@ -124,14 +127,15 @@ class SRLGym( ):
                 runner.close()
                 print('close runner')
             curr_frame = curr_frame + frame
-        wandb.finish
+        sync_tensorboard_logs(logs_output_path)
+        wandb.finish()
 
     def train_test(self):
         cfg = self.cfg
         wandb_exp_name = self.wandb_exp_name
         # self.init_wandb(cfg,wandb_exp_name )
         curr_frame = 1
-
+        iteration = 1
         model_output_path =  os.path.join(self.experiment_dir,  'nn')
         os.makedirs(model_output_path, exist_ok=True)  # 创建输出文件夹
 
@@ -162,7 +166,7 @@ class SRLGym( ):
         
             runner = subproc_cls_runner(train_cfg)
             try:
-                evaluate_reward, _, frame = runner.rlgpu(wandb_exp_name,design_params=srl_params).results
+                evaluate_reward, _, frame, summary_dir = runner.rlgpu(wandb_exp_name,design_params=srl_params).results
                 print('frame=',frame)
             except Exception as e:
                 print(f"Error during execution: {e}")
@@ -170,6 +174,9 @@ class SRLGym( ):
                 runner.close()
                 print('close runner')
             curr_frame = curr_frame + frame
+            self._log_design_param(srl_params,iteration)
+            wandb.log({'Evolution/reward':evaluate_reward, 'iteration': iteration} )
+            iteration = iteration+1
 
     def train_GA_test(self):
         design_opt = GeneticAlgorithmOptimizer(self.default_SRL_designer(),
@@ -203,6 +210,16 @@ class SRLGym( ):
         mjcf_generator.get_SRL_dfs(back_load=back_load)
         mjcf_generator.generate()
         
+    def _log_design_param(self,design_param,step):
+        info_dict = {
+                "design/leg1_lenth" : design_param["first_leg_lenth"],
+                "design/leg1_size"  : design_param["first_leg_size"],
+                "design/leg2_lenth": design_param["second_leg_lenth"],
+                "design/leg2_size" : design_param["second_leg_size"],
+                "design/end_size"  : design_param["third_leg_size"],
+                "global_step" :  step
+        }
+        wandb.log(info_dict )
 
     def design_evaluate(self, design_params):
         cfg = self.cfg

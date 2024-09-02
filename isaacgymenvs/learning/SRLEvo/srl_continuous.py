@@ -998,7 +998,7 @@ class SRLAgent(common_agent.CommonAgent):
                     print('MAX EPOCHS NUM!')
                     self.writer.close()
                     avg_recent_rewards = sum(self.evaluate_rewards) / len(self.evaluate_rewards)
-                    return avg_recent_rewards, epoch_num, self.frame
+                    return avg_recent_rewards, epoch_num, self.frame, self.summaries_dir
 
                 update_time = 0
          

@@ -295,7 +295,7 @@ class SRLGym_process():
                 f.write(OmegaConf.to_yaml(cfg))
 
  
-        evaluate_reward, epoch_num, frame = self.run(runner, { 'train': not cfg.test,
+        evaluate_reward, epoch_num, frame, summary_dir = self.run(runner, { 'train': not cfg.test,
                                                         'play': cfg.test,
                                                         'checkpoint': cfg.checkpoint,
                                                         'sigma': cfg.sigma if cfg.sigma != '' else None
@@ -306,7 +306,7 @@ class SRLGym_process():
         # wandb.log({'Evolution/reward':evaluate_reward, 'global_step': frame} )
                 
         # wandb.finish()  # finish wandb in subprocess
-        return evaluate_reward, epoch_num, frame
+        return evaluate_reward, epoch_num, frame, summary_dir
  
     def run(self, runner, args):
         if args['train']:
