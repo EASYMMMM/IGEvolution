@@ -165,20 +165,22 @@ class GeneticAlgorithmOptimizer(MorphologyOptimizer):
             self.update(self.population, scores)
             print(f"Iteration {i+1}/{self.num_iterations}, Best Score: {self.best_score}")
             # 保存当前代的最优设计及其评估值
-            self.log_design(self.best_params.copy(),self.best_score)
+            self.log_design(self.best_params.copy(),self.best_score,i)
             best_individuals_over_time.append((self.best_params.copy(), self.best_score))
                 
         
         return best_individuals_over_time
     
-    def log_design(self,best_params,best_reward):
+    def log_design(self,best_params,best_reward,iteration):
         info_dict = {
                 "GA/leg1_lenth" : best_params["first_leg_lenth"],
                 "GA/leg1_size"  : best_params["first_leg_size"],
                 "GA/leg2_lenth": best_params["second_leg_lenth"],
                 "GA/leg2_size" : best_params["second_leg_size"],
                 "GA/end_size"  : best_params["third_leg_size"],
-                "GA/best_reward" :  best_reward
+                "GA/best_reward" :  best_reward,
+                "GA_iteration": iteration
+
         }
         wandb.log(info_dict )
 

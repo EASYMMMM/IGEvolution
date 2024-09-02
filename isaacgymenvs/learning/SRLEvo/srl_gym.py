@@ -190,8 +190,8 @@ class SRLGym( ):
         curr_frame = 1
         design_opt = GeneticAlgorithmOptimizer(self.default_SRL_designer(),
                                             self.design_evaluate,
-                                            population_size=20,
-                                            num_iterations=10)
+                                            population_size=15,
+                                            num_iterations=8)
         best_individuals = design_opt.optimize()
 
         # 记录每一代的最优设计及其评估值到CSV文件
@@ -205,7 +205,9 @@ class SRLGym( ):
             for i, (params, score) in enumerate(best_individuals):
                 row = [i + 1, score] + list(params.values())
                 writer.writerow(row)
-
+        
+        logs_output_path =  os.path.join(self.experiment_dir, 'logs')
+        sync_tensorboard_logs(logs_output_path)
         print(f"Optimization results saved to {csv_file}")
 
     def generate_SRL_xml(self, name, srl_mode, srl_params, pretrain = False):
@@ -234,6 +236,7 @@ class SRLGym( ):
         cfg = self.cfg
         xml_name = 'hsrl_mode1'
         train_cfg = deepcopy(cfg)
+        train_cfg['wandb_activate'] = False
         # FIXME: Frame数值爆炸
         # train_cfg['train']['params']['config']['start_frame'] = self.curr_frame + 1
         train_cfg['train']['params']['config']['start_frame'] =  1
@@ -255,7 +258,7 @@ class SRLGym( ):
         subproc_cls_runner = subproc_worker(SRLGym_process, ctx="spawn", daemon=False)
         runner = subproc_cls_runner(train_cfg)
         try:
-            evaluate_reward, _, frame = runner.rlgpu(self.wandb_exp_name,design_params=srl_params).results
+            evaluate_reward, _, frame, summary_dir = runner.rlgpu(self.wandb_exp_name,design_params=srl_params).results
             print('frame=',frame)
         except Exception as e:
             print(f"Error during execution: {e}")
