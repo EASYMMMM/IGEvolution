@@ -183,6 +183,11 @@ class SRLGym( ):
             iteration = iteration+1
 
     def train_GA_test(self):
+        cfg = self.cfg
+        wandb_exp_name = self.wandb_exp_name
+        self.init_wandb(cfg,wandb_exp_name )
+        self.iteration = 1
+        curr_frame = 1
         design_opt = GeneticAlgorithmOptimizer(self.default_SRL_designer(),
                                             self.design_evaluate,
                                             population_size=20,
@@ -258,6 +263,11 @@ class SRLGym( ):
             runner.close()
             print('close runner')
         self.curr_frame = self.curr_frame + frame
+
+        self._log_design_param(srl_params, self.iteration)
+        wandb.log({'Evolution/reward':evaluate_reward, 'iteration': self.iteration} )
+        self.iteration = self.iteration+1
+
         if evaluate_reward > self.best_evaluate_reward:
             self.best_evaluate_reward = evaluate_reward  # 更新最佳评估分数
             best_model_path = os.path.join(model_output_path, 'best_model.pth')
