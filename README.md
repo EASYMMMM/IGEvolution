@@ -172,3 +172,86 @@ python train.py task=HumanoidAMP ++task.env.motion_file=amp_humanoid_run.npy exp
 
 
 
+==============================
+RunningMeanStd:  (1,)
+RunningMeanStd:  (121,)
+RunningMeanStd:  (210,)
+=> my loading checkpoint 'runs/SRL_walk_v1.8.3_4090_03-17-37-52/nn/SRL_walk_v1.8.3_4090_03-17-37-58.pth'
+fps step: 84820.5 fps total: 66680.8
+logging to tensorboard ... 
+^Cclose runner
+Traceback (most recent call last):
+  File "SRLGym_train.py", line 24, in <module>
+    main()
+  File "/home/ps/anaconda3/envs/Mrlgpu/lib/python3.7/site-packages/hydra/main.py", line 99, in decorated_main
+    config_name=config_name,
+  File "/home/ps/anaconda3/envs/Mrlgpu/lib/python3.7/site-packages/hydra/_internal/utils.py", line 401, in _run_hydra
+    overrides=overrides,
+  File "/home/ps/anaconda3/envs/Mrlgpu/lib/python3.7/site-packages/hydra/_internal/utils.py", line 458, in _run_app
+    lambda: hydra.run(
+  File "/home/ps/anaconda3/envs/Mrlgpu/lib/python3.7/site-packages/hydra/_internal/utils.py", line 220, in run_and_report
+    return func()
+  File "/home/ps/anaconda3/envs/Mrlgpu/lib/python3.7/site-packages/hydra/_internal/utils.py", line 461, in <lambda>
+    overrides=overrides,
+  File "/home/ps/anaconda3/envs/Mrlgpu/lib/python3.7/site-packages/hydra/_internal/hydra.py", line 127, in run
+    configure_logging=with_log_configuration,
+  File "/home/ps/anaconda3/envs/Mrlgpu/lib/python3.7/site-packages/hydra/core/utils.py", line 186, in run_job
+    ret.return_value = task_function(task_cfg)
+  File "SRLGym_train.py", line 18, in main
+    srl_gym.train_GA_test()
+  File "/home/ps/pan1/files/mly/IsaacGymEvo/isaacgymenvs/learning/SRLEvo/srl_gym.py", line 105, in train_GA_test
+    best_individuals = design_opt.optimize()
+  File "/home/ps/pan1/files/mly/IsaacGymEvo/isaacgymenvs/learning/SRLEvo/designer_opt.py", line 159, in optimize
+    score = self.evaluate_design_method(individual)
+  File "/home/ps/pan1/files/mly/IsaacGymEvo/isaacgymenvs/learning/SRLEvo/srl_gym.py", line 156, in design_evaluate
+    evaluate_reward, _, frame = runner.rlgpu(self.wandb_exp_name,design_params=srl_params).results
+  File "/home/ps/pan1/files/mly/IsaacGymEvo/isaacgymenvs/learning/SRLEvo/mp_util.py", line 139, in results
+    return self._ledger.get_results(self.job_id)
+  File "/home/ps/pan1/files/mly/IsaacGymEvo/isaacgymenvs/learning/SRLEvo/mp_util.py", line 104, in get_results
+    self._add_result()
+  File "/home/ps/pan1/files/mly/IsaacGymEvo/isaacgymenvs/learning/SRLEvo/mp_util.py", line 97, in _add_result
+    data = self._remote.recv()
+  File "/home/ps/anaconda3/envs/Mrlgpu/lib/python3.7/multiprocessing/connection.py", line 250, in recv
+    buf = self._recv_bytes()
+  File "/home/ps/anaconda3/envs/Mrlgpu/lib/python3.7/multiprocessing/connection.py", line 407, in _recv_bytes
+    buf = self._recv(4)
+  File "/home/ps/anaconda3/envs/Mrlgpu/lib/python3.7/multiprocessing/connection.py", line 379, in _recv
+    chunk = read(handle, remaining)
+KeyboardInterrupt
+Process SpawnProcess-40:
+Traceback (most recent call last):
+  File "/home/ps/anaconda3/envs/Mrlgpu/lib/python3.7/multiprocessing/process.py", line 297, in _bootstrap
+    self.run()
+  File "/home/ps/anaconda3/envs/Mrlgpu/lib/python3.7/multiprocessing/process.py", line 99, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/ps/pan1/files/mly/IsaacGymEvo/isaacgymenvs/learning/SRLEvo/mp_util.py", line 72, in worker
+    out = getattr(obj, cmd)(*args, **kwargs)
+  File "/home/ps/pan1/files/mly/IsaacGymEvo/isaacgymenvs/learning/SRLEvo/srlgym_mp.py", line 301, in rlgpu
+    'sigma': cfg.sigma if cfg.sigma != '' else None
+  File "/home/ps/pan1/files/mly/IsaacGymEvo/isaacgymenvs/learning/SRLEvo/srlgym_mp.py", line 317, in run
+    evaluate_reward, epoch_num, frame = agent.train()
+  File "/home/ps/pan1/files/mly/IsaacGymEvo/isaacgymenvs/learning/SRLEvo/srl_continuous.py", line 956, in train
+    self.writer.add_scalar('performance/total_fps', curr_frames / scaled_time, frame)
+  File "/home/ps/anaconda3/envs/Mrlgpu/lib/python3.7/site-packages/tensorboardX/writer.py", line 456, in add_scalar
+    scalar(tag, scalar_value, display_name, summary_description), global_step, walltime)
+  File "/home/ps/anaconda3/envs/Mrlgpu/lib/python3.7/site-packages/tensorboardX/writer.py", line 145, in add_summary
+    self.add_event(event, global_step, walltime)
+  File "/home/ps/anaconda3/envs/Mrlgpu/lib/python3.7/site-packages/tensorboardX/writer.py", line 129, in add_event
+    event.step = int(step)
+ValueError: Value out of range: 14447548154334085120
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/ps/anaconda3/envs/Mrlgpu/lib/python3.7/multiprocessing/process.py", line 300, in _bootstrap
+    util._exit_function()
+  File "/home/ps/anaconda3/envs/Mrlgpu/lib/python3.7/multiprocessing/util.py", line 357, in _exit_function
+    p.join()
+  File "/home/ps/anaconda3/envs/Mrlgpu/lib/python3.7/multiprocessing/process.py", line 140, in join
+    res = self._popen.wait(timeout)
+  File "/home/ps/anaconda3/envs/Mrlgpu/lib/python3.7/multiprocessing/popen_fork.py", line 48, in wait
+    return self.poll(os.WNOHANG if timeout == 0.0 else 0)
+  File "/home/ps/anaconda3/envs/Mrlgpu/lib/python3.7/multiprocessing/popen_fork.py", line 28, in poll
+    pid, sts = os.waitpid(self.pid, flag)
+KeyboardInterrupt
+wandb: Waiting for W&B process to finish... (failed 1). Press Control-C to abort syncing.
