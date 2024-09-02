@@ -314,8 +314,8 @@ class SRLGym_process():
             agent = runner.algo_factory.create(runner.algo_name, base_name='run', params=runner.params)
             _restore(agent, args)
             _override_sigma(agent, args)
-            evaluate_reward, epoch_num, frame = agent.train()
-            return evaluate_reward, epoch_num, frame
+            evaluate_reward, epoch_num, frame, summary_dir = agent.train()
+            return evaluate_reward, epoch_num, frame , summary_dir
         elif args['play']:
             runner.run_play(args)
             return 0, 0, 0
@@ -325,7 +325,7 @@ class SRLGym_process():
             _restore(agent, args)
             _override_sigma(agent, args)
             last_mean_rewards, epoch_num, frame = agent.train()
-            return last_mean_rewards, epoch_num, frame
+            return last_mean_rewards, epoch_num, frame, summary_dir
          
 
 
