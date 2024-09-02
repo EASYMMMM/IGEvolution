@@ -63,7 +63,7 @@ class SRLGym( ):
                 #entity=cfg.wandb_entity,
                 group=cfg.wandb_group,
                 tags=cfg.wandb_tags,
-                sync_tensorboard=False,
+                sync_tensorboard=True,
                 id=wandb_unique_id,
                 name=wandb_experiment_name,
                 resume=True,
@@ -87,6 +87,7 @@ class SRLGym( ):
         wandb_exp_name = self.wandb_exp_name
         self.init_wandb(cfg,wandb_exp_name )
         curr_frame = 1
+        iteration = 1
         cfg['wandb_activate'] = False
         model_output_path =  os.path.join(self.experiment_dir,  'nn')
         logs_output_path = os.path.join(self.experiment_dir, 'logs')
@@ -119,7 +120,7 @@ class SRLGym( ):
         
             runner = subproc_cls_runner(train_cfg)
             try:
-                evaluate_reward, _, frame = runner.rlgpu(wandb_exp_name,design_params=srl_params).results
+                evaluate_reward, _, frame, summary_dir = runner.rlgpu(wandb_exp_name,design_params=srl_params).results
                 print('frame=',frame)
             except Exception as e:
                 print(f"Error during execution: {e}")
@@ -127,6 +128,9 @@ class SRLGym( ):
                 runner.close()
                 print('close runner')
             curr_frame = curr_frame + frame
+            self._log_design_param(srl_params,iteration)
+            wandb.log({'Evolution/reward':evaluate_reward, 'iteration': iteration} )
+            iteration = iteration+1
         sync_tensorboard_logs(logs_output_path)
         wandb.finish()
 
