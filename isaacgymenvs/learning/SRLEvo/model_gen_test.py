@@ -10,7 +10,7 @@ if __name__ == '__main__':
     from model_grammar import SRL_mode1,ModelGenerator
     srl_mode = 'mode1'
     name = 'humanoid_GA_1'
-    pretrain = True
+    pretrain = False
     # base_srl_params = {
     #                 "first_leg_lenth" : 0.40,
     #                 "first_leg_size"  : 0.03,
@@ -28,7 +28,7 @@ if __name__ == '__main__':
     srl_params = {
                     "first_leg_lenth" : 0.3766,
                     "first_leg_size"  : 0.0266,
-                    "second_leg_lenth": 0.08,
+                    "second_leg_lenth": 0.80,
                     "second_leg_size" : 0.03,
                     "third_leg_size"  : 0.03,
                 }    
