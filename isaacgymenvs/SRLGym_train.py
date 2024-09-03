@@ -15,7 +15,8 @@ def main(cfg: DictConfig):
 
     srl_gym = SRLGym(cfg)
     # srl_gym.train_test()
-    srl_gym.train_GA_test()
+    srl_gym.train()
+    # srl_gym.train_GA_test()
     # srl_gym.train_wandb_test()
 
     return

@@ -5,6 +5,8 @@ import csv
 import os
 import time
 import wandb
+from skopt import Optimizer
+from skopt.space import Real
 
 class MorphologyOptimizer(abc.ABC):
     def __init__(self, base_params):
@@ -44,7 +46,7 @@ class GeneticAlgorithmOptimizer(MorphologyOptimizer):
     def __init__(self,
                   base_design_params, 
                   evaluate_design_method,
-                  population_size=12, 
+                  population_size=20, 
                   mutation_rate=0.1,
                   crossover_rate=0.7,
                   num_iterations=10,
@@ -159,7 +161,6 @@ class GeneticAlgorithmOptimizer(MorphologyOptimizer):
             for individual in self.population:
                 score = self.evaluate_design_method(individual)
                 scores.append(score)
-                time.sleep(10)  # 每次评估后延时10秒
         
             # 基于当前种群和得分更新种群
             self.update(self.population, scores)
@@ -184,6 +185,72 @@ class GeneticAlgorithmOptimizer(MorphologyOptimizer):
         }
         wandb.log(info_dict )
 
+
+class BayesianOptimizer(MorphologyOptimizer):
+    def __init__(self, 
+                 base_design_params, 
+                 evaluate_design_method,
+                 num_iterations, 
+                 n_initial_points=5, 
+                 acq_func='EI'):
+        super().__init__(base_design_params)
+        self.num_iterations = num_iterations
+        self.evaluate_design_method = evaluate_design_method
+        self.n_initial_points = n_initial_points
+        self.acq_func = acq_func
+        self.param_names = list(base_design_params.keys())
+        # 定义贝叶斯优化的搜索空间
+        self.search_space = [Real((1 - 0.3) * val, (1 + 0.3) * val, name=key) for key, val in base_design_params.items()]
+        self.optimizer = Optimizer(self.search_space, n_initial_points=n_initial_points, acq_func=acq_func)
+
+        self.best_individuals_over_time = []  # 用于保存每一代的最优设计及其评估值
+
+    def sample_population(self):
+        pass
+
+    def update(self, ):
+        pass
+
+    def optimize(self):
+
+        """运行优化算法并将每一代的最优设计及其评估值保存在CSV文件中"""
+        if self.num_iterations < self.n_initial_points:
+            raise ValueError(f"num_iterations ({self.num_iterations}) must be greater than or equal to n_initial_points ({self.n_initial_points}).")
+        for i in range(self.num_iterations):
+            # 从贝叶斯优化器中获取下一组参数
+            next_params = self.optimizer.ask()
+            params_dict = dict(zip(self.param_names, next_params))
+
+            # 评估当前参数
+            score = self.evaluate_design_method(params_dict)
+
+            # 将评估结果告诉贝叶斯优化器
+            self.optimizer.tell(next_params, -score)  # 贝叶斯优化器最小化目标函数，因此使用负分数
+
+            # 更新最佳参数和分数
+            if score > self.best_score:
+                self.best_score = score
+                self.best_params = params_dict
+
+            print(f"Iteration {i+1}/{self.num_iterations}, Best Score: {self.best_score}")
+
+            # 保存当前代的最优设计及其评估值
+            self.log_design(self.best_params.copy(), self.best_score, i)
+            self.best_individuals_over_time.append((self.best_params.copy(), self.best_score))
+
+        return self.best_individuals_over_time
+
+    def log_design(self, best_params, best_reward, iteration):
+        info_dict = {
+            "BO/leg1_lenth": best_params["first_leg_lenth"],
+            "BO/leg1_size": best_params["first_leg_size"],
+            "BO/leg2_lenth": best_params["second_leg_lenth"],
+            "BO/leg2_size": best_params["second_leg_size"],
+            "BO/end_size": best_params["third_leg_size"],
+            "BO/best_reward": best_reward,
+            "BO_iteration": iteration
+        }
+        wandb.log(info_dict)
 
 
 class GA_Design_Optim():

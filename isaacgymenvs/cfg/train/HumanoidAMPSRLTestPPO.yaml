@@ -109,6 +109,11 @@ params:
 
 gym:
   design_opt: 'random'  # SRL designer optimizer
+  GA_population_size: 20
+  GA_num_iterations: 10
+  GA_mutation_rate: 0.1
+  GA_crossover_rate: 0.7
+  GA_bounds_scale: 0.4
 
     
     

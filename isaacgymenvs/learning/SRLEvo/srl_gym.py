@@ -80,7 +80,11 @@ class SRLGym( ):
             wandb.config.update(cfg, allow_val_change=True)
         else:
             wandb.config.update(omegaconf_to_dict(cfg), allow_val_change=True)
- 
+
+    def train(self):        
+        if self.cfg["train"]["gym"]["design_opt"]:
+            self.train_GA()
+
 
     def train_wandb_test(self):
         cfg = self.cfg
@@ -182,16 +186,20 @@ class SRLGym( ):
             wandb.log({'Evolution/reward':evaluate_reward, 'iteration': iteration} )
             iteration = iteration+1
 
-    def train_GA_test(self):
+    def train_GA(self):
         cfg = self.cfg
         wandb_exp_name = self.wandb_exp_name
         self.init_wandb(cfg,wandb_exp_name )
         self.iteration = 1
         curr_frame = 1
+        kwargs = {"population_size":self.cfg['train']['gym']['GA_population_size'],
+                  "num_iterations":self.cfg['train']['gym']['GA_num_iterations'],
+                  "mutation_rate":self.cfg['train']['gym']['GA_mutation_rate'],
+                  "crossover_rate":self.cfg['train']['gym']['GA_crossover_rate'],
+                  "bounds_scale":self.cfg['train']['gym']['GA_bounds_scale']}
         design_opt = GeneticAlgorithmOptimizer(self.default_SRL_designer(),
-                                            self.design_evaluate,
-                                            population_size=15,
-                                            num_iterations=8)
+                                               self.design_evaluate,
+                                               **kwargs)
         best_individuals = design_opt.optimize()
 
         # 记录每一代的最优设计及其评估值到CSV文件
@@ -237,7 +245,7 @@ class SRLGym( ):
         xml_name = 'hsrl_mode1'
         train_cfg = deepcopy(cfg)
         train_cfg['wandb_activate'] = False
-        # FIXME: Frame数值爆炸
+        # TODO: Frame too large
         # train_cfg['train']['params']['config']['start_frame'] = self.curr_frame + 1
         train_cfg['train']['params']['config']['start_frame'] =  1
         srl_params = design_params
@@ -246,7 +254,15 @@ class SRLGym( ):
         # 设置xml路径
         train_cfg['task']['env']['asset']['assetFileName'] = self.mjcf_folder + '/' + xml_name + '.xml'  # XML模型路径
         # 设置hsrl预训练
-        train_cfg['train']['params']['config']['hsrl_checkpoint'] = 'runs/SRL_walk_v1.8.3_4090_03-17-37-52/nn/SRL_walk_v1.8.3_4090_03-17-37-58.pth'   # 预训练加载点
+        # train_cfg['train']['params']['config']['hsrl_checkpoint'] = 'runs/SRL_walk_v1.8.3_4090_03-17-37-52/nn/SRL_walk_v1.8.3_4090_03-17-37-58.pth'   # 预训练加载点
+        train_cfg['train']['params']['config']['hsrl_checkpoint'] = False   # 预训练加载点
+        if train_cfg['task']['env']['design_param_obs']:
+            train_cfg['task']['env']['design_params']['first_leg_lenth']  = design_params['first_leg_lenth']
+            train_cfg['task']['env']['design_params']['first_leg_size']   = design_params['first_leg_size']
+            train_cfg['task']['env']['design_params']['second_leg_lenth'] = design_params['second_leg_lenth']
+            train_cfg['task']['env']['design_params']['second_leg_size']  = design_params['second_leg_size']
+            train_cfg['task']['env']['design_params']['third_leg_size']   = design_params['third_leg_size']
+
 
         # 设置模型输出路径
         model_name = 'mode1_id'
@@ -271,6 +287,7 @@ class SRLGym( ):
         wandb.log({'Evolution/reward':evaluate_reward, 'iteration': self.iteration} )
         self.iteration = self.iteration+1
 
+        # save best model
         if evaluate_reward > self.best_evaluate_reward:
             self.best_evaluate_reward = evaluate_reward  # 更新最佳评估分数
             best_model_path = os.path.join(model_output_path, 'best_model.pth')
