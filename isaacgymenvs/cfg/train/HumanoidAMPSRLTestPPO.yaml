@@ -105,7 +105,6 @@ params:
     start_frame: 0
     model_output_file: False
     train_dir: runs
-    design_param_obs: False
     # -----------------------
 
 gym:

@@ -47,6 +47,14 @@ env:
   upper_reward_w: 1 
   target_v_task: False  # 目标速度跟随任务
   autogen_model: False  # 模型自动生成
+  design_param_obs: False
+  design_params:
+    mode: mode1
+    first_leg_lenth: 0.40
+    first_leg_size: 0.03
+    second_leg_lenth: 0.80
+    second_leg_size: 0.03
+    end_size: 0.03
   # ------------ ------------
 
 sim:

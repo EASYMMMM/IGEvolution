@@ -71,13 +71,15 @@ class HumanoidAMPSRLBase(VecTask):
         self._termination_height = self.cfg["env"]["terminationHeight"]
         self._enable_early_termination = self.cfg["env"]["enableEarlyTermination"]
 
-        # --- user defined ---
+        # --- srl defined ---
         self._torque_threshold = self.cfg["env"]["torque_threshold"]
         self._upper_reward_w = self.cfg["env"]["upper_reward_w"]
         self._srl_endpos_obs = self.cfg["env"]["srl_endpos_obs"]
         self._target_v_task = self.cfg["env"]["target_v_task"]
         self._autogen_model = self.cfg["env"].get("autogen_model", False)
-        # --- user defined end ---
+        self._design_param_obs = self.cfg["env"].get("design_param_obs", False)
+
+        # --- srl defined end ---
 
 
         self.cfg["env"]["numObservations"] = self.get_obs_size()
@@ -158,18 +160,36 @@ class HumanoidAMPSRLBase(VecTask):
             self.num_envs, device=self.device, dtype=torch.float)
         self.obs_mirrored_buf = torch.zeros(
             (self.num_envs, self.num_obs), device=self.device, dtype=torch.float)
+        if self._design_param_obs:
+            design_param = self._get_design_param()
 
         if self.viewer != None:
             self._init_camera()
             
         return
     
+    def _get_design_param(self,):
+        first_leg_lenth = self.cfg["env"]["design_params"]["first_leg_lenth"]
+        first_leg_size = self.cfg["env"]["design_params"]["first_leg_size"]
+        second_leg_lenth = self.cfg["env"]["design_params"]["second_leg_lenth"]
+        second_leg_size = self.cfg["env"]["design_params"]["second_leg_size"]
+        end_size = self.cfg["env"]["design_params"]["end_size"]
+        self.design_param = torch.tensor([first_leg_lenth,first_leg_size,second_leg_lenth,second_leg_size,end_size],
+                                         device=self.device,
+                                         dtype = torch.float32,
+                                         )
+        return self.design_param 
+
     def get_obs_size(self):
         obs_size = NUM_OBS
         if self._srl_endpos_obs:
             obs_size = obs_size + 6
         if self._target_v_task:
             obs_size = obs_size + 2
+        if self._design_param_obs:
+            if self.cfg['env']['design_params']['mode'] == 'mode1':
+                design_param_num = 5
+            obs_size = obs_size + design_param_num
         return obs_size
 
     def get_action_size(self):
@@ -435,6 +455,11 @@ class HumanoidAMPSRLBase(VecTask):
             #target_v= target_v.unsqueeze(1)
             obs = torch.cat((obs, target_v),dim=1)
             obs_mirrored = torch.cat((obs_mirrored, target_v),dim=1)
+        if self._design_param_obs:
+            design_param = self.design_param
+            design_param = design_param.unsqueeze(0).repeat(obs.shape[0], 1)
+            obs = torch.cat([obs, design_param], dim=1)
+            obs_mirrored = torch.cat([obs_mirrored, design_param], dim=1)
         return obs, obs_mirrored
 
     def _reset_actors(self, env_ids):
