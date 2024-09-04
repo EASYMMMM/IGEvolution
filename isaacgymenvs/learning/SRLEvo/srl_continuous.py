@@ -116,7 +116,7 @@ class SRLAgent(common_agent.CommonAgent):
 
         self._srl_dof = 8
 
-        self.evaluate_rewards = deque(maxlen=100)  # Reward used to evaluate the design
+        self.evaluate_rewards = deque(maxlen=20)  # Reward used to evaluate the design
         return
 
     def init_tensors(self):
@@ -336,9 +336,14 @@ class SRLAgent(common_agent.CommonAgent):
             not_dones = 1.0 - self.dones.float()
             # TODO：可以在这里添加评估指标
             for idx in done_indices:
-                evaluate_t_c = self.current_rewards_t_c[idx].item()
-                evaluate_u_r = self.current_rewards_u_r[idx].item()
-                reward = evaluate_t_c*2 + evaluate_u_r
+                evaluate_t_c = self.current_rewards_t_c[idx].item() # torque cose
+                evaluate_u_r = self.current_rewards_u_r[idx].item() # upper reward
+                amp_reward = self.current_rewards_amp[idx].item()
+                if amp_reward < 200:
+                    amp_reward = -200 + amp_reward
+                else:
+                    amp_reward = 0
+                reward = evaluate_t_c + 2*evaluate_u_r + amp_reward
                 # 添加新的 reward 到队列中
                 self.evaluate_rewards.append(reward)
             ''' If env is done, reset current_reward '''

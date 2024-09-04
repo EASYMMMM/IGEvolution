@@ -54,7 +54,7 @@ env:
     first_leg_size: 0.03
     second_leg_lenth: 0.80
     second_leg_size: 0.03
-    end_size: 0.03
+    third_leg_size: 0.03
   # ------------ ------------
 
 sim:

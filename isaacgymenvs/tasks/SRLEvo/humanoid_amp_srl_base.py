@@ -44,7 +44,6 @@ NUM_OBS = 13 + 60 + 28 + 12 + 8 #TODO： 单纯humanoid为103 SRL暂设为8 [roo
 NUM_ACTIONS = 28 + 8   # Actions humanoid (Dof=28) + SRL
 
 UPPER_BODY_NAMES = ["pelvis", "torso"]
-# KEY_BODY_NAMES = ["right_hand", "left_hand", "right_foot", "left_foot"]
 KEY_BODY_NAMES = ["right_hand", "left_hand", "right_foot", "left_foot"]  # body end + SRL end
 SRL_END_BODY_NAMES = ["SRL_right_end","SRL_left_end"] 
 SRL_CONTACT_BODY_NAMES = ['SRL_root', 'SRL_leg2', 'SRL_shin11', 'SRL_right_end', 'SRL_leg1', 'SRL_shin1', 'SRL_left_end']
@@ -173,7 +172,7 @@ class HumanoidAMPSRLBase(VecTask):
         first_leg_size = self.cfg["env"]["design_params"]["first_leg_size"]
         second_leg_lenth = self.cfg["env"]["design_params"]["second_leg_lenth"]
         second_leg_size = self.cfg["env"]["design_params"]["second_leg_size"]
-        end_size = self.cfg["env"]["design_params"]["end_size"]
+        end_size = self.cfg["env"]["design_params"]["third_leg_size"]
         self.design_param = torch.tensor([first_leg_lenth,first_leg_size,second_leg_lenth,second_leg_size,end_size],
                                          device=self.device,
                                          dtype = torch.float32,
