@@ -84,7 +84,7 @@ class SRLGym( ):
             wandb.config.update(omegaconf_to_dict(cfg), allow_val_change=True)
 
     def train(self):        
-        if self.cfg["train"]["gym"]["design_opt"]:
+        if self.cfg["train"]["gym"]["design_opt"] == 'GA':
             self.train_GA()
         elif self.cfg["train"]["gym"]["design_opt"]=='BO':
             self.train_BO()
