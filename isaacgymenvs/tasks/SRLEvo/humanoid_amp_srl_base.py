@@ -743,15 +743,15 @@ def compute_humanoid_observations_mirrored(root_states, dof_pos, dof_vel, key_bo
     # dof_obs = dof_to_obs(dof_pos) # dof_pos 36
 
     # Mirror
-    # root_rot_obs[:,1] =  -root_rot_obs[:,1]  # 切向量
-    # root_rot_obs[:,4] =  -root_rot_obs[:,4]  # 法向量
+    root_rot_obs[:,1] =  -root_rot_obs[:,1]  # 切向量
+    root_rot_obs[:,4] =  -root_rot_obs[:,4]  # 法向量
     local_root_vel[:,1] = -local_root_vel[:,1] # y方向速度
     local_root_ang_vel[:,0] = -local_root_ang_vel[:,0] # x轴角速度
     local_root_ang_vel[:,2] = -local_root_ang_vel[:,2] # z轴角速度
     mirrored_dof_pos = torch.matmul(dof_pos, mirror_mat) # Perform the matrix multiplication to get mirrored dof_pos
     dof_obs = dof_to_obs(mirrored_dof_pos) # dof_pos 36
     dof_vel = torch.matmul(dof_vel, mirror_mat)
-    flat_local_key_pos_mirror = flat_local_key_pos
+    flat_local_key_pos_mirror = flat_local_key_pos.clone()
     # right/left hand
     flat_local_key_pos_mirror[:,0:3] = flat_local_key_pos[:,3:6]
     flat_local_key_pos_mirror[:,3:6] = flat_local_key_pos[:,0:3]
