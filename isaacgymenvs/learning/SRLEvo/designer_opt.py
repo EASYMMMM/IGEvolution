@@ -228,7 +228,7 @@ class BayesianOptimizer(MorphologyOptimizer):
                 params_dict = dict(zip(self.param_names, next_params))
             kwargs = {}
             if i < self.n_initial_points:
-                kwargs['max_epoch']=20
+                kwargs['max_epoch']=700
             # 评估当前参数
             score = self.evaluate_design_method(params_dict, **kwargs)
 
