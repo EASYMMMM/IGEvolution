@@ -190,7 +190,7 @@ class BayesianOptimizer(MorphologyOptimizer):
     def __init__(self, 
                  base_design_params, 
                  evaluate_design_method,
-                 num_iterations, 
+                 num_iterations=100, 
                  n_initial_points=5, 
                  acq_func='EI'):
         super().__init__(base_design_params)
@@ -220,9 +220,11 @@ class BayesianOptimizer(MorphologyOptimizer):
             # 从贝叶斯优化器中获取下一组参数
             next_params = self.optimizer.ask()
             params_dict = dict(zip(self.param_names, next_params))
-
+            kwargs = {}
+            if i < self.n_initial_points:
+                kwargs['max_epoch']=20
             # 评估当前参数
-            score = self.evaluate_design_method(params_dict)
+            score = self.evaluate_design_method(params_dict, **kwargs)
 
             # 将评估结果告诉贝叶斯优化器
             self.optimizer.tell(next_params, -score)  # 贝叶斯优化器最小化目标函数，因此使用负分数

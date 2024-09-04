@@ -6,7 +6,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../m
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
 from model_grammar import SRL_mode1,ModelGenerator
 from isaacgymenvs.learning.SRLEvo.srlgym_mp import SRLGym_process
-from isaacgymenvs.learning.SRLEvo.designer_opt import GeneticAlgorithmOptimizer
+from isaacgymenvs.learning.SRLEvo.designer_opt import GeneticAlgorithmOptimizer,BayesianOptimizer
 from datetime import datetime
 from isaacgymenvs.learning.SRLEvo.mp_util import subproc_worker 
 from omegaconf import OmegaConf
@@ -84,6 +84,8 @@ class SRLGym( ):
     def train(self):        
         if self.cfg["train"]["gym"]["design_opt"]:
             self.train_GA()
+        elif self.cfg["train"]["gym"]["design_opt"]=='BO':
+            self.train_BO()
 
 
     def train_wandb_test(self):
@@ -218,6 +220,36 @@ class SRLGym( ):
         sync_tensorboard_logs(logs_output_path)
         print(f"Optimization results saved to {csv_file}")
 
+    def train_BO(self):
+        cfg = self.cfg
+        wandb_exp_name = self.wandb_exp_name
+        self.init_wandb(cfg,wandb_exp_name )
+        self.iteration = 1
+        curr_frame = 1
+        base_param = self.default_SRL_designer()
+        kwargs = {"n_initial_points":self.cfg['train']['gym']['BO_n_initial_points'],
+                  "num_iterations":self.cfg['train']['gym']['BO_num_iterations'], }
+        design_opt = BayesianOptimizer( base_param,
+                                        self.design_evaluate,
+                                        **kwargs)
+        best_individuals = design_opt.optimize()
+
+        # 记录每一代的最优设计及其评估值到CSV文件
+        best_params = best_individuals[-1][0]  # 获取最后一代的最优参数
+        csv_file = os.path.join(self.experiment_dir, "GA_optimize_result.csv")
+        with open(csv_file, mode='w', newline='') as file:
+            writer = csv.writer(file)
+            header = ['Generation', 'Best_Score'] + list(best_params.keys())
+            writer.writerow(header)
+            
+            for i, (params, score) in enumerate(best_individuals):
+                row = [i + 1, score] + list(params.values())
+                writer.writerow(row)
+        
+        logs_output_path =  os.path.join(self.experiment_dir, 'logs')
+        sync_tensorboard_logs(logs_output_path)
+        print(f"Optimization results saved to {csv_file}")
+
     def generate_SRL_xml(self, name, srl_mode, srl_params, pretrain = False):
         # generate SRL mjcf xml file
         srl_generator = { "mode1": SRL_mode1 }[srl_mode]
@@ -240,13 +272,14 @@ class SRLGym( ):
         }
         wandb.log(info_dict )
 
-    def design_evaluate(self, design_params):
+    def design_evaluate(self, design_params, max_epoch=False):
         cfg = self.cfg
         xml_name = 'hsrl_mode1'
         train_cfg = deepcopy(cfg)
         train_cfg['wandb_activate'] = False
-        # TODO: Frame too large
-        # train_cfg['train']['params']['config']['start_frame'] = self.curr_frame + 1
+        if max_epoch:
+            train_cfg['max_iterations'] = max_epoch
+
         train_cfg['train']['params']['config']['start_frame'] =  1
         srl_params = design_params
         # 生成xml模型
@@ -262,8 +295,6 @@ class SRLGym( ):
             train_cfg['task']['env']['design_params']['second_leg_lenth'] = design_params['second_leg_lenth']
             train_cfg['task']['env']['design_params']['second_leg_size']  = design_params['second_leg_size']
             train_cfg['task']['env']['design_params']['third_leg_size']   = design_params['third_leg_size']
-
-
         # 设置模型输出路径
         model_name = 'mode1_id'
         model_output_path =  os.path.join(self.experiment_dir,  'nn')

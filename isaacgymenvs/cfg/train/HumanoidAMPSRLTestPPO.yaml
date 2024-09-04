@@ -115,5 +115,7 @@ gym:
   GA_crossover_rate: 0.7
   GA_bounds_scale: 0.4
 
+  BO_n_initial_points: 10
+  BO_num_iterations: 100
     
     
