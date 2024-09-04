@@ -325,6 +325,61 @@ class SRLGym( ):
             shutil.copy(model_output_file+'.pth', best_model_path)  # 复制当前最优模型为 best_model.pth
             print(f"Best model saved with reward {evaluate_reward} at {best_model_path}")
         return evaluate_reward
+    
+    def design_evaluate_with_general_model(self, design_params, max_epoch=False):
+        # put design param into observation, build a general model
+        cfg = self.cfg
+        xml_name = 'hsrl_mode1'
+        train_cfg = deepcopy(cfg)
+        train_cfg['wandb_activate'] = False
+        if max_epoch:
+            train_cfg['max_iterations'] = max_epoch
+
+        train_cfg['train']['params']['config']['start_frame'] =  1
+        srl_params = design_params
+        # 生成xml模型
+        self.generate_SRL_xml(xml_name,'mode1',srl_params,pretrain=False)
+        # 设置xml路径
+        train_cfg['task']['env']['asset']['assetFileName'] = self.mjcf_folder + '/' + xml_name + '.xml'  # XML模型路径
+        # 设置hsrl预训练
+        train_cfg['train']['params']['config']['hsrl_checkpoint'] = 'runs/SRL_walk_v1.8.3_4090_03-17-37-52/nn/SRL_walk_v1.8.3_4090_03-17-37-58.pth'   # 预训练加载点
+        train_cfg['train']['params']['config']['hsrl_checkpoint'] = False   # 预训练加载点
+        if train_cfg['task']['env']['design_param_obs']:
+            train_cfg['task']['env']['design_params']['first_leg_lenth']  = design_params['first_leg_lenth']
+            train_cfg['task']['env']['design_params']['first_leg_size']   = design_params['first_leg_size']
+            train_cfg['task']['env']['design_params']['second_leg_lenth'] = design_params['second_leg_lenth']
+            train_cfg['task']['env']['design_params']['second_leg_size']  = design_params['second_leg_size']
+            train_cfg['task']['env']['design_params']['third_leg_size']   = design_params['third_leg_size']
+        # 设置模型输出路径
+        model_name = 'mode1_id'
+        model_output_path =  os.path.join(self.experiment_dir,  'nn')
+        os.makedirs(model_output_path, exist_ok=True)  # 创建输出文件夹
+        model_output_file = os.path.join(model_output_path, model_name)
+        train_cfg['train']['params']['config']['model_output_file'] = model_output_file  # 模型输出路径
+        train_cfg['train']['params']['config']['train_dir'] =  os.path.join(self.experiment_dir, 'logs')
+        subproc_cls_runner = subproc_worker(SRLGym_process, ctx="spawn", daemon=True)
+        runner = subproc_cls_runner(train_cfg)
+        try:
+            evaluate_reward, _, frame, summary_dir = runner.rlgpu(self.wandb_exp_name,design_params=srl_params).results
+            print('frame=',frame)
+        except Exception as e:
+            print(f"Error during execution: {e}")
+        finally:
+            runner.close()
+            print('close runner')
+        self.curr_frame = self.curr_frame + frame
+
+        self._log_design_param(srl_params, self.iteration)
+        wandb.log({'Evolution/reward':evaluate_reward, 'iteration': self.iteration} )
+        self.iteration = self.iteration+1
+
+        # save best model
+        if evaluate_reward > self.best_evaluate_reward:
+            self.best_evaluate_reward = evaluate_reward  # 更新最佳评估分数
+            best_model_path = os.path.join(model_output_path, 'best_model.pth')
+            shutil.copy(model_output_file+'.pth', best_model_path)  # 复制当前最优模型为 best_model.pth
+            print(f"Best model saved with reward {evaluate_reward} at {best_model_path}")
+        return evaluate_reward
 
     
     def random_SRL_designer(self):
