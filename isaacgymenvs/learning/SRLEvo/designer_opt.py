@@ -200,6 +200,7 @@ class BayesianOptimizer(MorphologyOptimizer):
         self.n_initial_points = n_initial_points
         self.acq_func = acq_func
         self.param_names = list(base_design_params.keys())
+        self.default_design_evalutate = False
         # 定义贝叶斯优化的搜索空间
         self.search_space = [Real((1 - bounds_scale) * val, (1 + bounds_scale) * val, name=key) for key, val in base_design_params.items()]
         self.optimizer = Optimizer(self.search_space, n_initial_points=n_initial_points, acq_func=acq_func)
@@ -219,8 +220,12 @@ class BayesianOptimizer(MorphologyOptimizer):
             raise ValueError(f"num_iterations ({self.num_iterations}) must be greater than or equal to n_initial_points ({self.n_initial_points}).")
         for i in range(self.num_iterations):
             # 从贝叶斯优化器中获取下一组参数
-            next_params = self.optimizer.ask()
-            params_dict = dict(zip(self.param_names, next_params))
+            if not self.default_design_evalutate:
+                params_dict = self.base_params
+                self.default_design_evalutate = True
+            else:
+                next_params = self.optimizer.ask()
+                params_dict = dict(zip(self.param_names, next_params))
             kwargs = {}
             if i < self.n_initial_points:
                 kwargs['max_epoch']=20
