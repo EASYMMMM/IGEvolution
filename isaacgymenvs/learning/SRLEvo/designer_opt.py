@@ -192,6 +192,7 @@ class BayesianOptimizer(MorphologyOptimizer):
                  evaluate_design_method,
                  num_iterations=100, 
                  n_initial_points=5, 
+                 bounds_scale = 0.3,
                  acq_func='EI'):
         super().__init__(base_design_params)
         self.num_iterations = num_iterations
@@ -200,7 +201,7 @@ class BayesianOptimizer(MorphologyOptimizer):
         self.acq_func = acq_func
         self.param_names = list(base_design_params.keys())
         # 定义贝叶斯优化的搜索空间
-        self.search_space = [Real((1 - 0.3) * val, (1 + 0.3) * val, name=key) for key, val in base_design_params.items()]
+        self.search_space = [Real((1 - bounds_scale) * val, (1 + bounds_scale) * val, name=key) for key, val in base_design_params.items()]
         self.optimizer = Optimizer(self.search_space, n_initial_points=n_initial_points, acq_func=acq_func)
 
         self.best_individuals_over_time = []  # 用于保存每一代的最优设计及其评估值
