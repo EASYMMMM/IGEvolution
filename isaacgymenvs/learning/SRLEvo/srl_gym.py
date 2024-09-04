@@ -287,7 +287,7 @@ class SRLGym( ):
         # 设置xml路径
         train_cfg['task']['env']['asset']['assetFileName'] = self.mjcf_folder + '/' + xml_name + '.xml'  # XML模型路径
         # 设置hsrl预训练
-        # train_cfg['train']['params']['config']['hsrl_checkpoint'] = 'runs/SRL_walk_v1.8.3_4090_03-17-37-52/nn/SRL_walk_v1.8.3_4090_03-17-37-58.pth'   # 预训练加载点
+        train_cfg['train']['params']['config']['hsrl_checkpoint'] = 'runs/SRL_walk_v1.8.3_4090_03-17-37-52/nn/SRL_walk_v1.8.3_4090_03-17-37-58.pth'   # 预训练加载点
         train_cfg['train']['params']['config']['hsrl_checkpoint'] = False   # 预训练加载点
         if train_cfg['task']['env']['design_param_obs']:
             train_cfg['task']['env']['design_params']['first_leg_lenth']  = design_params['first_leg_lenth']
