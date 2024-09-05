@@ -372,7 +372,7 @@ class SRLGym( ):
             train_cfg['task']['env']['design_params']['third_leg_size']   = design_params['third_leg_size']
         
         # 设置模型输出路径
-        model_name = 'general_model'
+        model_name = 'train_model'
         model_output_path =  os.path.join(self.experiment_dir,  'nn')
         os.makedirs(model_output_path, exist_ok=True)  # 创建输出文件夹
         model_output_file = os.path.join(model_output_path, model_name)
@@ -390,7 +390,13 @@ class SRLGym( ):
             print('close runner')
         self.curr_frame = self.curr_frame + frame
 
-        self.hsrl_checkpoint = model_output_file + '.pth'
+        # save the model if it is better enough
+        if evaluate_reward > -100: 
+            general_model_name = 'general_model'
+            general_model_output_file = os.path.join(model_output_path, general_model_name)
+            shutil.copy(model_output_file+'.pth', general_model_output_file+'.pth')  # 复制当前最优模型为 best_model.pth
+            print(f"Saved model with reward {evaluate_reward} to General Model.")
+            self.hsrl_checkpoint = general_model_output_file + '.pth'
 
         self._log_design_param(srl_params, self.iteration)
         wandb.log({'Evolution/reward':evaluate_reward, 'iteration': self.iteration} )
