@@ -222,6 +222,7 @@ class BayesianOptimizer(MorphologyOptimizer):
             # 从贝叶斯优化器中获取下一组参数
             if not self.default_design_evalutate:
                 params_dict = self.base_params
+                next_params = [self.base_params[key] for key in self.param_names]  # 将 base_params 转换为 next_params 格式
                 self.default_design_evalutate = True
             else:
                 next_params = self.optimizer.ask()

@@ -309,11 +309,11 @@ class SRLGym( ):
         train_cfg['train']['params']['config']['hsrl_checkpoint'] = 'runs/SRL_walk_v1.8.3_4090_03-17-37-52/nn/SRL_walk_v1.8.3_4090_03-17-37-58.pth'   # 预训练加载点
         train_cfg['train']['params']['config']['hsrl_checkpoint'] = False   # 预训练加载点
         if train_cfg['task']['env']['design_param_obs']:
-            train_cfg['task']['env']['design_params']['first_leg_lenth']  = design_params['first_leg_lenth']
-            train_cfg['task']['env']['design_params']['first_leg_size']   = design_params['first_leg_size']
-            train_cfg['task']['env']['design_params']['second_leg_lenth'] = design_params['second_leg_lenth']
-            train_cfg['task']['env']['design_params']['second_leg_size']  = design_params['second_leg_size']
-            train_cfg['task']['env']['design_params']['third_leg_size']   = design_params['third_leg_size']
+            train_cfg['task']['env']['design_params']['first_leg_lenth']  = float(design_params['first_leg_lenth'])
+            train_cfg['task']['env']['design_params']['first_leg_size']   = float(design_params['first_leg_size'])
+            train_cfg['task']['env']['design_params']['second_leg_lenth'] = float(design_params['second_leg_lenth'])
+            train_cfg['task']['env']['design_params']['second_leg_size']  = float(design_params['second_leg_size'])
+            train_cfg['task']['env']['design_params']['third_leg_size']   = float(design_params['third_leg_size'])
         # 设置模型输出路径
         model_name = 'mode1_id'
         model_output_path =  os.path.join(self.experiment_dir,  'nn')
@@ -365,11 +365,11 @@ class SRLGym( ):
         train_cfg['train']['params']['config']['hsrl_checkpoint'] = self.hsrl_checkpoint   # only first train use the pretrain model. after that, use general model
         
         if train_cfg['task']['env']['design_param_obs']:
-            train_cfg['task']['env']['design_params']['first_leg_lenth']  = design_params['first_leg_lenth']
-            train_cfg['task']['env']['design_params']['first_leg_size']   = design_params['first_leg_size']
-            train_cfg['task']['env']['design_params']['second_leg_lenth'] = design_params['second_leg_lenth']
-            train_cfg['task']['env']['design_params']['second_leg_size']  = design_params['second_leg_size']
-            train_cfg['task']['env']['design_params']['third_leg_size']   = design_params['third_leg_size']
+            train_cfg['task']['env']['design_params']['first_leg_lenth']  = float(design_params['first_leg_lenth'])
+            train_cfg['task']['env']['design_params']['first_leg_size']   = float(design_params['first_leg_size'])
+            train_cfg['task']['env']['design_params']['second_leg_lenth'] = float(design_params['second_leg_lenth'])
+            train_cfg['task']['env']['design_params']['second_leg_size']  = float(design_params['second_leg_size'])
+            train_cfg['task']['env']['design_params']['third_leg_size']   = float(design_params['third_leg_size'])
         
         # 设置模型输出路径
         model_name = 'train_model'
