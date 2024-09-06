@@ -410,3 +410,63 @@ class GeneticAlgorithmOptimizer_v2(MorphologyOptimizer):
         wandb.log(info_dict )
 
 
+class RandomOptimizer(MorphologyOptimizer):
+    def __init__(self, 
+                 base_design_params, 
+                 evaluate_design_method,
+                 num_iterations=100, 
+                 bounds_scale=0.3):
+        super().__init__(base_design_params)
+        self.num_iterations = num_iterations
+        self.evaluate_design_method = evaluate_design_method
+        self.param_names = list(base_design_params.keys())
+        self.bounds_scale = bounds_scale
+        self.best_params = None
+        self.best_score = float('-inf')
+        self.best_individuals_over_time = []  # 用于保存每一代的最优设计及其评估值
+        
+        # 定义搜索空间为上下 bounds_scale 范围
+        self.search_space = [(val * (1 - bounds_scale), val * (1 + bounds_scale)) for val in base_design_params.values()]
+
+    def random_sample(self):
+        """从搜索空间中随机采样"""
+        sample = {}
+        for i, key in enumerate(self.param_names):
+            lower_bound, upper_bound = self.search_space[i]
+            sample[key] = np.random.uniform(lower_bound, upper_bound)
+        return sample
+
+    def optimize(self):
+        """运行随机搜索优化，并将每一代的最优设计及其评估值保存在日志中"""
+        for i in range(self.num_iterations):
+            # 随机生成一个新的设计参数
+            params_dict = self.random_sample()
+
+            # 评估当前参数
+            score = self.evaluate_design_method(params_dict)
+
+            # 更新最优参数和分数
+            if score > self.best_score:
+                self.best_score = score
+                self.best_params = params_dict
+
+            print(f"Iteration {i+1}/{self.num_iterations}, Best Score: {self.best_score}")
+
+            # 保存当前代的最优设计及其评估值
+            self.log_design(self.best_params.copy(), self.best_score, i)
+            self.best_individuals_over_time.append((self.best_params.copy(), self.best_score))
+
+        return self.best_individuals_over_time
+
+    def log_design(self, best_params, best_reward, iteration):
+        """记录当前最优设计的参数及评估分数"""
+        info_dict = {
+            "Random/leg1_lenth": best_params["first_leg_lenth"],
+            "Random/leg1_size": best_params["first_leg_size"],
+            "Random/leg2_lenth": best_params["second_leg_lenth"],
+            "Random/leg2_size": best_params["second_leg_size"],
+            "Random/end_size": best_params["third_leg_size"],
+            "Random/best_reward": best_reward,
+            "Random_iteration": iteration
+        }
+        wandb.log(info_dict)

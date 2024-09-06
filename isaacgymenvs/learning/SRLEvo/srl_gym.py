@@ -6,7 +6,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../m
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
 from model_grammar import SRL_mode1,ModelGenerator
 from isaacgymenvs.learning.SRLEvo.srlgym_mp import SRLGym_process
-from isaacgymenvs.learning.SRLEvo.designer_opt import GeneticAlgorithmOptimizer,BayesianOptimizer,GeneticAlgorithmOptimizer_v2
+from isaacgymenvs.learning.SRLEvo.designer_opt import GeneticAlgorithmOptimizer,BayesianOptimizer,GeneticAlgorithmOptimizer_v2,RandomOptimizer
 from datetime import datetime
 from isaacgymenvs.learning.SRLEvo.mp_util import subproc_worker 
 from omegaconf import OmegaConf
@@ -83,6 +83,8 @@ class SRLGym( ):
             self.train_BO()
         elif self.cfg["train"]["gym"]["design_opt"]=='GA_v2':
             self.train_GA_v2()
+        elif self.cfg["train"]["gym"]["design_opt"]=='random':
+            self.train_random()
 
 
     def train_wandb_test(self):
@@ -260,6 +262,40 @@ class SRLGym( ):
         self.final_design_train(max_epoch=600)
         sync_tensorboard_logs(logs_output_path)
         print(f"Optimization results saved to {csv_file}")
+
+    def train_random(self):
+        cfg = self.cfg
+        wandb_exp_name = self.wandb_exp_name
+        self.init_wandb( cfg , wandb_exp_name)
+        self.iteration = 1
+        kwargs = {"num_iterations":self.cfg['train']['gym']['RA_num_iterations'],}
+        if self.cfg['task']['env']['design_param_obs']:
+            design_opt = RandomOptimizer(self.default_SRL_designer(),
+                                                self.design_evaluate_with_general_model,
+                                                **kwargs)
+        else:
+            design_opt = RandomOptimizer(self.default_SRL_designer(),
+                                                self.design_evaluate,
+                                                **kwargs)
+        best_individuals = design_opt.optimize()
+
+        # 记录每一代的最优设计及其评估值到CSV文件
+        best_params = best_individuals[-1][0]  # 获取最后一代的最优参数
+        csv_file = os.path.join(self.experiment_dir, "R_optimize_result.csv")
+        with open(csv_file, mode='w', newline='') as file:
+            writer = csv.writer(file)
+            header = ['Generation', 'Best_Score'] + list(best_params.keys())
+            writer.writerow(header)
+            
+            for i, (params, score) in enumerate(best_individuals):
+                row = [i + 1, score] + list(params.values())
+                writer.writerow(row)
+        
+        logs_output_path =  os.path.join(self.experiment_dir, 'logs')
+        self.final_design_train(max_epoch=600)
+        sync_tensorboard_logs(logs_output_path)
+        print(f"Optimization results saved to {csv_file}")
+
 
     def train_BO(self):
         cfg = self.cfg
