@@ -467,11 +467,11 @@ class SRLGym( ):
         train_cfg['train']['params']['config']['hsrl_checkpoint'] = best_model_path   # only first train use the pretrain model. after that, use general model
         design_params = self.best_design_param
         if train_cfg['task']['env']['design_param_obs']:
-            train_cfg['task']['env']['design_params']['first_leg_lenth']  = design_params['first_leg_lenth']
-            train_cfg['task']['env']['design_params']['first_leg_size']   = design_params['first_leg_size']
-            train_cfg['task']['env']['design_params']['second_leg_lenth'] = design_params['second_leg_lenth']
-            train_cfg['task']['env']['design_params']['second_leg_size']  = design_params['second_leg_size']
-            train_cfg['task']['env']['design_params']['third_leg_size']   = design_params['third_leg_size']
+            train_cfg['task']['env']['design_params']['first_leg_lenth']  = float(design_params['first_leg_lenth'])
+            train_cfg['task']['env']['design_params']['first_leg_size']   = float(design_params['first_leg_size'])
+            train_cfg['task']['env']['design_params']['second_leg_lenth'] = float(design_params['second_leg_lenth'])
+            train_cfg['task']['env']['design_params']['second_leg_size']  = float(design_params['second_leg_size'])
+            train_cfg['task']['env']['design_params']['third_leg_size']   = float(design_params['third_leg_size'])
         
         # 设置模型输出路径
         model_name = 'final_best_model'
