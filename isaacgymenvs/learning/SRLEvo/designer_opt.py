@@ -470,3 +470,9 @@ class RandomOptimizer(MorphologyOptimizer):
             "Random_iteration": iteration
         }
         wandb.log(info_dict)
+
+    def sample_population(self):
+        pass
+
+    def update(self):
+        pass

@@ -83,7 +83,7 @@ class SRLGym( ):
             self.train_BO()
         elif self.cfg["train"]["gym"]["design_opt"]=='GA_v2':
             self.train_GA_v2()
-        elif self.cfg["train"]["gym"]["design_opt"]=='random':
+        elif self.cfg["train"]["gym"]["design_opt"]=='RA':
             self.train_random()
 
 
