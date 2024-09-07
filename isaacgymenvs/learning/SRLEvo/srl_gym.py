@@ -305,7 +305,8 @@ class SRLGym( ):
         curr_frame = 1
         base_param = self.default_SRL_designer()
         kwargs = {"n_initial_points":self.cfg['train']['gym']['BO_n_initial_points'],
-                  "num_iterations":self.cfg['train']['gym']['BO_num_iterations'], }
+                  "num_iterations":self.cfg['train']['gym']['BO_num_iterations'],
+                  "initial_eval_epoch":self.cfg['train']['gym']['BO_initial_eval_epoch'] }
         if self.cfg['task']['env']['design_param_obs']:
             design_opt = BayesianOptimizer( base_param,
                                             self.design_evaluate_with_general_model,

@@ -117,6 +117,7 @@ gym:
 
   BO_n_initial_points: 10
   BO_num_iterations: 100
+  BO_initial_eval_epoch: 700
 
   RA_num_iterations: 100
     

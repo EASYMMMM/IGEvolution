@@ -190,12 +190,14 @@ class BayesianOptimizer(MorphologyOptimizer):
     def __init__(self, 
                  base_design_params, 
                  evaluate_design_method,
-                 num_iterations=100, 
+                 num_iterations=100,
+                 initial_eval_epoch=700, 
                  n_initial_points=5, 
                  bounds_scale = 0.3,
                  acq_func='EI'):
         super().__init__(base_design_params)
         self.num_iterations = num_iterations
+        self.initial_eval_epoch = initial_eval_epoch
         self.evaluate_design_method = evaluate_design_method
         self.n_initial_points = n_initial_points
         self.acq_func = acq_func
