@@ -406,7 +406,7 @@ class SRLGym( ):
 
         design_cost = self.calc_design_cost(srl_params)
         wandb.log({'Evolution/task_reward':evaluate_reward, 'iteration': self.iteration} )
-        wandb.log({'Evolution/design_cost':design_cost, 'iteration': self.iteration} )
+        wandb.log({'Evolution/design_cost':design_cost * 500, 'iteration': self.iteration} )
         evaluate_reward = evaluate_reward + design_cost * 500
         self._log_design_param(srl_params, self.iteration)
         wandb.log({'Evolution/reward':evaluate_reward, 'iteration': self.iteration} )
