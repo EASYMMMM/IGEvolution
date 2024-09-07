@@ -77,6 +77,7 @@ class HumanoidAMPSRLBase(VecTask):
         self._target_v_task = self.cfg["env"]["target_v_task"]
         self._autogen_model = self.cfg["env"].get("autogen_model", False)
         self._design_param_obs = self.cfg["env"].get("design_param_obs", False)
+        self._srl_joint_indices=[28, 29, 30, 32, 33, 34]
 
         # --- srl defined end ---
 
@@ -511,11 +512,20 @@ class HumanoidAMPSRLBase(VecTask):
         self.extras["x_velocity"] = self.obs_buf[:,7]                            
         self.extras["dof_forces"] = self.dof_force_tensor.to(self.rl_device)
         self.extras["obs_mirrored"] = self.obs_mirrored_buf.to(self.rl_device)  # 镜像观测
+        
+        srl_torque_cost = self.SRL_joint_torque_cost()
+        self.extras["srl_torque_cost"] = srl_torque_cost.to(self.rl_device)
+
         # debug viz
         if self.viewer and self.debug_viz:
             self._update_debug_viz()
 
         return
+
+    def SRL_joint_torque_cost(self):
+        joint_forces = self.dof_force_tensor[:, self._srl_joint_indices]
+        torque_sum = torch.sum((joint_forces/100) ** 2, dim=1)
+        return torque_sum
 
     def render(self):
         if self.viewer and self.camera_follow:

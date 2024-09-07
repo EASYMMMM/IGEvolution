@@ -18,6 +18,7 @@ import random
 import shutil
 import csv
 import glob
+import math
 
 def sync_tensorboard_logs(main_log_dir):
     """手动同步子进程生成的 TensorBoard 日志到 WandB"""
@@ -394,7 +395,7 @@ class SRLGym( ):
         subproc_cls_runner = subproc_worker(SRLGym_process, ctx="spawn", daemon=True)
         runner = subproc_cls_runner(train_cfg)
         try:
-            evaluate_reward, _, frame, summary_dir = runner.rlgpu(self.wandb_exp_name,design_params=srl_params).results
+            evaluate_reward, evaluate_amp_reward, frame, _ = runner.rlgpu(self.wandb_exp_name,design_params=srl_params).results
             print('frame=',frame)
         except Exception as e:
             print(f"Error during execution: {e}")
@@ -403,6 +404,10 @@ class SRLGym( ):
             print('close runner')
         self.curr_frame = self.curr_frame + frame
 
+        design_cost = self.calc_design_cost(srl_params)
+        wandb.log({'Evolution/task_reward':evaluate_reward, 'iteration': self.iteration} )
+        wandb.log({'Evolution/design_cost':design_cost, 'iteration': self.iteration} )
+        evaluate_reward = evaluate_reward + design_cost * 500
         self._log_design_param(srl_params, self.iteration)
         wandb.log({'Evolution/reward':evaluate_reward, 'iteration': self.iteration} )
         self.iteration = self.iteration+1
@@ -451,7 +456,7 @@ class SRLGym( ):
         subproc_cls_runner = subproc_worker(SRLGym_process, ctx="spawn", daemon=True)
         runner = subproc_cls_runner(train_cfg)
         try:
-            evaluate_reward, _, frame, summary_dir = runner.rlgpu(self.wandb_exp_name,design_params=srl_params).results
+            evaluate_reward, evaluate_amp_reward, frame, _ = runner.rlgpu(self.wandb_exp_name,design_params=srl_params).results
             print('frame=',frame)
         except Exception as e:
             print(f"Error during execution: {e}")
@@ -460,17 +465,22 @@ class SRLGym( ):
             print('close runner')
         self.curr_frame = self.curr_frame + frame
 
-        # save the model if it is better enough
-        if evaluate_reward > -100: 
+        design_cost = self.calc_design_cost(srl_params)
+        wandb.log({'Evolution/task_reward':evaluate_reward, 'iteration': self.iteration} )
+        wandb.log({'Evolution/design_cost':design_cost, 'iteration': self.iteration} )
+        evaluate_reward = evaluate_reward + design_cost * 500
+        self._log_design_param(srl_params, self.iteration)
+        wandb.log({'Evolution/reward':evaluate_reward, 'iteration': self.iteration} )
+        self.iteration = self.iteration+1
+
+
+        # save the model if it is stable enough
+        if evaluate_amp_reward > 200: 
             general_model_name = 'general_model'
             general_model_output_file = os.path.join(model_output_path, general_model_name)
             shutil.copy(model_output_file+'.pth', general_model_output_file+'.pth')  # 复制当前最优模型为 best_model.pth
             print(f"Saved model with reward {evaluate_reward} to General Model.")
             self.hsrl_checkpoint = general_model_output_file + '.pth'
-
-        self._log_design_param(srl_params, self.iteration)
-        wandb.log({'Evolution/reward':evaluate_reward, 'iteration': self.iteration} )
-        self.iteration = self.iteration+1
 
         # save best model
         if evaluate_reward > self.best_evaluate_reward:
@@ -480,6 +490,22 @@ class SRLGym( ):
             shutil.copy(model_output_file+'.pth', best_model_path)  # 复制当前最优模型为 best_model.pth
             print(f"Best model saved with reward {evaluate_reward} at {best_model_path}")
         return evaluate_reward
+
+    def calc_design_cost(self, design_params):
+        # 获取设计参数
+        first_leg_length = float(design_params['first_leg_lenth'])
+        first_leg_size = float(design_params['first_leg_size'])
+        second_leg_length = float(design_params['second_leg_lenth'])
+        second_leg_size = float(design_params['second_leg_size'])
+        third_leg_size = float(design_params['third_leg_size'])
+        
+        first_leg_volume = math.pi * (first_leg_size ** 2) * first_leg_length
+        second_leg_volume = math.pi * (second_leg_size ** 2) * second_leg_length
+        third_leg_volume = (4/3) * math.pi * (third_leg_size ** 3)
+
+        total_volume = -(first_leg_volume + second_leg_volume + third_leg_volume)
+        
+        return total_volume
 
     def final_design_train(self,max_epoch):
         # at the end, train the best design
