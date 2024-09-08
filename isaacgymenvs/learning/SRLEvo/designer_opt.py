@@ -180,7 +180,7 @@ class GeneticAlgorithmOptimizer(MorphologyOptimizer):
                 "GA/leg2_size" : best_params["second_leg_size"],
                 "GA/end_size"  : best_params["third_leg_size"],
                 "GA/best_reward" :  best_reward,
-                "GA_iteration": iteration
+                "iteration": iteration
 
         }
         wandb.log(info_dict )
@@ -259,7 +259,7 @@ class BayesianOptimizer(MorphologyOptimizer):
             "BO/leg2_size": best_params["second_leg_size"],
             "BO/end_size": best_params["third_leg_size"],
             "BO/best_reward": best_reward,
-            "BO_iteration": iteration
+            "iteration": iteration
         }
         wandb.log(info_dict)
 
@@ -406,7 +406,7 @@ class GeneticAlgorithmOptimizer_v2(MorphologyOptimizer):
                 "GA/leg2_size" : best_params["second_leg_size"],
                 "GA/end_size"  : best_params["third_leg_size"],
                 "GA/best_reward" :  best_reward,
-                "GA_iteration": iteration
+                "iteration": iteration
 
         }
         wandb.log(info_dict )
@@ -469,7 +469,7 @@ class RandomOptimizer(MorphologyOptimizer):
             "Random/leg2_size": best_params["second_leg_size"],
             "Random/end_size": best_params["third_leg_size"],
             "Random/best_reward": best_reward,
-            "Random_iteration": iteration
+            "iteration": iteration
         }
         wandb.log(info_dict)
 
