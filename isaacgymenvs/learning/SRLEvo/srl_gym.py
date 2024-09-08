@@ -404,23 +404,28 @@ class SRLGym( ):
             print('close runner')
         self.curr_frame = self.curr_frame + frame
 
+        # calculate final evaluate reward
         design_cost = self.calc_design_cost(srl_params)
-        wandb.log({'Evolution/task_reward':evaluate_reward, 'iteration': self.iteration} )
-        wandb.log({'Evolution/design_cost':design_cost * 500, 'iteration': self.iteration} )
-        wandb.log({'Evolution/amp_reward':evaluate_amp_reward, 'iteration': self.iteration} )
+        wandb.log({'Evolution/srl_torque_cost':evaluate_reward, 'iteration': self.iteration} )
+        wandb.log({'Evolution/design_cost':design_cost * 500,   'iteration': self.iteration} ) 
+        wandb.log({'Evolution/amp_reward':evaluate_amp_reward,  'iteration': self.iteration} )
         evaluate_reward = evaluate_reward + design_cost * 500
+        if evaluate_amp_reward < 220:
+            final_eval_reward = -220 + evaluate_amp_reward + evaluate_reward
+        else:
+            final_eval_reward = evaluate_reward
         self._log_design_param(srl_params, self.iteration)
-        wandb.log({'Evolution/reward':evaluate_reward, 'iteration': self.iteration} )
+        wandb.log({'Evolution/evaluate_value':final_eval_reward, 'iteration': self.iteration} )
         self.iteration = self.iteration+1
 
         # save best model
-        if evaluate_reward > self.best_evaluate_reward:
-            self.best_evaluate_reward = evaluate_reward  # 更新最佳评估分数
+        if final_eval_reward > self.best_evaluate_reward:
+            self.best_evaluate_reward = final_eval_reward  # 更新最佳评估分数
             self.best_design_param = design_params 
             best_model_path = os.path.join(model_output_path, 'best_model.pth')
             shutil.copy(model_output_file+'.pth', best_model_path)  # 复制当前最优模型为 best_model.pth
-            print(f"Best model saved with reward {evaluate_reward} at {best_model_path}")
-        return evaluate_reward
+            print(f"Best model saved with reward {final_eval_reward} at {best_model_path}")
+        return final_eval_reward
     
     def design_evaluate_with_general_model(self, design_params, max_epoch=False):
         # put design param into observation, build a general model
@@ -490,13 +495,13 @@ class SRLGym( ):
             self.hsrl_checkpoint = general_model_output_file + '.pth'
 
         # save best model
-        if evaluate_reward > self.best_evaluate_reward:
-            self.best_evaluate_reward = evaluate_reward  # 更新最佳评估分数
+        if final_eval_reward > self.best_evaluate_reward:
+            self.best_evaluate_reward = final_eval_reward  # 更新最佳评估分数
             self.best_design_param = design_params 
             best_model_path = os.path.join(model_output_path, 'best_model.pth')
             shutil.copy(model_output_file+'.pth', best_model_path)  # 复制当前最优模型为 best_model.pth
-            print(f"Best model saved with reward {evaluate_reward} at {best_model_path}")
-        return evaluate_reward
+            print(f"Best model saved with reward {final_eval_reward} at {best_model_path}")
+        return final_eval_reward
 
     def calc_design_cost(self, design_params):
         # 获取设计参数
