@@ -117,8 +117,8 @@ class SRLAgent(common_agent.CommonAgent):
 
         self._srl_dof = 8
 
-        self.evaluate_rewards = deque(maxlen=20)  # Reward used to evaluate the design
-        self.evaluate_amp_rewards = deque(maxlen=20) 
+        self.evaluate_rewards = deque(maxlen=6)  # Reward used to evaluate the design
+        self.evaluate_amp_rewards = deque(maxlen=6) 
         return
 
     def init_tensors(self):
