@@ -205,7 +205,7 @@ class BayesianOptimizer(MorphologyOptimizer):
         self.default_design_evalutate = False
         # 定义贝叶斯优化的搜索空间
         self.search_space = [Real((1 - bounds_scale) * val, (1 + bounds_scale) * val, name=key) for key, val in base_design_params.items()]
-        self.optimizer = Optimizer(self.search_space, n_initial_points=n_initial_points, acq_func=acq_func)
+        self.optimizer = Optimizer(self.search_space, n_initial_points=self.n_initial_points, acq_func=acq_func)
 
         self.best_individuals_over_time = []  # 用于保存每一代的最优设计及其评估值
 
@@ -384,7 +384,7 @@ class GeneticAlgorithmOptimizer_v2(MorphologyOptimizer):
             # 评估当前种群
             scores = []
             for individual in self.population:
-                kwarg = {'max_epoch': 1000} if i <= 1 else {}
+                kwarg = {'max_epoch': 700} if i <= 1 else {}
                 score = self.evaluate_design_method(individual,**kwarg)
                 scores.append(score)
         

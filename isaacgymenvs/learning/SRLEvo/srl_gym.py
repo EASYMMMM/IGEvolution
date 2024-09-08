@@ -260,7 +260,7 @@ class SRLGym( ):
                 writer.writerow(row)
         
         logs_output_path =  os.path.join(self.experiment_dir, 'logs')
-        self.final_design_train(max_epoch=600)
+        self.final_design_train(max_epoch=800)
         sync_tensorboard_logs(logs_output_path)
         print(f"Optimization results saved to {csv_file}")
 
@@ -333,7 +333,7 @@ class SRLGym( ):
                 writer.writerow(row)
         
         logs_output_path =  os.path.join(self.experiment_dir, 'logs')
-        self.final_design_train(max_epoch=600)
+        self.final_design_train(max_epoch=1000)
         sync_tensorboard_logs(logs_output_path)
         print(f"Optimization results saved to {csv_file}")
 
@@ -410,8 +410,8 @@ class SRLGym( ):
         wandb.log({'Evolution/design_cost':design_cost * 500,   'iteration': self.iteration} ) 
         wandb.log({'Evolution/amp_reward':evaluate_amp_reward,  'iteration': self.iteration} )
         evaluate_reward = evaluate_reward + design_cost * 500
-        if evaluate_amp_reward < 220:
-            final_eval_reward = -220 + evaluate_amp_reward + evaluate_reward
+        if evaluate_amp_reward < 200:
+            final_eval_reward = -200  
         else:
             final_eval_reward = evaluate_reward
         self._log_design_param(srl_params, self.iteration)
@@ -477,8 +477,8 @@ class SRLGym( ):
         wandb.log({'Evolution/design_cost':design_cost * 500,   'iteration': self.iteration} ) 
         wandb.log({'Evolution/amp_reward':evaluate_amp_reward,  'iteration': self.iteration} )
         evaluate_reward = evaluate_reward + design_cost * 500
-        if evaluate_amp_reward < 220:
-            final_eval_reward = -220 + evaluate_amp_reward + evaluate_reward
+        if evaluate_amp_reward < 200:
+            final_eval_reward = -200  
         else:
             final_eval_reward = evaluate_reward
         self._log_design_param(srl_params, self.iteration)
@@ -558,19 +558,30 @@ class SRLGym( ):
         subproc_cls_runner = subproc_worker(SRLGym_process, ctx="spawn", daemon=True)
         runner = subproc_cls_runner(train_cfg)
         try:
-            evaluate_reward, _, frame, summary_dir = runner.rlgpu(self.wandb_exp_name,design_params=srl_params).results
+            evaluate_reward, evaluate_amp_reward, frame, _ = runner.rlgpu(self.wandb_exp_name,design_params=srl_params).results
             print('frame=',frame)
         except Exception as e:
             print(f"Error during execution: {e}")
         finally:
             runner.close()
             print('close runner')
+        self.curr_frame = self.curr_frame + frame
 
+        # calculate final evaluate reward
+        design_cost = self.calc_design_cost(srl_params)
+        wandb.log({'Evolution/srl_torque_cost':evaluate_reward, 'iteration': self.iteration} )
+        wandb.log({'Evolution/design_cost':design_cost * 500,   'iteration': self.iteration} ) 
+        wandb.log({'Evolution/amp_reward':evaluate_amp_reward,  'iteration': self.iteration} )
+        evaluate_reward = evaluate_reward + design_cost * 500
+        if evaluate_amp_reward < 200:
+            final_eval_reward = -200
+        else:
+            final_eval_reward = evaluate_reward
         self._log_design_param(srl_params, self.iteration)
-        wandb.log({'Evolution/reward':evaluate_reward, 'iteration': self.iteration} )
+        wandb.log({'Evolution/evaluate_value':final_eval_reward, 'iteration': self.iteration} )
         self.iteration = self.iteration+1
 
-        return evaluate_reward
+        return final_eval_reward
 
     def random_SRL_designer(self):
         # 基础尺寸
