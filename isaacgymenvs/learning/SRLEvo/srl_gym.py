@@ -407,6 +407,7 @@ class SRLGym( ):
         design_cost = self.calc_design_cost(srl_params)
         wandb.log({'Evolution/task_reward':evaluate_reward, 'iteration': self.iteration} )
         wandb.log({'Evolution/design_cost':design_cost * 500, 'iteration': self.iteration} )
+        wandb.log({'Evolution/amp_reward':evaluate_amp_reward, 'iteration': self.iteration} )
         evaluate_reward = evaluate_reward + design_cost * 500
         self._log_design_param(srl_params, self.iteration)
         wandb.log({'Evolution/reward':evaluate_reward, 'iteration': self.iteration} )
@@ -465,12 +466,18 @@ class SRLGym( ):
             print('close runner')
         self.curr_frame = self.curr_frame + frame
 
+        # calculate final evaluate reward
         design_cost = self.calc_design_cost(srl_params)
-        wandb.log({'Evolution/task_reward':evaluate_reward, 'iteration': self.iteration} )
-        wandb.log({'Evolution/design_cost':design_cost, 'iteration': self.iteration} )
+        wandb.log({'Evolution/srl_torque_cost':evaluate_reward, 'iteration': self.iteration} )
+        wandb.log({'Evolution/design_cost':design_cost * 500,   'iteration': self.iteration} ) 
+        wandb.log({'Evolution/amp_reward':evaluate_amp_reward,  'iteration': self.iteration} )
         evaluate_reward = evaluate_reward + design_cost * 500
+        if evaluate_amp_reward < 220:
+            final_eval_reward = -220 + evaluate_amp_reward + evaluate_reward
+        else:
+            final_eval_reward = evaluate_reward
         self._log_design_param(srl_params, self.iteration)
-        wandb.log({'Evolution/reward':evaluate_reward, 'iteration': self.iteration} )
+        wandb.log({'Evolution/evaluate_value':final_eval_reward, 'iteration': self.iteration} )
         self.iteration = self.iteration+1
 
 
