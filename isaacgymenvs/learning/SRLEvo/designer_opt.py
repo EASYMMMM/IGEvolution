@@ -47,7 +47,7 @@ class GeneticAlgorithmOptimizer(MorphologyOptimizer):
                   base_design_params, 
                   evaluate_design_method,
                   population_size=20, 
-                  mutation_rate=0.1,
+                  mutation_rate=0.3,
                   crossover_rate=0.7,
                   num_iterations=10,
                   bounds_scale=0.3):
@@ -106,19 +106,19 @@ class GeneticAlgorithmOptimizer(MorphologyOptimizer):
         return child
 
     def update(self, population, scores):
-        """基于评估值更新优化参数，保留表现最好的两个个体"""
-        # 获取表现最好的两个个体
+        """基于评估值更新优化参数，保留表现最好的一个个体"""
+        # 获取表现最好的个体
         sorted_indices = np.argsort(scores)[::-1]  # 从大到小排序
-        best_individuals = [population[sorted_indices[0]], population[sorted_indices[1]]]
-        best_scores = [scores[sorted_indices[0]], scores[sorted_indices[1]]]
+        best_individual = population[sorted_indices[0]]  # 最好的个体
+        best_score = scores[sorted_indices[0]]  # 最好的得分
 
         # 如果有更好的个体，更新最佳参数
-        if best_scores[0] > self.best_score:
-            self.best_score = best_scores[0]
-            self.best_params = best_individuals[0]
+        if best_score > self.best_score:
+            self.best_score = best_score
+            self.best_params = best_individual
 
-        # 新种群包含两个精英个体
-        new_population = best_individuals.copy()
+        # 新种群包含一个精英个体
+        new_population = [best_individual]
 
         # 通过交叉和变异生成其余的个体
         while len(new_population) < self.population_size:
@@ -269,7 +269,7 @@ class GeneticAlgorithmOptimizer_v2(MorphologyOptimizer):
                   base_design_params, 
                   evaluate_design_method,
                   population_size=20, 
-                  mutation_rate=0.1,
+                  mutation_rate=0.3,
                   crossover_rate=0.7,
                   num_iterations=10,
                   bounds_scale=0.3):
@@ -331,19 +331,19 @@ class GeneticAlgorithmOptimizer_v2(MorphologyOptimizer):
         return child
 
     def update(self, population, scores):
-        """基于评估值更新优化参数，保留表现最好的两个个体"""
-        # 获取表现最好的两个个体
+        """基于评估值更新优化参数，保留表现最好的一个个体"""
+        # 获取表现最好的个体
         sorted_indices = np.argsort(scores)[::-1]  # 从大到小排序
-        best_individuals = [population[sorted_indices[0]], population[sorted_indices[1]]]
-        best_scores = [scores[sorted_indices[0]], scores[sorted_indices[1]]]
+        best_individual = population[sorted_indices[0]]  # 最好的个体
+        best_score = scores[sorted_indices[0]]  # 最好的得分
 
         # 如果有更好的个体，更新最佳参数
-        if best_scores[0] > self.best_score:
-            self.best_score = best_scores[0]
-            self.best_params = best_individuals[0]
+        if best_score > self.best_score:
+            self.best_score = best_score
+            self.best_params = best_individual
 
-        # 新种群包含两个精英个体
-        new_population = best_individuals.copy()
+        # 新种群包含一个精英个体
+        new_population = [best_individual]
 
         # 通过交叉和变异生成其余的个体
         while len(new_population) < self.population_size:
