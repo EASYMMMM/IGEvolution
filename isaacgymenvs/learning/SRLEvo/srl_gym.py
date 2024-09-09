@@ -424,17 +424,17 @@ class SRLGym( ):
             self.best_design_param = design_params 
             best_model_path = os.path.join(model_output_path, 'best_model.pth')
             shutil.copy(model_output_file+'.pth', best_model_path)  # 复制当前最优模型为 best_model.pth
-            info_dict = {
-                'Best/best evaluation':self.best_evaluate_reward,
-                "Best/leg1_lenth" : self.best_design_param["first_leg_lenth"],
-                "Best/leg1_size"  : self.best_design_param["first_leg_size"],
-                "Best/leg2_lenth":  self.best_design_param["second_leg_lenth"],
-                "Best/leg2_size" :  self.best_design_param["second_leg_size"],
-                "Best/end_size"  :  self.best_design_param["third_leg_size"],
-                "iteration" :  self.iteration
-            }
-            wandb.log(info_dict )
             print(f"Best model saved with reward {final_eval_reward} at {best_model_path}")
+        info_dict = {
+            'Best/best evaluation':self.best_evaluate_reward,
+            "Best/leg1_lenth" : self.best_design_param["first_leg_lenth"],
+            "Best/leg1_size"  : self.best_design_param["first_leg_size"],
+            "Best/leg2_lenth":  self.best_design_param["second_leg_lenth"],
+            "Best/leg2_size" :  self.best_design_param["second_leg_size"],
+            "Best/end_size"  :  self.best_design_param["third_leg_size"],
+            "iteration" :  self.iteration
+        }
+        wandb.log(info_dict )
         return final_eval_reward
     
     def design_evaluate_with_general_model(self, design_params, max_epoch=False):
@@ -509,19 +509,20 @@ class SRLGym( ):
             self.best_evaluate_reward = final_eval_reward  # 更新最佳评估分数
             self.best_design_param = design_params 
             best_model_path = os.path.join(model_output_path, 'best_model.pth')
-            shutil.copy(model_output_file+'.pth', best_model_path)  # 复制当前最优模型为 best_model.pth
-            info_dict = {
-                'Best/best evaluation': self.best_evaluate_reward,
-                "Best/leg1_lenth"     : self.best_design_param["first_leg_lenth"],
-                "Best/leg1_size"      : self.best_design_param["first_leg_size"],
-                "Best/leg2_lenth"     : self.best_design_param["second_leg_lenth"],
-                "Best/leg2_size"      : self.best_design_param["second_leg_size"],
-                "Best/end_size"       : self.best_design_param["third_leg_size"],
-                "iteration"           :  self.iteration
-            }
-            wandb.log(info_dict )            
+            shutil.copy(model_output_file+'.pth', best_model_path)  # 复制当前最优模型为 best_model.pth         
             print(f"Best model saved with reward {final_eval_reward} at {best_model_path}")
+        info_dict = {
+            'Best/best evaluation':self.best_evaluate_reward,
+            "Best/leg1_lenth" : self.best_design_param["first_leg_lenth"],
+            "Best/leg1_size"  : self.best_design_param["first_leg_size"],
+            "Best/leg2_lenth":  self.best_design_param["second_leg_lenth"],
+            "Best/leg2_size" :  self.best_design_param["second_leg_size"],
+            "Best/end_size"  :  self.best_design_param["third_leg_size"],
+            "iteration" :  self.iteration
+        }
+        wandb.log(info_dict )
         return final_eval_reward
+        
 
     def calc_design_cost(self, design_params):
         # 获取设计参数
