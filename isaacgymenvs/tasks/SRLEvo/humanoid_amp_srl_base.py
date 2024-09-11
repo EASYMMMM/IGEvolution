@@ -323,8 +323,8 @@ class HumanoidAMPSRLBase(VecTask):
         self._key_body_ids = self._build_key_body_ids_tensor(env_ptr, handle)
         self._upper_body_ids = self._build_upper_body_ids_tensor(env_ptr, handle)
         self._contact_body_ids = self._build_contact_body_ids_tensor(env_ptr, handle)
-        if self._srl_endpos_obs:
-            self._srl_endpos_ids = self._build_srl_endpos_body_ids_tensor(env_ptr, handle)
+        
+        self._srl_endpos_ids = self._build_srl_endpos_body_ids_tensor(env_ptr, handle)
 
         if (self._pd_control):
             self._build_pd_action_offset_scale()
@@ -515,6 +515,12 @@ class HumanoidAMPSRLBase(VecTask):
         
         srl_torque_cost = self.SRL_joint_torque_cost()
         self.extras["srl_torque_cost"] = srl_torque_cost.to(self.rl_device)
+        # plotting
+        self.extras["root_pos"] = self._root_states[0, 0:3].to(self.rl_device)
+        srl_end_body_pos = self._rigid_body_pos[0,self._srl_endpos_ids, :]
+        self.extras['srl_end_pos'] = srl_end_body_pos
+        key_body_pos = self._rigid_body_pos[0, self._key_body_ids, :]
+        self.extras['key_body_pos'] = key_body_pos
 
         # debug viz
         if self.viewer and self.debug_viz:

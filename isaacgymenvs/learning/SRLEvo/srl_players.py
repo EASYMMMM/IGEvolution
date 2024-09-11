@@ -36,6 +36,7 @@ from rl_games.common.tr_helpers import unsqueeze_obs
 import isaacgymenvs.learning.common_player as common_player
 import numpy as np
 import matplotlib.pyplot as plt
+import scipy.io as sio
 
 def my_safe_load(filename, **kwargs):
     return torch_ext.safe_filesystem_op(torch.load, filename, **kwargs)
@@ -147,6 +148,12 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
         # 存储第一个环境的动作数据
         actions_env0 = []
         episode_count_env0 = 0
+        # 新增：为每个 episode 创建列表来存储数据
+        episode_data = {
+            'root_pos': [],
+            'srl_end_pos': [],
+            'key_body_pos': []
+        }
 
         need_init_rnn = self.is_rnn
         print('Start Playing')
@@ -189,6 +196,15 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                 episode_actions.append(dof_forces[0].cpu().numpy())  # 假设动作输出是Tensor
                 episode_velocity.append(info["x_velocity"][0].cpu().numpy()) # 
 
+                # 记录第一个智能体的肢体位置数据
+                root_pos = info["root_pos"][0].cpu().numpy()
+                srl_end_pos = info["srl_end_pos"][0].cpu().numpy()
+                key_body_pos = info["key_body_pos"][0].cpu().numpy()
+                # 将这些数据分别存储在当前 episode 的对应列表中
+                episode_data['root_pos'].append(root_pos)
+                episode_data['srl_end_pos'].append(srl_end_pos)
+                episode_data['key_body_pos'].append(key_body_pos)
+                
                 if render:
                     self.env.render(mode = 'human')
                     time.sleep(self.render_sleep)
@@ -207,11 +223,23 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                         episode_count_env0 += 1
                         games_played += 1
 
-                        # 当第一个环境完成两个episode时，绘制动作曲线
-                        if episode_count_env0 == 1:
-                            self.plot_actions(actions_env0)
+                        # 只保存当前 episode 的数据
+                        data_to_save = {
+                            f'episode_{episode_count_env0}_root_pos': episode_data['root_pos'],
+                            f'episode_{episode_count_env0}_srl_end_pos': episode_data['srl_end_pos'],
+                            f'episode_{episode_count_env0}_key_body_pos': episode_data['key_body_pos']
+                        }
+
+                        print(f"Episode {episode_count_env0} Data saved.")
                         if episode_count_env0 == 3:
-                            self.action0_ave(actions_env0)
+                            sio.savemat('env0_episode_data.mat', data_to_save)
+                            print("已保存env0的前三个episode的数据到env0_episode_data.mat")
+
+                        # 当第一个环境完成两个episode时，绘制动作曲线
+                        # if episode_count_env0 == 1:
+                        #     self.plot_actions(actions_env0)
+                        # if episode_count_env0 == 3:
+                        #     self.action0_ave(actions_env0)
 
                     if self.is_rnn:
                         for s in self.states:
