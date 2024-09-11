@@ -197,9 +197,9 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                 episode_velocity.append(info["x_velocity"][0].cpu().numpy()) # 
 
                 # 记录第一个智能体的肢体位置数据
-                root_pos = info["root_pos"][0].cpu().numpy()
-                srl_end_pos = info["srl_end_pos"][0].cpu().numpy()
-                key_body_pos = info["key_body_pos"][0].cpu().numpy()
+                root_pos = info["root_pos"].cpu().numpy()
+                srl_end_pos = info["srl_end_pos"].cpu().numpy()
+                key_body_pos = info["key_body_pos"].cpu().numpy()
                 # 将这些数据分别存储在当前 episode 的对应列表中
                 episode_data['root_pos'].append(root_pos)
                 episode_data['srl_end_pos'].append(srl_end_pos)
