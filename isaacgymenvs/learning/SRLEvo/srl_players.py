@@ -152,7 +152,10 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
         episode_data = {
             'root_pos': [],
             'srl_end_pos': [],
-            'key_body_pos': []
+            'key_body_pos': [],
+            'dof_forces':[],
+            'obs':[],
+            'done':[],
         }
 
         need_init_rnn = self.is_rnn
@@ -200,10 +203,13 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                 root_pos = info["root_pos"].cpu().numpy()
                 srl_end_pos = info["srl_end_pos"].cpu().numpy()
                 key_body_pos = info["key_body_pos"].cpu().numpy()
+                dof_pos = info["dof_pos"].cpu().numpy()
                 # 将这些数据分别存储在当前 episode 的对应列表中
                 episode_data['root_pos'].append(root_pos)
                 episode_data['srl_end_pos'].append(srl_end_pos)
                 episode_data['key_body_pos'].append(key_body_pos)
+                episode_data['dof_forces'].append(dof_forces[0].cpu().numpy())
+                episode_data['obs'].append( dof_pos)
                 
                 if render:
                     self.env.render(mode = 'human')
@@ -213,6 +219,10 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                 done_indices = all_done_indices[::self.num_agents]
                 done_count = len(done_indices)
                 games_played += done_count
+                if 0 in done_indices:
+                    episode_data['done'].append(1)
+                else:
+                    episode_data['done'].append(0)
 
                 if done_count > 0:
                     if 0 in done_indices: # 第一个环境结束
@@ -225,14 +235,17 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
 
                         # 只保存当前 episode 的数据
                         data_to_save = {
-                            f'episode_{episode_count_env0}_root_pos': episode_data['root_pos'],
-                            f'episode_{episode_count_env0}_srl_end_pos': episode_data['srl_end_pos'],
-                            f'episode_{episode_count_env0}_key_body_pos': episode_data['key_body_pos']
+                            f'episode_root_pos': episode_data['root_pos'],
+                            f'episode_srl_end_pos': episode_data['srl_end_pos'],
+                            f'episode_key_body_pos': episode_data['key_body_pos'],
+                            f'episode_dof_forces': episode_data['dof_forces'],
+                            f'episode_obs': episode_data['obs'],
+                            f'episode_dones': episode_data['done'],
                         }
 
                         print(f"Episode {episode_count_env0} Data saved.")
-                        if episode_count_env0 == 3:
-                            sio.savemat('env0_episode_data.mat', data_to_save)
+                        if episode_count_env0 == 5:
+                            sio.savemat('run_data/env0_episode_data_human_only.mat', data_to_save)
                             print("已保存env0的前三个episode的数据到env0_episode_data.mat")
 
                         # 当第一个环境完成两个episode时，绘制动作曲线

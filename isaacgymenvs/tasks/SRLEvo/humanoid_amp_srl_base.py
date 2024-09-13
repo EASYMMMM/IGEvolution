@@ -521,6 +521,7 @@ class HumanoidAMPSRLBase(VecTask):
         self.extras['srl_end_pos'] = srl_end_body_pos
         key_body_pos = self._rigid_body_pos[0, self._key_body_ids, :]
         self.extras['key_body_pos'] = key_body_pos
+        self.extras['dof_pos'] = self._dof_pos[0].to(self.rl_device)
 
         # debug viz
         if self.viewer and self.debug_viz:
