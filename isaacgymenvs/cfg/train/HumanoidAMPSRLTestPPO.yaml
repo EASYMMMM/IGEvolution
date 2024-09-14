@@ -113,7 +113,7 @@ gym:
   GA_num_iterations: 10
   GA_mutation_rate: 0.1
   GA_crossover_rate: 0.7
-  GA_bounds_scale: 0.4
+  GA_bounds_scale: 0.3
 
   BO_n_initial_points: 10
   BO_num_iterations: 100
