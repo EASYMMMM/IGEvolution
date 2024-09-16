@@ -244,8 +244,8 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                         }
 
                         print(f"Episode {episode_count_env0} Data saved.")
-                        if episode_count_env0 == 5:
-                            sio.savemat('run_data/env0_episode_data_human_halfload.mat', data_to_save)
+                        if episode_count_env0 == 3:
+                            sio.savemat('run_data/GA314_best_env0_episode_data.mat', data_to_save)
                             print("已保存env0的前三个episode的数据到env0_episode_data.mat")
 
                         # 当第一个环境完成两个episode时，绘制动作曲线
