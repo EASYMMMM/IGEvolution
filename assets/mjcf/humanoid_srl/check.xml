@@ -34,7 +34,7 @@
 			<site class="touch" name="pelvis" pos="0 0 0.07" size="0.091" type="sphere"/>
 			<site class="touch" name="upper_waist" pos="0 0 0.205" size="0.071" type="sphere"/>
 
-			<body name="SRL_root" pos="-0.07 -0.3 0.05" quat="-0.70711 0.0 0.70711 0.0">
+			<!-- <body name="SRL_root" pos="-0.07 -0.3 0.05" quat="-0.70711 0.0 0.70711 0.0">
 				<geom density="2500" name="SRL_geom_root" pos="0 0 0" size="0.02 0.095 0.095" type="box"/>
 				<body name="SRL_right_leg1" pos="0.02 0.0475 0" quat="1.0 0.0 0.0 0.0">
 					<geom density="2500" fromto="0 0 0 0.3 0 0" name="SRL_geom_right_leg1" size="0.026026" type="capsule"/>
@@ -62,9 +62,9 @@
 						</body>
 					</body>
 				</body>
-			</body>
+			</body> -->
 
-			<body name="2SRL_root" pos="-0.07 0.2 0.05" quat="-0.70711 0.0 0.70711 0.0">
+			<body name="2SRL_root" pos="-0.07 0.2 0.05" quat="0 0 0 1">
 				<geom density="2500" name="2SRL_geom_root" pos="0 0 0" size="0.02 0.095 0.095" type="box"/>
 				<body name="2SRL_right_leg1" pos="0.02 0.0475 0" quat="1.0 0.0 0.0 0.0">
 					<geom density="2500" fromto="0 0 0 0.4 0 0" name="2SRL_geom_right_leg1" size="0.03" type="capsule"/>

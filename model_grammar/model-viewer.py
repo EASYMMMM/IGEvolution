@@ -16,7 +16,7 @@ from mujoco_py import MjSim, MjViewer, load_model_from_path
 import numpy as np
 
 model_path = 'C:\\MLY\\IGEvolution\\assets\\mjcf\\humanoid_srl\\check.xml'
-
+# model_path = 'C:\\MLY\\IGEvolution\\assets\\mjcf\\humanoid_srl\\hsrl_GA_314_iter15.xml'
 # model_path = 'mjcf_model\\humanoid_srl_mode1.xml'
 # model_path = 'mjcf_model\\amp_humanoid_srl_V2_1.xml'
 # model_path = 'E:\\CASIA\\RE_SRL\\IGEvolution\\assets\\mjcf\\amp_humanoid_srl_V2_1.xml'
