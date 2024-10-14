@@ -7,6 +7,7 @@
 
    需要`export LD_LIBRARY_PATH=/home/ps/anaconda3/envs/XXX/lib`  
    其中`XXX`为虚拟环境名称。
+   `export LD_LIBRARY_PATH=/home/zdh232/anaconda3/envs/rlgpu/lib`   
    `export LD_LIBRARY_PATH=/home/ps/anaconda3/envs/rlgpu/lib`   
    `export LD_LIBRARY_PATH=/home/ps/anaconda3/envs/Mrlgpu/lib`
    `export LD_LIBRARY_PATH=/home/user/miniconda3/envs/igm/lib`
