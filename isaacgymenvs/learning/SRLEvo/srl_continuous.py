@@ -477,7 +477,7 @@ class SRLAgent(common_agent.CommonAgent):
             batch_dict, batch_dict_srl = self.play_steps() 
 
         play_time_end = time.time()
-        update_time_start = time.time()
+        prepare_dataset_time_start = time.time()
         rnn_masks = batch_dict.get('rnn_masks', None)
         
         self._update_amp_demos() # 更新 AMP 示范
@@ -500,6 +500,9 @@ class SRLAgent(common_agent.CommonAgent):
         #     self.train_central_value()
 
         train_info = None
+
+        prepare_dataset_time_end = time.time()
+        update_time_start = time.time()
 
         for _ in range(0, self.mini_epochs_num):
             ep_kls = []
@@ -535,11 +538,13 @@ class SRLAgent(common_agent.CommonAgent):
         update_time_end = time.time()
         play_time = play_time_end - play_time_start
         update_time = update_time_end - update_time_start
+        prepare_dataset_time = prepare_dataset_time_end - prepare_dataset_time_start
         total_time = update_time_end - play_time_start
 
         self._store_replay_amp_obs(batch_dict['amp_obs']) # 存储 AMP 重放观测
 
         train_info['play_time'] = play_time
+        train_info['prepare_dataset_time'] = prepare_dataset_time
         train_info['update_time'] = update_time
         train_info['total_time'] = total_time
         self._record_train_batch_info(batch_dict, train_info) # 记录训练批次信息
@@ -1134,6 +1139,8 @@ class SRLAgent(common_agent.CommonAgent):
 
     def _log_train_info(self, train_info, frame):
         super()._log_train_info(train_info, frame)
+        
+        self.writer.add_scalar('performance/prepare_dataset_time', train_info['prepare_dataset_time'], frame)
 
         self.writer.add_scalar('losses/disc_loss', torch_ext.mean_list(train_info['disc_loss']).item(), frame)
 
