@@ -1139,7 +1139,7 @@ class SRLAgent(common_agent.CommonAgent):
 
     def _log_train_info(self, train_info, frame):
         super()._log_train_info(train_info, frame)
-        
+        self.writer.add_scalar('performance/total_time',train_info['total_time'], frame)
         self.writer.add_scalar('performance/prepare_dataset_time', train_info['prepare_dataset_time'], frame)
 
         self.writer.add_scalar('losses/disc_loss', torch_ext.mean_list(train_info['disc_loss']).item(), frame)
