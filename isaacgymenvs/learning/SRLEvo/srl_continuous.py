@@ -237,6 +237,181 @@ class SRLAgent(common_agent.CommonAgent):
         masked_obs = obs * mask
         return masked_obs
     
+    # def play_steps(self):
+    #     # 执行一轮完整的经验收集过程 
+    #     self.set_eval()
+
+    #     epinfos = []
+    #     update_list = self.update_list
+
+    #     for n in range(self.horizon_length):
+    #         self.obs, done_env_ids = self._env_reset_done() # 重置环境
+    #         self.experience_buffer.update_data('obses', n, self.obs['obs'])
+    #         self.experience_buffer_srl.update_data('obses', n, self.obs['obs'])
+            
+
+    #         res_dict, res_dict_srl = self.get_action_values(self.obs) # 获取动作值
+
+    #         if self.mirror_loss: # 镜像损失
+    #             self.experience_buffer_srl.update_data('obs_mirrored', n, self.obs['obs_mirrored']) # 镜像观测
+    #             mirrored_obs = {}
+    #             mirrored_obs['obs']  =  self.obs['obs_mirrored']
+                
+    #         for k in update_list: # 更新经验缓冲区: action
+    #             self.experience_buffer.update_data(k, n, res_dict[k]) 
+    #             self.experience_buffer_srl.update_data(k, n, res_dict_srl[k]) 
+
+    #         # if self.has_central_value:
+    #         #     self.experience_buffer.update_data('states', n, self.obs['states'])
+            
+    #         # action拼接
+    #         conbined_action = torch.cat((res_dict['actions'], res_dict_srl['actions']), dim=-1)
+            
+    #         #self.obs, rewards, self.dones, infos = self.env_step(res_dict['actions'])
+    #         self.obs, rewards, self.dones, infos = self.env_step(conbined_action)
+            
+    #         # # srl reward
+    #         # rewards_srl = infos["srl_rewards"]
+    #         # rewards_srl = rewards_srl.unsqueeze(1)
+
+    #         ''' humanoid buffer '''
+    #         shaped_rewards = self.rewards_shaper(rewards)  # DefaultRewardsShaper
+    #         self.experience_buffer.update_data('rewards', n, shaped_rewards)
+    #         self.experience_buffer.update_data('next_obses', n, self.obs['obs'])
+    #         self.experience_buffer.update_data('dones', n, self.dones)
+    #         self.experience_buffer.update_data('amp_obs', n, infos['amp_obs'])
+            
+    #         ''' srl buffer '''
+    #         # shaped_rewards_srl = self.rewards_shaper(rewards_srl)
+    #         self.experience_buffer_srl.update_data('rewards', n, shaped_rewards)
+    #         self.experience_buffer_srl.update_data('next_obses', n, self.obs['obs'])
+    #         self.experience_buffer_srl.update_data('dones', n, self.dones)
+    #         if self.mirror_loss:
+    #             self.experience_buffer_srl.update_data('obs_mirrored', n, mirrored_obs['obs'])
+
+
+    #         terminated = infos['terminate'].float()
+    #         terminated = terminated.unsqueeze(-1)
+
+    #         _velocity_penalty = infos['v_penalty']
+    #         _torque_cost = infos['torque_cost']
+    #         _upper_reward = infos['upper_reward'] 
+    #         _srl_torque_cost = infos['srl_torque_cost']
+            
+    #         ''' humanoid value of next state '''
+    #         next_vals = self._eval_critic(self.obs)  
+    #         next_vals *= (1.0 - terminated)
+    #         self.experience_buffer.update_data('next_values', n, next_vals)
+            
+    #         ''' Srl value of next state '''
+    #         # next_vals_srl = self._eval_critic_srl(self.obs)  
+    #         # next_vals_srl *= (1.0 - terminated)
+    #         # self.experience_buffer_srl.update_data('next_values', n, next_vals_srl)
+    #         self.experience_buffer_srl.update_data('next_values', n, next_vals)
+            
+    #         # self.current_rewards_srl += rewards_srl
+
+    #         # calculate AMP reward 
+    #         _amp_rewards = self._calc_amp_rewards(infos['amp_obs']) 
+    #         # calculate total reward
+    #         _total_rewards = self._combine_rewards(rewards,_amp_rewards)
+    #         # store reward
+    #         self.current_rewards_task += rewards     # task reward
+    #         self.current_rewards      += _total_rewards  # task reward + amp reward
+    #         self.current_rewards_amp  += _amp_rewards['disc_rewards']
+    #         self.current_rewards_t_c  += _torque_cost.unsqueeze(1)       # 分量 
+    #         self.current_rewards_v_p  += _velocity_penalty.unsqueeze(1)  # 分量
+    #         self.current_rewards_u_r  += _upper_reward.unsqueeze(1)      # upper reward
+    #         self.current_rewards_srl_t_c += _srl_torque_cost.unsqueeze(1) 
+
+    #         all_done_indices = self.dones.nonzero(as_tuple=False)
+    #         done_indices = all_done_indices[::self.num_agents]
+  
+    #         self.game_rewards.update(self.current_rewards[done_indices])
+    #         # self.game_rewards_srl.update(self.current_rewards_srl[done_indices])
+    #         self.game_rewards_amp.update(self.current_rewards_amp[done_indices])
+    #         self.game_rewards_task.update(self.current_rewards_task[done_indices])
+    #         self.game_rewards_v_p.update(self.current_rewards_v_p[done_indices])
+    #         self.game_rewards_t_c.update(self.current_rewards_t_c[done_indices])
+    #         self.game_rewards_u_r.update(self.current_rewards_u_r[done_indices])
+    #         self.game_rewards_srl_t_c.update(self.current_rewards_srl_t_c[done_indices])
+
+    #         self.current_lengths += 1
+    #         self.game_lengths.update(self.current_lengths[done_indices])
+    #         self.algo_observer.process_infos(infos, done_indices)
+
+    #         not_dones = 1.0 - self.dones.float()
+    #         # TODO：可以在这里添加评估指标
+    #         for idx in done_indices:
+    #             ep_lenth = self.current_lengths[idx].item()
+    #             srl_t_c = - self.current_rewards_srl_t_c[idx].item() / ep_lenth
+    #             evaluate_t_c = self.current_rewards_t_c[idx].item() / ep_lenth # torque cose
+    #             evaluate_u_r = self.current_rewards_u_r[idx].item() / ep_lenth # upper reward
+    #             amp_reward = self.current_rewards_amp[idx].item()
+    #             # if amp_reward < 200:
+    #             #     amp_reward = -200 + amp_reward
+    #             # else:
+    #             #     amp_reward = 0
+    #             reward = 2*evaluate_t_c + 2*evaluate_u_r + srl_t_c 
+    #             # 添加新的 reward 到队列中
+    #             self.evaluate_rewards.append(reward)
+    #             self.evaluate_amp_rewards.append(amp_reward)
+    #         ''' If env is done, reset current_reward '''
+            
+    #         self.current_rewards = self.current_rewards * not_dones.unsqueeze(1)
+    #         # self.current_rewards_srl = self.current_rewards_srl * not_dones.unsqueeze(1)
+    #         self.current_rewards_amp = self.current_rewards_amp * not_dones.unsqueeze(1)
+    #         self.current_rewards_task = self.current_rewards_task * not_dones.unsqueeze(1)
+    #         self.current_rewards_v_p = self.current_rewards_v_p * not_dones.unsqueeze(1)
+    #         self.current_rewards_t_c = self.current_rewards_t_c * not_dones.unsqueeze(1)
+    #         self.current_rewards_u_r = self.current_rewards_u_r * not_dones.unsqueeze(1)
+    #         self.current_rewards_srl_t_c = self.current_rewards_srl_t_c * not_dones.unsqueeze(1)
+    #         self.current_lengths = self.current_lengths * not_dones
+
+    #         if (self.vec_env.env.viewer and (n == (self.horizon_length - 1))):
+    #             self._amp_debug(infos)
+
+    #     # calculate Humanoid minibatch returns
+    #     mb_fdones = self.experience_buffer.tensor_dict['dones'].float()  # 获取完成标志
+    #     mb_values = self.experience_buffer.tensor_dict['values'] # 获取价值
+    #     mb_next_values = self.experience_buffer.tensor_dict['next_values'] # 获取下一个价值
+
+    #     mb_rewards = self.experience_buffer.tensor_dict['rewards'] # 获取奖励
+    #     mb_amp_obs = self.experience_buffer.tensor_dict['amp_obs'] # 获取 AMP 观测
+    #     amp_rewards = self._calc_amp_rewards(mb_amp_obs) # 计算 AMP 奖励
+    #     mb_rewards = self._combine_rewards(mb_rewards, amp_rewards) # 合并奖励
+
+    #     mb_advs = self.discount_values(mb_fdones, mb_values, mb_rewards, mb_next_values) # 折扣价值
+    #     mb_returns = mb_advs + mb_values # 价值 = 当前价值+未来折扣价值
+
+    #     # calculate SRL minibatch returns
+    #     # mb_fdones_srl = self.experience_buffer_srl.tensor_dict['dones'].float()  # 获取完成标志
+    #     # mb_values_srl = self.experience_buffer_srl.tensor_dict['values'] # 获取价值
+    #     # mb_next_values_srl = self.experience_buffer_srl.tensor_dict['next_values'] # 获取下一个价值
+
+    #     # mb_rewards_srl = self.experience_buffer_srl.tensor_dict['rewards'] # 获取奖励
+    #     # mb_rewards_srl = self._combine_rewards(mb_rewards_srl, amp_rewards) # 合并奖励
+
+    #     # mb_advs_srl = self.discount_values(mb_fdones_srl, mb_values_srl, mb_rewards_srl, mb_next_values_srl) # 折扣价值
+    #     # mb_returns_srl = mb_advs_srl + mb_values_srl # 价值 = 当前价值+未来折扣价值
+
+    #     # humanoid batch
+    #     batch_dict = self.experience_buffer.get_transformed_list(a2c_common.swap_and_flatten01, self.tensor_list) # 获取转换后的批次字典
+    #     batch_dict['returns'] = a2c_common.swap_and_flatten01(mb_returns) # 设置返回值
+    #     batch_dict['played_frames'] = self.batch_size
+
+    #     # srl batch
+    #     batch_dict_srl = self.experience_buffer_srl.get_transformed_list(a2c_common.swap_and_flatten01, self.tensor_list) # 获取转换后的批次字典
+    #     batch_dict_srl['returns'] = a2c_common.swap_and_flatten01(mb_returns) # 设置返回值
+    #     batch_dict_srl['obs_mirrored'] = a2c_common.swap_and_flatten01(self.experience_buffer_srl.tensor_dict['obs_mirrored'] ) # 设置返回值
+    #     batch_dict_srl['played_frames'] = self.batch_size
+
+    #     # humanoid AMP batch
+    #     for k, v in amp_rewards.items():
+    #         batch_dict[k] = a2c_common.swap_and_flatten01(v)
+
+    #     return batch_dict, batch_dict_srl
+
     def play_steps(self):
         # 执行一轮完整的经验收集过程 
         self.set_eval()
@@ -244,14 +419,26 @@ class SRLAgent(common_agent.CommonAgent):
         epinfos = []
         update_list = self.update_list
 
+        data_process_time = 0
+        env_process_time = 0
+        nn_forward_time = 0
+
         for n in range(self.horizon_length):
+
+            t0 = time.time()
             self.obs, done_env_ids = self._env_reset_done() # 重置环境
+            env_process_time += time.time() - t0
+
+            t0 = time.time()
             self.experience_buffer.update_data('obses', n, self.obs['obs'])
             self.experience_buffer_srl.update_data('obses', n, self.obs['obs'])
-            
+            data_process_time += time.time() - t0
 
+            t0 = time.time() 
             res_dict, res_dict_srl = self.get_action_values(self.obs) # 获取动作值
+            nn_forward_time += time.time() - t0
 
+            t0 = time.time()
             if self.mirror_loss: # 镜像损失
                 self.experience_buffer_srl.update_data('obs_mirrored', n, self.obs['obs_mirrored']) # 镜像观测
                 mirrored_obs = {}
@@ -260,19 +447,24 @@ class SRLAgent(common_agent.CommonAgent):
             for k in update_list: # 更新经验缓冲区: action
                 self.experience_buffer.update_data(k, n, res_dict[k]) 
                 self.experience_buffer_srl.update_data(k, n, res_dict_srl[k]) 
+
             # if self.has_central_value:
             #     self.experience_buffer.update_data('states', n, self.obs['states'])
             
             # action拼接
             conbined_action = torch.cat((res_dict['actions'], res_dict_srl['actions']), dim=-1)
-            
+            data_process_time += time.time() - t0
+
+            t0 = time.time()
             #self.obs, rewards, self.dones, infos = self.env_step(res_dict['actions'])
             self.obs, rewards, self.dones, infos = self.env_step(conbined_action)
-            
+            env_process_time += time.time() - t0
+
             # # srl reward
             # rewards_srl = infos["srl_rewards"]
             # rewards_srl = rewards_srl.unsqueeze(1)
 
+            t0 = time.time()
             ''' humanoid buffer '''
             shaped_rewards = self.rewards_shaper(rewards)  # DefaultRewardsShaper
             self.experience_buffer.update_data('rewards', n, shaped_rewards)
@@ -340,7 +532,7 @@ class SRLAgent(common_agent.CommonAgent):
             self.algo_observer.process_infos(infos, done_indices)
 
             not_dones = 1.0 - self.dones.float()
-            # TODO：可以在这里添加评估指标
+            # TODO：在这里添加形态评估指标
             for idx in done_indices:
                 ep_lenth = self.current_lengths[idx].item()
                 srl_t_c = - self.current_rewards_srl_t_c[idx].item() / ep_lenth
@@ -369,7 +561,9 @@ class SRLAgent(common_agent.CommonAgent):
 
             if (self.vec_env.env.viewer and (n == (self.horizon_length - 1))):
                 self._amp_debug(infos)
+            data_process_time += time.time() - t0
 
+        t0 = time.time()
         # calculate Humanoid minibatch returns
         mb_fdones = self.experience_buffer.tensor_dict['dones'].float()  # 获取完成标志
         mb_values = self.experience_buffer.tensor_dict['values'] # 获取价值
@@ -408,6 +602,12 @@ class SRLAgent(common_agent.CommonAgent):
         # humanoid AMP batch
         for k, v in amp_rewards.items():
             batch_dict[k] = a2c_common.swap_and_flatten01(v)
+        data_process_time += time.time() - t0
+
+        frame = self.frame 
+        self.writer.add_scalar('performance_playsteps/data_process_time', data_process_time, frame)
+        self.writer.add_scalar('performance_playsteps/env_process_time', env_process_time, frame)
+        self.writer.add_scalar('performance_playsteps/nn_forward_time', nn_forward_time, frame)
 
         return batch_dict, batch_dict_srl
 

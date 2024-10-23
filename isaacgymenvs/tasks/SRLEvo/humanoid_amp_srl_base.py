@@ -380,9 +380,9 @@ class HumanoidAMPSRLBase(VecTask):
                 lim_high[dof_offset] =  curr_high
 
         self._pd_action_offset = 0.5 * (lim_high + lim_low)
-        self._pd_action_scale = 0.5 * (lim_high - lim_low)
+        self._pd_action_scale  = 0.5 * (lim_high - lim_low)
         self._pd_action_offset = to_torch(self._pd_action_offset, device=self.device)
-        self._pd_action_scale = to_torch(self._pd_action_scale, device=self.device)
+        self._pd_action_scale  = to_torch(self._pd_action_scale, device=self.device)
 
         return
 
