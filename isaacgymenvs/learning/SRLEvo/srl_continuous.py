@@ -413,6 +413,7 @@ class SRLAgent(common_agent.CommonAgent):
     #     return batch_dict, batch_dict_srl
 
     def play_steps(self):
+        # FIXME：临时函数：时间分析
         # 执行一轮完整的经验收集过程 
         self.set_eval()
 
@@ -422,12 +423,13 @@ class SRLAgent(common_agent.CommonAgent):
         data_process_time = 0
         env_process_time = 0
         nn_forward_time = 0
+        self.env_step_time = 0
 
         for n in range(self.horizon_length):
 
             t0 = time.time()
             self.obs, done_env_ids = self._env_reset_done() # 重置环境
-            env_process_time += time.time() - t0
+            # env_process_time += time.time() - t0
 
             t0 = time.time()
             self.experience_buffer.update_data('obses', n, self.obs['obs'])
@@ -608,8 +610,28 @@ class SRLAgent(common_agent.CommonAgent):
         self.writer.add_scalar('performance_playsteps/data_process_time', data_process_time, frame)
         self.writer.add_scalar('performance_playsteps/env_process_time', env_process_time, frame)
         self.writer.add_scalar('performance_playsteps/nn_forward_time', nn_forward_time, frame)
-
+        self.writer.add_scalar('performance_playsteps/env_step_time', self.env_step_time, frame)
         return batch_dict, batch_dict_srl
+
+    def env_step(self, actions):
+        # FIXME： 临时函数  计算用时
+        
+        
+        actions = self.preprocess_actions(actions)
+
+        t0 = time.time()
+        obs, rewards, dones, infos = self.vec_env.step(actions)
+        self.env_step_time += time.time() - t0
+
+        if self.is_tensor_obses:
+            if self.value_size == 1:
+                rewards = rewards.unsqueeze(1)
+            return self.obs_to_tensors(obs), rewards.to(self.ppo_device), dones.to(self.ppo_device), infos
+        else:
+            if self.value_size == 1:
+                rewards = np.expand_dims(rewards, axis=1)
+            return self.obs_to_tensors(obs), torch.from_numpy(rewards).to(self.ppo_device).float(), torch.from_numpy(dones).to(self.ppo_device), infos
+
 
     def prepare_dataset_srl(self, batch_dict):
         # srl dataset
