@@ -73,22 +73,24 @@ class HumanoidAMPSRLBase(VecTask):
         # --- srl defined ---
         self._torque_threshold = self.cfg["env"]["torque_threshold"]
         self._upper_reward_w = self.cfg["env"]["upper_reward_w"]
+        self._srl_torque_reward_w = self.cfg["env"]["srl_torque_reward_w"]
         self._srl_endpos_obs = self.cfg["env"]["srl_endpos_obs"]
         self._target_v_task = self.cfg["env"]["target_v_task"]
         self._autogen_model = self.cfg["env"].get("autogen_model", False)
         self._design_param_obs = self.cfg["env"].get("design_param_obs", False)
-        self._srl_joint_indices=[28, 29, 30, 32, 33, 34]
-
         # --- srl defined end ---
-
 
         self.cfg["env"]["numObservations"] = self.get_obs_size()
         self.cfg["env"]["numActions"] = self.get_action_size()
-
+   
         super().__init__(config=self.cfg, rl_device=rl_device, sim_device=sim_device, graphics_device_id=graphics_device_id, headless=headless, virtual_screen_capture=virtual_screen_capture, force_render=force_render)
-        
+
         dt = self.cfg["sim"]["dt"]
         self.dt = self.control_freq_inv * dt
+
+        # --- srl defined ---
+        self._srl_joint_ids = to_torch([28, 29, 30, 32, 33, 34], device=self.device, dtype=torch.long)
+        # --- srl defined end ---
 
         # mirror matrix
         self.mirror_idx_humanoid = np.array([-0.0001, 1, -2, -3, 4, -5, -10, 11, -12,  13, -6,
@@ -394,7 +396,9 @@ class HumanoidAMPSRLBase(VecTask):
                                                                                                      self._torque_threshold,
                                                                                                      upper_body_pos,
                                                                                                      self._upper_reward_w,
-                                                                                                     target_v_task= self._target_v_task)
+                                                                                                     self._srl_joint_ids,
+                                                                                                     target_v_task = self._target_v_task,
+                                                                                                     srl_torque_w  = self._srl_torque_reward_w)
         self.srl_rew_buf[:] = compute_srl_reward(self.obs_buf, self.dof_force_tensor, actions)
         return
 
@@ -530,8 +534,8 @@ class HumanoidAMPSRLBase(VecTask):
         return
 
     def SRL_joint_torque_cost(self):
-        joint_forces = self.dof_force_tensor[:, self._srl_joint_indices]
-        torque_sum = torch.sum((joint_forces/100) ** 2, dim=1)
+        joint_forces = self.dof_force_tensor[:, self._srl_joint_ids]
+        torque_sum = torch.sum((joint_forces/100) ** 2, dim=1).to(self.rl_device)
         return torque_sum
 
     def render(self):
@@ -788,8 +792,17 @@ def compute_humanoid_observations_mirrored(root_states, dof_pos, dof_vel, key_bo
 
 # 计算任务奖励函数
 @torch.jit.script
-def compute_humanoid_reward(obs_buf, dof_force_tensor, action, _torque_threshold, upper_body_pos, upper_reawrd_w, target_v_task = False):
-    # type: (Tensor, Tensor, Tensor, int, Tensor, int, bool ) -> Tuple[Tensor, Tensor, Tensor, Tensor]
+def compute_humanoid_reward(obs_buf, 
+                            dof_force_tensor, 
+                            action, 
+                            _torque_threshold, 
+                            upper_body_pos, 
+                            upper_reawrd_w, 
+                            srl_joint_ids,
+                            target_v_task = False,
+                            srl_torque_w = 0,):
+    # type: (Tensor, Tensor, Tensor, int, Tensor, int, Tensor, bool, float ) -> Tuple[Tensor, Tensor, Tensor, Tensor]
+    
     # TODO: 目标速度跟随
     velocity_threshold = 1.4
     if not target_v_task:  
@@ -814,7 +827,7 @@ def compute_humanoid_reward(obs_buf, dof_force_tensor, action, _torque_threshold
         # velocity_penalty[~mask] = 0.5 * v_penalty[~mask] + 0.5 * d_penalty[~mask]
     
     
-    # v1.5.12 比例惩罚，力矩绝对值超过100
+    # v1.5.12 比例惩罚，humanoid力矩绝对值超过100
     torque_threshold = _torque_threshold
     torque_usage   = dof_force_tensor[:, 14:28]
     torque_penalty = torch.where(torch.abs(torque_usage) > torque_threshold, 
@@ -829,8 +842,14 @@ def compute_humanoid_reward(obs_buf, dof_force_tensor, action, _torque_threshold
     norm_upper_body_direction = upper_body_direction / torch.norm(upper_body_direction, dim=1, keepdim=True)
     upper_reward = upper_reawrd_w * (norm_upper_body_direction[:,2] - 1 )
 
+    # SRL受到力矩惩罚
+    srl_joint_forces = dof_force_tensor[:,  srl_joint_ids]
+    srl_torque_sum = - torch.sum((srl_joint_forces/100) ** 2, dim=1)
+    srl_torque_reward = srl_torque_sum * srl_torque_w
+
+
     # reward = -velocity_penalty + torque_reward
-    reward = velocity_penalty + torque_reward + upper_reward
+    reward = velocity_penalty + torque_reward + upper_reward + srl_torque_reward
 
     return reward, velocity_penalty, torque_reward, upper_reward
 
