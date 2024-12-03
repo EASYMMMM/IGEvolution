@@ -12,6 +12,8 @@ Joint Monkey
 - Animates degree-of-freedom ranges for a given asset.
 - Demonstrates usage of DOF properties and states.
 - Demonstrates line drawing utilities to visualize DOF frames (origin and axis).
+
+运行时需在example文件夹下
 """
 
 import math
@@ -33,7 +35,7 @@ class AssetDesc:
 
 asset_descriptors = [
     AssetDesc("mjcf/humanoid_srl/humanoid_srl_mode2.xml", False),
-    # AssetDesc("mjcf/amp_humanoid_srl_10.xml", False),
+    # AssetDesc("mjcf/amp_humanoid_srl_V2_1.xml", False),
     AssetDesc("mjcf/nv_humanoid.xml", False),
     AssetDesc("mjcf/nv_ant.xml", False),
     AssetDesc("urdf/cartpole.urdf", False),
@@ -224,7 +226,8 @@ root_angvels = root_tensor[:, 10:13]
 print('root orientation:', root_orientations[0,:])
 
 while not gym.query_viewer_has_closed(viewer):
-    current_dof = 33
+    current_dof = 29
+
     # step the physics
     gym.simulate(sim)
     gym.fetch_results(sim, True)
@@ -252,7 +255,7 @@ while not gym.query_viewer_has_closed(viewer):
         dof_positions[current_dof] = defaults[current_dof]
         current_dof = (current_dof + 1) % num_dofs
         anim_state = ANIM_SEEK_LOWER
-        print("Animating DOF %d ('%s')" % (current_dof, dof_names[current_dof]))
+        print("Animating DOF %d ('%s')" % (current_dof, dof_names[current_dof]))     
 
     if args.show_axis:
         gym.clear_lines(viewer)

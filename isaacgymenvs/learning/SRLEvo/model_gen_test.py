@@ -56,7 +56,7 @@ if __name__ == '__main__':
  
     srl_generator = { "mode1": SRL_mode1 ,
                       "mode2": SRL_mode2 ,}[srl_mode]
-    srl_R = srl_generator( name=name, pretrain=pretrain, **srl_params)
+    srl_R = srl_generator( name=name, pretrain=pretrain)
 
     # 使用绝对路径来确定 save_path
     base_path = os.path.dirname(os.path.abspath(__file__))
