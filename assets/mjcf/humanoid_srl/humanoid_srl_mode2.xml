@@ -158,31 +158,31 @@
 		<motor gear="125" joint="abdomen_x" name="abdomen_x"/>
 		<motor gear="125" joint="abdomen_y" name="abdomen_y"/>
 		<motor gear="125" joint="abdomen_z" name="abdomen_z"/>
-		<motor gear="20" joint="neck_x" name="neck_x"/>
-		<motor gear="20" joint="neck_y" name="neck_y"/>
-		<motor gear="20" joint="neck_z" name="neck_z"/>
-		<motor gear="70" joint="right_shoulder_x" name="right_shoulder_x"/>
-		<motor gear="70" joint="right_shoulder_y" name="right_shoulder_y"/>
-		<motor gear="70" joint="right_shoulder_z" name="right_shoulder_z"/>
-		<motor gear="60" joint="right_elbow" name="right_elbow"/>
-		<motor gear="70" joint="left_shoulder_x" name="left_shoulder_x"/>
-		<motor gear="70" joint="left_shoulder_y" name="left_shoulder_y"/>
-		<motor gear="70" joint="left_shoulder_z" name="left_shoulder_z"/>
-		<motor gear="60" joint="left_elbow" name="left_elbow"/>
+		<motor gear="20"  joint="neck_x" name="neck_x"/>
+		<motor gear="20"  joint="neck_y" name="neck_y"/>
+		<motor gear="20"  joint="neck_z" name="neck_z"/>
+		<motor gear="70"  joint="right_shoulder_x" name="right_shoulder_x"/>
+		<motor gear="70"  joint="right_shoulder_y" name="right_shoulder_y"/>
+		<motor gear="70"  joint="right_shoulder_z" name="right_shoulder_z"/>
+		<motor gear="60"  joint="right_elbow" name="right_elbow"/>
+		<motor gear="70"  joint="left_shoulder_x" name="left_shoulder_x"/>
+		<motor gear="70"  joint="left_shoulder_y" name="left_shoulder_y"/>
+		<motor gear="70"  joint="left_shoulder_z" name="left_shoulder_z"/>
+		<motor gear="60"  joint="left_elbow" name="left_elbow"/>
 		<motor gear="125" joint="right_hip_x" name="right_hip_x"/>
 		<motor gear="125" joint="right_hip_z" name="right_hip_z"/>
 		<motor gear="125" joint="right_hip_y" name="right_hip_y"/>
 		<motor gear="100" joint="right_knee" name="right_knee"/>
-		<motor gear="50" joint="right_ankle_x" name="right_ankle_x"/>
-		<motor gear="50" joint="right_ankle_y" name="right_ankle_y"/>
-		<motor gear="50" joint="right_ankle_z" name="right_ankle_z"/>
+		<motor gear="50"  joint="right_ankle_x" name="right_ankle_x"/>
+		<motor gear="50"  joint="right_ankle_y" name="right_ankle_y"/>
+		<motor gear="50"  joint="right_ankle_z" name="right_ankle_z"/>
 		<motor gear="125" joint="left_hip_x" name="left_hip_x"/>
 		<motor gear="125" joint="left_hip_z" name="left_hip_z"/>
 		<motor gear="125" joint="left_hip_y" name="left_hip_y"/>
 		<motor gear="100" joint="left_knee" name="left_knee"/>
-		<motor gear="50" joint="left_ankle_x" name="left_ankle_x"/>
-		<motor gear="50" joint="left_ankle_y" name="left_ankle_y"/>
-		<motor gear="50" joint="left_ankle_z" name="left_ankle_z"/>
+		<motor gear="50"  joint="left_ankle_x" name="left_ankle_x"/>
+		<motor gear="50"  joint="left_ankle_y" name="left_ankle_y"/>
+		<motor gear="50"  joint="left_ankle_z" name="left_ankle_z"/>
 		<motor gear="125" joint="SRL_joint_right_hipjoint_z" name="SRL_joint_right_hipjoint_z"/>
 		<motor gear="125" joint="SRL_joint_right_hipjoint_y" name="SRL_joint_right_hipjoint_y"/>
 		<motor gear="125" joint="SRL_joint_right_kneejoint" name="SRL_joint_right_kneejoint"/>
