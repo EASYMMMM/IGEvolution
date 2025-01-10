@@ -794,7 +794,7 @@ def compute_humanoid_observations_mirrored(root_states, dof_pos, dof_vel, key_bo
 
 
 # 计算任务奖励函数
-# @torch.jit.script
+@torch.jit.script
 def compute_humanoid_reward(obs_buf, 
                             dof_force_tensor, 
                             contact_buf,  # body net contact force
@@ -858,7 +858,7 @@ def compute_humanoid_reward(obs_buf,
                                          srl_root_force * srl_root_force_w)
 
     # reward = -velocity_penalty + torque_reward
-    reward = velocity_penalty + torque_reward + upper_reward + srl_torque_reward
+    reward = velocity_penalty + torque_reward + upper_reward + srl_torque_reward + srl_root_force_penalty
 
     return reward, velocity_penalty, torque_reward, upper_reward
 
