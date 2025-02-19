@@ -1,5 +1,7 @@
 '''
-将SRL和Humanoid的模型（观测+奖励）分开训练，构建多智能体系统。
+将SRL和Humanoid的模型（观测+奖励）分开训练，构建多智能体训练
+multi-agent RL
+暂未启用
 '''
 from rl_games.algos_torch.running_mean_std import RunningMeanStd
 from rl_games.algos_torch import torch_ext

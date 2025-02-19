@@ -1,3 +1,8 @@
+'''
+2025 ICRA SRL-Gym
+外肢体形态-控制 联合优化框架
+'''
+
 import os
 from .srl_continuous import SRLAgent
 import sys
@@ -364,6 +369,7 @@ class SRLGym( ):
         wandb.log(info_dict )
 
     def design_evaluate(self, design_params, max_epoch=False):
+        # 创建一个runner实例，完成内层的控制器优化
         cfg = self.cfg
         xml_name = 'hsrl_mode1'
         train_cfg = deepcopy(cfg)
@@ -439,6 +445,8 @@ class SRLGym( ):
         return final_eval_reward
     
     def design_evaluate_with_general_model(self, design_params, max_epoch=False):
+        # 创建一个runner实例，完成内层的控制器优化
+        # 使用公共策略网络进行初始化
         # put design param into observation, build a general model
         cfg = self.cfg
         xml_name = 'hsrl_mode1'

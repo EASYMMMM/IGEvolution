@@ -1,5 +1,7 @@
 '''
-SRLGym  外层训练框架
+2025 ICRA SRL-Gym
+SRLGym  外层训练框架，进行形态-控制联合优化
+参数通过cfg传入
 '''
 import isaacgym
 import hydra

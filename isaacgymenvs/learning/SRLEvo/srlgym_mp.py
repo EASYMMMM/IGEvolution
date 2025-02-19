@@ -1,5 +1,6 @@
 '''
 SRL Gym train/evaluate multi-process
+用于创建形态-控制联合优化过程中的isaac gym子进程
 '''
 import hydra
 

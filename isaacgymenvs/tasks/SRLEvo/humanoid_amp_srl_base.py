@@ -1,3 +1,8 @@
+'''
+Humanoid-SRL 协作环境代码
+定义环境基础内容
+'''
+
 # Copyright (c) 2018-2023, NVIDIA Corporation
 # All rights reserved.
 #

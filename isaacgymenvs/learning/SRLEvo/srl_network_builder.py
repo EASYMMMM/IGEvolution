@@ -1,5 +1,6 @@
 '''
 Neural Network
+创建控制策略的神经网络
 '''
 # Copyright (c) 2018-2023, NVIDIA Corporation
 # All rights reserved.

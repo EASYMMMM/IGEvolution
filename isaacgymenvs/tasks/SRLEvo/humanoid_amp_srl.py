@@ -1,3 +1,7 @@
+'''
+Humanoid-SRL环境定义，AMP训练相关内容
+'''
+
 from enum import Enum
 import numpy as np
 import torch

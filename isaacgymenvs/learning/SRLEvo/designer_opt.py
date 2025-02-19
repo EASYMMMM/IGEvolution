@@ -1,3 +1,8 @@
+'''
+2025 ICRA
+用于外肢体形态优化的形态优化器函数
+'''
+
 import abc
 import numpy as np
 import random
@@ -45,7 +50,7 @@ class MorphologyOptimizer(abc.ABC):
 class GeneticAlgorithmOptimizer(MorphologyOptimizer):
     def __init__(self,
                   base_design_params, 
-                  evaluate_design_method,
+                  evaluate_design_method, # 设计评估函数：创建一个runner实例，完成内层的控制器优化
                   population_size=20, 
                   mutation_rate=0.3,
                   crossover_rate=0.7,

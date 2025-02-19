@@ -1,5 +1,6 @@
 '''
 SRL训练Agent
+Humanoid-SRL训练框架
 '''
 
 from isaacgymenvs.utils.torch_jit_utils import to_torch

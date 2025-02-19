@@ -1,5 +1,6 @@
 '''
 Neural Network Model
+Humanoid-SRL控制策略网络的包装函数
 '''
 # Copyright (c) 2018-2023, NVIDIA Corporation
 # All rights reserved.
