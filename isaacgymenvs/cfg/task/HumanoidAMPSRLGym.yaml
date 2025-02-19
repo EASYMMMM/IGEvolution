@@ -1,5 +1,5 @@
 # used to create the object
-name: HumanoidAMPSRLTest
+name: HumanoidAMPSRLGym
 
 physics_engine: ${..physics_engine}
 

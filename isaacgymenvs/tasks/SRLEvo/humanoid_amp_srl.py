@@ -1,5 +1,5 @@
 '''
-Humanoid-SRL环境定义，AMP训练相关内容
+Humanoid-SRL环境定义 AMP训练相关内容
 '''
 
 from enum import Enum
@@ -22,7 +22,7 @@ from isaacgymenvs.utils.torch_jit_utils import quat_mul, to_torch, calc_heading_
 NUM_AMP_OBS_PER_STEP = 13 + 52 + 28 + 12 # [root_h, root_rot, root_vel, root_ang_vel, dof_pos, dof_vel, key_body_pos]
 
 
-class HumanoidAMPSRLTest(HumanoidAMPSRLBase):
+class HumanoidAMPSRLGym(HumanoidAMPSRLBase):
 
     class StateInit(Enum):
         Default = 0
@@ -37,7 +37,7 @@ class HumanoidAMPSRLTest(HumanoidAMPSRLBase):
         self.cfg = cfg
 
         state_init = cfg["env"]["stateInit"]
-        self._state_init = HumanoidAMPSRLTest.StateInit[state_init] # 初始化方式 （随机重启）
+        self._state_init = HumanoidAMPSRLGym.StateInit[state_init] # 初始化方式 （随机重启）
         self._hybrid_init_prob = cfg["env"]["hybridInitProb"]
         self._num_amp_obs_steps = cfg["env"]["numAMPObsSteps"]
         assert(self._num_amp_obs_steps >= 2)
@@ -132,12 +132,12 @@ class HumanoidAMPSRLTest(HumanoidAMPSRLBase):
         return
 
     def _reset_actors(self, env_ids):
-        if (self._state_init == HumanoidAMPSRLTest.StateInit.Default):
+        if (self._state_init == HumanoidAMPSRLGym.StateInit.Default):
             self._reset_default(env_ids)
-        elif (self._state_init == HumanoidAMPSRLTest.StateInit.Start
-              or self._state_init == HumanoidAMPSRLTest.StateInit.Random):
+        elif (self._state_init == HumanoidAMPSRLGym.StateInit.Start
+              or self._state_init == HumanoidAMPSRLGym.StateInit.Random):
             self._reset_ref_state_init(env_ids)
-        elif (self._state_init == HumanoidAMPSRLTest.StateInit.Hybrid):
+        elif (self._state_init == HumanoidAMPSRLGym.StateInit.Hybrid):
             self._reset_hybrid_state_init(env_ids)
         else:
             assert(False), "Unsupported state initialization strategy: {:s}".format(str(self._state_init))
@@ -166,10 +166,10 @@ class HumanoidAMPSRLTest(HumanoidAMPSRLBase):
         num_envs = env_ids.shape[0]
         motion_ids = self._motion_lib.sample_motions(num_envs)
         
-        if (self._state_init == HumanoidAMPSRLTest.StateInit.Random
-            or self._state_init == HumanoidAMPSRLTest.StateInit.Hybrid):
+        if (self._state_init == HumanoidAMPSRLGym.StateInit.Random
+            or self._state_init == HumanoidAMPSRLGym.StateInit.Hybrid):
             motion_times = self._motion_lib.sample_time(motion_ids)
-        elif (self._state_init == HumanoidAMPSRLTest.StateInit.Start):
+        elif (self._state_init == HumanoidAMPSRLGym.StateInit.Start):
             motion_times = np.zeros(num_envs)
         else:
             assert(False), "Unsupported state initialization strategy: {:s}".format(str(self._state_init))
