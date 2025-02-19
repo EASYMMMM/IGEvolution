@@ -3,10 +3,9 @@
 ## 0. 常用命令
 - **添加虚拟环境路径：**
 
-   `ImportError: libpython3.7m.so.1.0: cannot open shared object file: No such file or directory`
-
-   需要`export LD_LIBRARY_PATH=/home/ps/anaconda3/envs/XXX/lib`  
+   每次运行前需要`export LD_LIBRARY_PATH=/home/ps/anaconda3/envs/XXX/lib`  
    其中`XXX`为虚拟环境名称。
+   `export LD_LIBRARY_PATH=/home/zdh232/anaconda3/envs/Mrlgpu/lib`   
    `export LD_LIBRARY_PATH=/home/ps/anaconda3/envs/rlgpu/lib`   
    `export LD_LIBRARY_PATH=/home/ps/anaconda3/envs/Mrlgpu/lib`
    `export LD_LIBRARY_PATH=/home/user/miniconda3/envs/igm/lib`

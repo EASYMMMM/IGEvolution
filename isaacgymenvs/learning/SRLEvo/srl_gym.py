@@ -199,7 +199,7 @@ class SRLGym( ):
                   "mutation_rate":self.cfg['train']['gym']['GA_mutation_rate'],
                   "crossover_rate":self.cfg['train']['gym']['GA_crossover_rate'],
                   "bounds_scale":self.cfg['train']['gym']['GA_bounds_scale']}
-        if self.cfg['task']['env']['design_param_obs']:
+        if self.cfg['task']['env']['design_param_obs']: 
             design_opt = GeneticAlgorithmOptimizer(self.default_SRL_designer(),
                                                 self.design_evaluate_with_general_model,
                                                 **kwargs)
@@ -339,7 +339,8 @@ class SRLGym( ):
 
     def generate_SRL_xml(self, name, srl_mode, srl_params, pretrain = False, save_path = False):
         # generate SRL mjcf xml file
-        srl_generator = { "mode1": SRL_mode1 }[srl_mode]
+        srl_generator = { "mode1": SRL_mode1,
+                           }[srl_mode]
         srl_R = srl_generator( name=name, pretrain=pretrain, **srl_params)
         if save_path:
             abs_path = save_path

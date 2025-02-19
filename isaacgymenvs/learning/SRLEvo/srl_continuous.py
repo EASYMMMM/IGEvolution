@@ -260,6 +260,7 @@ class SRLAgent(common_agent.CommonAgent):
             for k in update_list: # 更新经验缓冲区: action
                 self.experience_buffer.update_data(k, n, res_dict[k]) 
                 self.experience_buffer_srl.update_data(k, n, res_dict_srl[k]) 
+
             # if self.has_central_value:
             #     self.experience_buffer.update_data('states', n, self.obs['states'])
             
@@ -359,11 +360,11 @@ class SRLAgent(common_agent.CommonAgent):
             
             self.current_rewards = self.current_rewards * not_dones.unsqueeze(1)
             # self.current_rewards_srl = self.current_rewards_srl * not_dones.unsqueeze(1)
-            self.current_rewards_amp = self.current_rewards_amp * not_dones.unsqueeze(1)
-            self.current_rewards_task = self.current_rewards_task * not_dones.unsqueeze(1)
-            self.current_rewards_v_p = self.current_rewards_v_p * not_dones.unsqueeze(1)
-            self.current_rewards_t_c = self.current_rewards_t_c * not_dones.unsqueeze(1)
-            self.current_rewards_u_r = self.current_rewards_u_r * not_dones.unsqueeze(1)
+            self.current_rewards_amp     = self.current_rewards_amp     * not_dones.unsqueeze(1)
+            self.current_rewards_task    = self.current_rewards_task    * not_dones.unsqueeze(1)
+            self.current_rewards_v_p     = self.current_rewards_v_p     * not_dones.unsqueeze(1)
+            self.current_rewards_t_c     = self.current_rewards_t_c     * not_dones.unsqueeze(1)
+            self.current_rewards_u_r     = self.current_rewards_u_r     * not_dones.unsqueeze(1)
             self.current_rewards_srl_t_c = self.current_rewards_srl_t_c * not_dones.unsqueeze(1)
             self.current_lengths = self.current_lengths * not_dones
 
@@ -410,6 +411,7 @@ class SRLAgent(common_agent.CommonAgent):
             batch_dict[k] = a2c_common.swap_and_flatten01(v)
 
         return batch_dict, batch_dict_srl
+
 
     def prepare_dataset_srl(self, batch_dict):
         # srl dataset
@@ -477,7 +479,7 @@ class SRLAgent(common_agent.CommonAgent):
             batch_dict, batch_dict_srl = self.play_steps() 
 
         play_time_end = time.time()
-        update_time_start = time.time()
+        prepare_dataset_time_start = time.time()
         rnn_masks = batch_dict.get('rnn_masks', None)
         
         self._update_amp_demos() # 更新 AMP 示范
@@ -500,6 +502,9 @@ class SRLAgent(common_agent.CommonAgent):
         #     self.train_central_value()
 
         train_info = None
+
+        prepare_dataset_time_end = time.time()
+        update_time_start = time.time()
 
         for _ in range(0, self.mini_epochs_num):
             ep_kls = []
@@ -535,11 +540,13 @@ class SRLAgent(common_agent.CommonAgent):
         update_time_end = time.time()
         play_time = play_time_end - play_time_start
         update_time = update_time_end - update_time_start
+        prepare_dataset_time = prepare_dataset_time_end - prepare_dataset_time_start
         total_time = update_time_end - play_time_start
 
         self._store_replay_amp_obs(batch_dict['amp_obs']) # 存储 AMP 重放观测
 
         train_info['play_time'] = play_time
+        train_info['prepare_dataset_time'] = prepare_dataset_time
         train_info['update_time'] = update_time
         train_info['total_time'] = total_time
         self._record_train_batch_info(batch_dict, train_info) # 记录训练批次信息
@@ -846,7 +853,6 @@ class SRLAgent(common_agent.CommonAgent):
         }
         return info
 
-
     def _load_config_params(self, config):
         super()._load_config_params(config)
 
@@ -1021,14 +1027,11 @@ class SRLAgent(common_agent.CommonAgent):
 
                 update_time = 0
          
-
     def _load_hsrl_checkpoint(self, fn,):
         # restore nn of humanoid & srl
         checkpoint = my_load_checkpoint(fn,map_location=self.device)
         self.model.load_state_dict(checkpoint['model'])
         self.model_srl.load_state_dict(checkpoint['model_srl'])
-         
-
 
     def save(self, fn):
         state = self.get_full_state_weights()
@@ -1134,6 +1137,8 @@ class SRLAgent(common_agent.CommonAgent):
 
     def _log_train_info(self, train_info, frame):
         super()._log_train_info(train_info, frame)
+        self.writer.add_scalar('performance/total_time',train_info['total_time'], frame)
+        self.writer.add_scalar('performance/prepare_dataset_time', train_info['prepare_dataset_time'], frame)
 
         self.writer.add_scalar('losses/disc_loss', torch_ext.mean_list(train_info['disc_loss']).item(), frame)
 

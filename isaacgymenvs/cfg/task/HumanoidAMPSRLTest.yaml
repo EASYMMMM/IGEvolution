@@ -45,6 +45,8 @@ env:
   # ------------user define------------
   torque_threshold: 50  # 力矩惩罚施加阈值
   upper_reward_w: 1 
+  srl_torque_reward_w: 0.003 # 外肢体力矩惩罚 torque cost 
+  srl_root_force_reward_w: 0 # 外肢体根部受力惩罚
   target_v_task: False  # 目标速度跟随任务
   autogen_model: False  # 模型自动生成
   design_param_obs: False
