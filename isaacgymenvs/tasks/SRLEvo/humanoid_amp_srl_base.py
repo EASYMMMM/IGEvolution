@@ -788,14 +788,14 @@ def compute_humanoid_observations_mirrored(root_states, dof_pos, dof_vel, key_bo
 
 # 计算任务奖励函数
 @torch.jit.script
-def compute_humanoid_reward(obs_buf, dof_force_tensor, action, _torque_threshold, upper_body_pos, upper_reawrd_w, target_v_task = False):
+def compute_humanoid_reward(obs_buf, dof_force_tensor, action, _torque_threshold, upper_body_pos, upper_reward_w, target_v_task = False):
     # type: (Tensor, Tensor, Tensor, int, Tensor, int, bool ) -> Tuple[Tensor, Tensor, Tensor, Tensor]
     # TODO: 目标速度跟随
     velocity_threshold = 1.4
-    if not target_v_task:  
+    if not target_v_task:  # 速度惩罚
         velocity  = obs_buf[:,7]  # vx
         velocity_penalty = - torch.where(velocity < velocity_threshold, (velocity_threshold - velocity)**2, torch.zeros_like(velocity))
-    else: 
+    else:                  # 运动方向
         # velocity_x  = obs_buf[:,7]  # vx
         # velocity_y  = obs_buf[:,8]  # vy
         # velocity = torch.sqrt(velocity_x**2 + velocity_y**2)
@@ -827,7 +827,7 @@ def compute_humanoid_reward(obs_buf, dof_force_tensor, action, _torque_threshold
     upper_pos = upper_body_pos[:, 1, :]  # (4096, 3)
     upper_body_direction = upper_pos - lower_pos  # 维度 (4096, 3)
     norm_upper_body_direction = upper_body_direction / torch.norm(upper_body_direction, dim=1, keepdim=True)
-    upper_reward = upper_reawrd_w * (norm_upper_body_direction[:,2] - 1 )
+    upper_reward = upper_reward_w * (norm_upper_body_direction[:,2] - 1 )
 
     # reward = -velocity_penalty + torque_reward
     reward = velocity_penalty + torque_reward + upper_reward
