@@ -794,14 +794,14 @@ def compute_humanoid_observations_mirrored(root_states, dof_pos, dof_vel, key_bo
 
 
 # 计算任务奖励函数
-# @torch.jit.script
+@torch.jit.script
 def compute_humanoid_reward(obs_buf, 
                             dof_force_tensor, 
                             contact_buf,  # body net contact force
                             action, 
                             _torque_threshold, 
                             upper_body_pos, 
-                            upper_reawrd_w, 
+                            upper_reward_w, 
                             srl_joint_ids,
                             target_v_task = False,
                             srl_torque_w = 0,
