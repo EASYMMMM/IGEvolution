@@ -496,7 +496,7 @@ class HumanoidAMPSRLBase(VecTask):
         self.actions = actions.to(self.device).clone()
 
         if (self._pd_control):
-            pd_tar = self._action_to_pd_targets(self.actions)
+            pd_tar = self._action_to_pd_targets(self.actions) # pd_tar.shape: [num_actors, num_dofs]
             pd_tar_tensor = gymtorch.unwrap_tensor(pd_tar)
             self.gym.set_dof_position_target_tensor(self.sim, pd_tar_tensor)
         else:

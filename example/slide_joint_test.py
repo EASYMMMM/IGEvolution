@@ -1,25 +1,14 @@
-"""
-Copyright (c) 2020, NVIDIA CORPORATION. All rights reserved.
-
-NVIDIA CORPORATION and its licensors retain all intellectual property
-and proprietary rights in and to this software, related documentation
-and any modifications thereto. Any use, reproduction, disclosure or
-distribution of this software and related documentation without an express
-license agreement from NVIDIA CORPORATION is strictly prohibited.
-
-Joint Monkey
-------------
-- Animates degree-of-freedom ranges for a given asset.
-- Demonstrates usage of DOF properties and states.
-- Demonstrates line drawing utilities to visualize DOF frames (origin and axis).
-
-运行时需在example文件夹下
-"""
+'''
+检查线性关节
+'''
+ 
 
 import math
 import numpy as np
 from isaacgym import gymapi, gymutil
 from isaacgym import gymtorch
+import torch
+import matplotlib.pyplot as plt
 
 def clamp(x, min_value, max_value):
     return max(min(x, max_value), min_value)
@@ -93,10 +82,11 @@ asset_root = "assets"
 asset_file = asset_descriptors[args.asset_id].file_name
 
 asset_options = gymapi.AssetOptions()
+# 固定基座位置
 asset_options.fix_base_link = True
 asset_options.flip_visual_attachments = asset_descriptors[args.asset_id].flip_visual_attachments
 asset_options.use_mesh_materials = True
-
+asset_options.default_dof_drive_mode = gymapi.DOF_MODE_NONE
 print("Loading asset '%s' from '%s'" % (asset_file, asset_root))
 asset = gym.load_asset(sim, asset_root, asset_file, asset_options)
 
@@ -105,6 +95,9 @@ dof_names = gym.get_asset_dof_names(asset)
 
 # get array of DOF properties
 dof_props = gym.get_asset_dof_properties(asset)
+dof_props["driveMode"] = gymapi.DOF_MODE_POS
+
+
 
 # create an array of DOF states that will be used to update the actors
 num_dofs = gym.get_asset_dof_count(asset)
@@ -175,6 +168,7 @@ spacing = 4
 env_lower = gymapi.Vec3(-spacing, 0.0, -spacing)
 env_upper = gymapi.Vec3(spacing, spacing, spacing)
 
+
 # position the camera
 cam_pos = gymapi.Vec3(17.2, 2.0, 16)
 cam_target = gymapi.Vec3(5, -2.5, 13)
@@ -202,6 +196,33 @@ for i in range(num_envs):
     gym.set_actor_dof_states(env, actor_handle, dof_states, gymapi.STATE_ALL)
     gym.enable_actor_dof_force_sensors(env, actor_handle)
 
+    dof_prop = gym.get_asset_dof_properties(asset)
+
+    # 位控
+    # dof_prop["driveMode"] = gymapi.DOF_MODE_EFFORT
+    # gym.set_actor_dof_properties(env, actor_handle, dof_prop)
+
+    # 力控
+    dof_prop["driveMode"] = gymapi.DOF_MODE_EFFORT
+    dof_prop["stiffness"].fill(0.0)
+    dof_prop["damping"].fill(0.0)
+    gym.set_actor_dof_properties(env, actor_handle, dof_prop)
+
+# rigid body properties
+rigid_body_props = gym.get_actor_rigid_body_properties(env, actor_handle)
+rigid_body_names = gym.get_actor_rigid_body_names(env, actor_handle)
+num_rigid_body = gym.get_actor_rigid_body_count(env, actor_handle)
+for i in range(num_rigid_body):
+    print("Rigid Body %d" % i)
+    print("  Name:     '%s'" % rigid_body_names[i])
+    print("  Mass:  %r" % rigid_body_props[i].mass)
+
+
+# for i in range(num_envs):
+#     gym.set_actor_dof_properties(envs[i], actor_handles[i], dof_props)
+
+gym.prepare_sim(sim)
+
 # joint animation states
 ANIM_SEEK_LOWER = 1
 ANIM_SEEK_UPPER = 2
@@ -227,61 +248,67 @@ root_linvels = root_tensor[:,7:10]
 root_angvels = root_tensor[:, 10:13]
 
 _dof_force_tensor = gym.acquire_dof_force_tensor(sim)
+_rigid_body_state = gym.acquire_rigid_body_state_tensor(sim)
 dof_force_tensor = gymtorch.wrap_tensor(_dof_force_tensor).view(num_envs, num_dofs)
+rigid_body_state = gymtorch.wrap_tensor(_rigid_body_state)
+rigid_body_pos =  rigid_body_state.view(num_envs, num_rigid_body, 13)[..., 0:3]
 gym.refresh_dof_state_tensor(sim)
 gym.refresh_dof_force_tensor(sim)
 
+pd_tar = torch.zeros(num_envs, num_dofs)
+step_count = 0
+force_data = []
+position_data = []
+
 while not gym.query_viewer_has_closed(viewer):
     
+    force_value = dof_force_tensor[0, 0].item()       # 关节0的受力
+    position_value = rigid_body_pos[0, 1, 1].item()   # 第二个刚体的y轴位移
+    print(f"Step {step_count} | Force: {force_value}, Position: {position_value}")
+    force_data.append(force_value)
+    position_data.append(position_value)
+    step_count += 1
+
     # 检查某个特定关节
     current_dof = 0
+
+
+    pd_tar[:,0] = 1
+    pd_tar[:,2] = 0
+    pd_tar[:,3] = 0
+    # 将 pd_tar 转换为 Tensor
+    pd_tar_tensor = gymtorch.unwrap_tensor(pd_tar)
+    # 设置目标位置
+    result = gym.set_dof_position_target_tensor( sim, pd_tar_tensor)
+
+    # 力控
+    for i in range(num_envs):
+        efforts = np.full(num_dofs, 10).astype(np.float32)
+        gym.apply_actor_dof_efforts(envs[i], actor_handles[i], efforts)
 
     # step the physics
     gym.simulate(sim)
     gym.fetch_results(sim, True)
 
-    speed = speeds[current_dof]
 
-    # animate the dofs
-    if anim_state == ANIM_SEEK_LOWER:
-        dof_positions[current_dof] -= speed * dt
-        if dof_positions[current_dof] <= lower_limits[current_dof]:
-            dof_positions[current_dof] = lower_limits[current_dof]
-            anim_state = ANIM_SEEK_UPPER
-        # print("Animating DOF %d ('%s')" % (current_dof, dof_names[current_dof]))
-    elif anim_state == ANIM_SEEK_UPPER:
-        dof_positions[current_dof] += speed * dt
-        if dof_positions[current_dof] >= upper_limits[current_dof]:
-            dof_positions[current_dof] = upper_limits[current_dof]
-            anim_state = ANIM_SEEK_DEFAULT
-    if anim_state == ANIM_SEEK_DEFAULT:
-        dof_positions[current_dof] -= speed * dt
-        if dof_positions[current_dof] <= defaults[current_dof]:
-            dof_positions[current_dof] = defaults[current_dof]
-            anim_state = ANIM_FINISHED
-    elif anim_state == ANIM_FINISHED:
-        dof_positions[current_dof] = defaults[current_dof]
-        current_dof = (current_dof + 1) % num_dofs
-        anim_state = ANIM_SEEK_LOWER
-        print("Animating DOF %d ('%s')" % (current_dof, dof_names[current_dof]))     
+    dof_positions[current_dof] = 0.05
+    
 
-    if args.show_axis:
-        gym.clear_lines(viewer)
-
+                     
     # clone actor state in all of the environments
-    for i in range(num_envs):
-        gym.set_actor_dof_states(envs[i], actor_handles[i], dof_states, gymapi.STATE_POS)
+    # for i in range(num_envs):
+    #     gym.set_actor_dof_states(envs[i], actor_handles[i], dof_states, gymapi.STATE_POS)
 
-        if args.show_axis:
-            # get the DOF frame (origin and axis)
-            dof_handle = gym.get_actor_dof_handle(envs[i], actor_handles[i], current_dof)
-            frame = gym.get_dof_frame(envs[i], dof_handle)
+    #     if args.show_axis:
+    #         # get the DOF frame (origin and axis)
+    #         dof_handle = gym.get_actor_dof_handle(envs[i], actor_handles[i], current_dof)
+    #         frame = gym.get_dof_frame(envs[i], dof_handle)
 
-            # draw a line from DOF origin along the DOF axis
-            p1 = frame.origin
-            p2 = frame.origin + frame.axis * 0.7
-            color = gymapi.Vec3(1.0, 0.0, 0.0)
-            gymutil.draw_line(p1, p2, color, gym, viewer, envs[i])
+    #         # draw a line from DOF origin along the DOF axis
+    #         p1 = frame.origin
+    #         p2 = frame.origin + frame.axis * 0.7
+    #         color = gymapi.Vec3(1.0, 0.0, 0.0)
+    #         gymutil.draw_line(p1, p2, color, gym, viewer, envs[i])
 
     # update the viewer
     gym.step_graphics(sim)
@@ -290,9 +317,46 @@ while not gym.query_viewer_has_closed(viewer):
     # Wait for dt to elapse in real time.
     # This synchronizes the physics simulation with the rendering rate.
     gym.sync_frame_time(sim)
+
+    gym.refresh_dof_state_tensor(sim)
+    gym.refresh_actor_root_state_tensor(sim)
+    gym.refresh_rigid_body_state_tensor(sim)
+
+    gym.refresh_force_sensor_tensor(sim)
     gym.refresh_dof_force_tensor(sim)
+    gym.refresh_net_contact_force_tensor(sim)
+
+
 
 print("Done")
 
 gym.destroy_viewer(viewer)
 gym.destroy_sim(sim)
+
+# 时间轴 (dt * step_count)
+time_axis = np.arange(0, len(force_data) * dt, dt)
+
+fig, ax1 = plt.subplots(figsize=(10, 6))
+
+# 左边 Y 轴：关节受力
+ax1.plot(time_axis, force_data, label="Joint Force (N)", color="red", linewidth=2)
+ax1.set_xlabel("Time (s)")
+ax1.set_ylabel("Joint Force (N)", color="red")
+ax1.tick_params(axis="y", labelcolor="red")
+ax1.grid(True)
+ax1.set_ylim(-20, 0)
+
+
+# 右边 Y 轴：刚体位移
+ax2 = ax1.twinx()  # 创建共享 X 轴的第二个 Y 轴
+ax2.plot(time_axis, position_data, label="Body Position (m)", color="blue", linewidth=2)
+ax2.set_ylabel("Body Position (m)", color="blue")
+ax2.tick_params(axis="y", labelcolor="blue")
+
+# 标题和图例
+plt.title("Joint Force and Body Position over Time")
+fig.tight_layout()
+
+# 保存图像
+# plt.savefig("joint_force_and_position.png")
+plt.show()
