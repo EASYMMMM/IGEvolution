@@ -23,9 +23,8 @@ class AssetDesc:
 
 
 asset_descriptors = [
-    AssetDesc("mjcf/nv_ant_test.xml", False),
-    AssetDesc("mjcf/humanoid_srl/humanoid_srl_mode2.xml", False),
-
+    AssetDesc("mjcf/humanoid_srl/hsrl_mode1_prismatic_test.xml", False),
+    AssetDesc("mjcf/humanoid_srl/hsrl_mode1.xml", False),
     # AssetDesc("mjcf/amp_humanoid_srl_V2_1.xml", False),
     AssetDesc("mjcf/nv_humanoid.xml", False),
     AssetDesc("mjcf/nv_ant.xml", False),
@@ -48,6 +47,8 @@ gym = gymapi.acquire_gym()
 
 # configure sim
 sim_params = gymapi.SimParams()
+sim_params.up_axis = gymapi.UP_AXIS_Z
+sim_params.gravity = gymapi.Vec3(0.0, 0.0, -9.81)
 sim_params.dt = dt = 1.0 / 60.0
 if args.physics_engine == gymapi.SIM_FLEX:
     pass
@@ -69,6 +70,7 @@ if sim is None:
 
 # add ground plane
 plane_params = gymapi.PlaneParams()
+plane_params.normal = gymapi.Vec3(0.0, 0.0, 1.0)
 gym.add_ground(sim, plane_params)
 
 # create viewer
@@ -170,9 +172,33 @@ env_upper = gymapi.Vec3(spacing, spacing, spacing)
 
 
 # position the camera
-cam_pos = gymapi.Vec3(17.2, 2.0, 16)
-cam_target = gymapi.Vec3(5, -2.5, 13)
+cam_pos = gymapi.Vec3(10, 10, 5)
+cam_target = gymapi.Vec3(0, 0, 1)
 gym.viewer_camera_look_at(viewer, None, cam_pos, cam_target)
+
+slide_x_idx = gym.find_asset_dof_index(asset, 'sensor_x' )
+slide_y_idx = gym.find_asset_dof_index(asset, 'sensor_y' )
+slide_z_idx = gym.find_asset_dof_index(asset, 'sensor_z' )
+
+
+srl_board_idx = gym.find_asset_rigid_body_index(asset, 'SRL' )
+srl_root_idx = gym.find_asset_rigid_body_index(asset, 'SRL_root' )
+right_foot_idx = gym.find_asset_rigid_body_index(asset, 'SRL_right_end' )
+left_foot_idx = gym.find_asset_rigid_body_index(asset, 'SRL_left_end' )
+sensor_pose = gymapi.Transform()
+
+# sensor props
+sensor_props = gymapi.ForceSensorProperties()
+sensor_props.enable_forward_dynamics_forces = True
+sensor_props.enable_constraint_solver_forces = True
+sensor_props.use_world_frame = False
+
+right_foot_ssidx = gym.create_asset_force_sensor(asset, right_foot_idx, sensor_pose, sensor_props)
+left_foot_ssidx  = gym.create_asset_force_sensor(asset, left_foot_idx, sensor_pose, sensor_props)
+srl_board_ssidx  = gym.create_asset_force_sensor(asset, srl_board_idx, sensor_pose, sensor_props)
+srl_root_ssidx   = gym.create_asset_force_sensor(asset, srl_root_idx, sensor_pose, sensor_props)
+
+
 
 # cache useful handles
 envs = []
@@ -186,8 +212,8 @@ for i in range(num_envs):
 
     # add actor
     pose = gymapi.Transform()
-    pose.p = gymapi.Vec3(0.0, 1.32, 0.0)
-    pose.r = gymapi.Quat(-0.707107, 0.0, 0.0, 0.707107)
+    pose.p = gymapi.Vec3(0.0,  0.0, 1.32)
+    pose.r = gymapi.Quat(0.0, 0.0, 0.0, 1.0)
 
     actor_handle = gym.create_actor(env, asset, pose, "actor", i, 1)
     actor_handles.append(actor_handle)
@@ -199,15 +225,19 @@ for i in range(num_envs):
     dof_prop = gym.get_asset_dof_properties(asset)
 
     # 被动控制
-    dof_prop["driveMode"] = gymapi.DOF_MODE_NONE
-    dof_prop["stiffness"].fill(0.0)
-    dof_prop["damping"].fill(0.0)
+    dof_prop["driveMode"][slide_x_idx] = gymapi.DOF_MODE_NONE
+    dof_prop["driveMode"][slide_y_idx] = gymapi.DOF_MODE_NONE
+    dof_prop["driveMode"][slide_z_idx] = gymapi.DOF_MODE_NONE
+    dof_prop["stiffness"][slide_x_idx] = 100.0
+    dof_prop["stiffness"][slide_y_idx] = 100.0
+    dof_prop["stiffness"][slide_z_idx] = 100.0
+    dof_prop["damping"][slide_x_idx] = 20.0
+    dof_prop["damping"][slide_y_idx] = 20.0
+    dof_prop["damping"][slide_z_idx] = 20.0
     gym.set_actor_dof_properties(env, actor_handle, dof_prop)
 
     # 位控
     # dof_prop["driveMode"] = gymapi.DOF_MODE_POS
-    # dof_prop["stiffness"].fill(100000)
-    # dof_prop["damping"].fill(2000)
     # gym.set_actor_dof_properties(env, actor_handle, dof_prop)
 
     # 力控
@@ -220,8 +250,8 @@ for i in range(num_envs):
 # rigid body properties
 rigid_body_props = gym.get_actor_rigid_body_properties(env, actor_handle)
 rigid_body_names = gym.get_actor_rigid_body_names(env, actor_handle)
-num_rigid_body = gym.get_actor_rigid_body_count(env, actor_handle)
-for i in range(num_rigid_body):
+num_bodies = gym.get_actor_rigid_body_count(env, actor_handle)
+for i in range(num_bodies):
     print("Rigid Body %d" % i)
     print("  Name:     '%s'" % rigid_body_names[i])
     print("  Mass:  %r" % rigid_body_props[i].mass)
@@ -231,18 +261,7 @@ for i in range(num_rigid_body):
 #     gym.set_actor_dof_properties(envs[i], actor_handles[i], dof_props)
 
 gym.prepare_sim(sim)
-
-# joint animation states
-ANIM_SEEK_LOWER = 1
-ANIM_SEEK_UPPER = 2
-ANIM_SEEK_DEFAULT = 3
-ANIM_FINISHED = 4
-
-# initialize animation state
-anim_state = ANIM_SEEK_LOWER
-current_dof = 0
-print("Animating DOF %d ('%s')" % (current_dof, dof_names[current_dof]))
-
+ 
 dof_state_tensor = gym.acquire_dof_state_tensor(sim)
 _dof_state = gymtorch.wrap_tensor(dof_state_tensor)
 _dof_pos = _dof_state.view(num_envs, num_dofs, 2)[..., 0]
@@ -258,49 +277,65 @@ root_angvels = root_tensor[:, 10:13]
 
 _dof_force_tensor = gym.acquire_dof_force_tensor(sim)
 _rigid_body_state = gym.acquire_rigid_body_state_tensor(sim)
+_sensor_tensor = gym.acquire_force_sensor_tensor(sim)
 dof_force_tensor = gymtorch.wrap_tensor(_dof_force_tensor).view(num_envs, num_dofs)
 rigid_body_state = gymtorch.wrap_tensor(_rigid_body_state)
-rigid_body_pos =  rigid_body_state.view(num_envs, num_rigid_body, 13)[..., 0:3]
+sensors_per_env = 4
+vec_sensor_tensor = gymtorch.wrap_tensor(_sensor_tensor).view(num_envs, sensors_per_env, 6)
+
+
+rigid_body_pos =  rigid_body_state.view(num_envs, num_bodies, 13)[..., 0:3]
 gym.refresh_dof_state_tensor(sim)
 gym.refresh_dof_force_tensor(sim)
 
 pd_tar = torch.zeros(num_envs, num_dofs)
 step_count = 0
 force_data = []
+sensor_data = []
 position_data = []
+
+
+
+
 
 while not gym.query_viewer_has_closed(viewer):
     # get_actor_dof_forces
-    force_value = dof_force_tensor[0, 0].item()       # 关节0的受力
-    position_value = rigid_body_pos[0, 1, 1].item()   # 第二个刚体的y轴位移
-    print(f"Step {step_count} | Force: {force_value}, Position: {position_value}")
+    force_value = dof_force_tensor[0, slide_z_idx].item()       # 关节受力
+    sensor_value = vec_sensor_tensor[0,srl_board_ssidx, 2].item() 
+    position_value = rigid_body_pos[0, srl_root_idx, 2].item()   # 第二个刚体的y轴位移
+    print(f"Step {step_count} | Joint: {force_value}, Sensor: {sensor_value}, Pos: {position_value}")
     force_data.append(force_value)
+    sensor_data.append(sensor_value)
     position_data.append(position_value)
     step_count += 1
 
-    # 检查某个特定关节
-    current_dof = 0
-    
-    pd_tar[:,0] = 0.0
+    # 添加外部力
+    if step_count > 240:
+        forces = torch.zeros((num_envs, num_bodies, 3),   dtype=torch.float)
+        torques = torch.zeros((num_envs, num_bodies, 3),  dtype=torch.float)
+        forces[:, right_foot_idx, 2] = 200
+        forces[:, left_foot_idx, 2] = 200
+        gym.apply_rigid_body_force_tensors(sim, gymtorch.unwrap_tensor(forces), gymtorch.unwrap_tensor(torques), gymapi.ENV_SPACE)
+
+
+    pd_tar[:,slide_z_idx] = 0
     pd_tar[:,2] = 0
     pd_tar[:,3] = 0
     # 将 pd_tar 转换为 Tensor
     pd_tar_tensor = gymtorch.unwrap_tensor(pd_tar)
 
     # 位控
-    result = gym.set_dof_position_target_tensor( sim, pd_tar_tensor)
+    # result = gym.set_dof_position_target_tensor( sim, pd_tar_tensor)
 
     # 力控
     # for i in range(num_envs):
-    #     efforts = np.full(num_dofs, 3).astype(np.float32)
+    #     efforts = np.full(num_dofs, 0).astype(np.float32)
     #     gym.apply_actor_dof_efforts(envs[i], actor_handles[i], efforts)
 
     # step the physics
     gym.simulate(sim)
     gym.fetch_results(sim, True)
 
-
-    dof_positions[current_dof] = 0.05
  
     # update the viewer
     gym.step_graphics(sim)
@@ -336,7 +371,7 @@ ax1.set_xlabel("Time (s)")
 ax1.set_ylabel("Joint Force (N)", color="red")
 ax1.tick_params(axis="y", labelcolor="red")
 ax1.grid(True)
-ax1.set_ylim(-20, 0)
+ax1.set_ylim(-15, 5)
 
 
 # 右边 Y 轴：刚体位移
@@ -344,11 +379,27 @@ ax2 = ax1.twinx()  # 创建共享 X 轴的第二个 Y 轴
 ax2.plot(time_axis, position_data, label="Body Position (m)", color="blue", linewidth=2)
 ax2.set_ylabel("Body Position (m)", color="blue")
 ax2.tick_params(axis="y", labelcolor="blue")
+ax2.set_ylim(1.3, 1.4)
 
 # 标题和图例
 plt.title("Joint Force and Body Position over Time")
 fig.tight_layout()
 
-# 保存图像
-# plt.savefig("joint_force_and_position.png")
+ 
+
+fig2, ax3 = plt.subplots(figsize=(10, 6))
+
+# 左边 Y 轴：关节受力
+ax3.plot(time_axis, force_data,  label="Joint Force (N)",  linewidth=2)
+ax3.plot(time_axis, sensor_data, label="Sensor Force (N)",  linewidth=2)
+ax3.set_xlabel("Time (s)")
+ax3.set_ylabel("Force (N)", color="red")
+ax3.legend()
+ax3.tick_params(axis="y", labelcolor="red")
+ax3.grid(True)
+
+# 标题和图例
+plt.title("Sensor Force vs Joint Force")
+fig.tight_layout()
+
 plt.show()

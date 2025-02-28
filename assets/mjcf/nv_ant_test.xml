@@ -50,7 +50,7 @@
 
       <body name="upper_head" pos="0.0 0.0 1.2">
         <joint axis="0 0 1" name="neck" pos="0.0 0.0 0.0" range="-0.2 0.2" type="slide"/>
-        <geom name="head_geom" pos="0 0 0" size="0.2" type="sphere" density='20' /> 
+        <geom name="head_geom" pos="0 0 0" size="0.2" type="sphere" density='2000' /> 
       </body>
 
 
