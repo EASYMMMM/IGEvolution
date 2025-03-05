@@ -41,20 +41,34 @@
 
     <body name="torso" pos="0 0 0.75">
       <freejoint name="root"/>
-      <geom name="torso_geom" pos="0 0 0" size="0.23 0.23 0.7" type="box"/>
+      <geom name="torso_geom" pos="0 0 0" size="0.43 0.43 0.7" type="box"/>
       <!-- <geom name="torso_geom" pos="0 0 0" size="0.25" type="sphere"/> -->
-      <geom fromto="0.0 0.0 0.0 0.2 0.2 0.0" name="aux_1_geom" size="0.08" type="capsule" rgba=".999 .2 .1 1"/>
+      <!-- <geom fromto="0.0 0.0 0.0 0.2 0.2 0.0" name="aux_1_geom" size="0.08" type="capsule" rgba=".999 .2 .1 1"/>
       <geom fromto="0.0 0.0 0.0 -0.2 0.2 0.0" name="aux_2_geom" size="0.08" type="capsule"/>
       <geom fromto="0.0 0.0 0.0 -0.2 -0.2 0.0" name="aux_3_geom" size="0.08" type="capsule"/>
-      <geom fromto="0.0 0.0 0.0 0.2 -0.2 0.0" name="aux_4_geom" size="0.08" type="capsule" rgba=".999 .2 .02 1"/>
+      <geom fromto="0.0 0.0 0.0 0.2 -0.2 0.0" name="aux_4_geom" size="0.08" type="capsule" rgba=".999 .2 .02 1"/> -->
 
-      <body name="upper_head" pos="0.0 0.0 1.2">
-        <joint axis="0 0 1" name="neck" pos="0.0 0.0 0.0" range="-0.2 0.2" type="slide"/>
-        <geom name="head_geom" pos="0 0 0" size="0.2" type="sphere" density='2000' /> 
+      <!-- 顶部加小球 -->
+      <body name="board" pos = "0.0  0.0  1.4"  >
+        <site class="force-torque" name="board_sensor"/>
+        <geom name="board" pos="0 0 0" size="0.2 0.2 0.0005" type="box" density='100'/> 
+        <body name="upper_head" pos="0.0 0.0 0.5">
+          <joint axis="0 0 1" name="neck" pos="0.0 0.0 0.0" range="-0.02 0.02"  />
+          <geom name="head_geom" pos="0  0  0" size="0.2" type="sphere" density='2000' /> 
+        </body>
       </body>
 
+      <!-- <body name="board" pos = "0.7  0.0  0"  >
+        <site class="force-torque" name="board_sensor"/>
+        <geom name="board" pos="0 0 0" size="0.0005 0.2 0.2" type="box" density='10000'/> 
+        <body name="upper_head" pos="1.0 0.0 0.0">
+          <joint axis="0 0 1" name="neck" pos="0.0 0.0 0.0" range="-0.02 0.02"  />
+          <geom name="head_geom" pos="0  0  0" size="0.2" type="sphere" density='2000' /> 
+        </body>
+      </body> -->
 
-      <body name="front_left_leg" pos="0.2 0.2 0">
+
+      <!-- <body name="front_left_leg" pos="0.2 0.2 0">
         <joint armature="0.017" damping="5" stiffness="50" axis="0 0 1" name="hip_1" pos="0.0 0.0 0.0" range="-40 40" type="hinge"/>
         <geom fromto="0.0 0.0 0.0 0.2 0.2 0.0" name="left_leg_geom" size="0.08" type="capsule" rgba=".999 .2 .1 1"/>
         <body pos="0.2 0.2 0" name="front_left_foot">
@@ -85,7 +99,8 @@
           <joint axis="1 1 0" name="ankle_4" pos="0.0 0.0 0.0" range="30 100" type="hinge"/>
           <geom fromto="0.0 0.0 0.0 0.4 -0.4 0.0" name="fourth_ankle_geom" size="0.08" type="capsule" rgba=".999 .2 .1 1"/>
         </body>
-      </body>
+      </body> -->
+
     </body>
   </worldbody>
 

@@ -225,15 +225,15 @@ for i in range(num_envs):
     dof_prop = gym.get_asset_dof_properties(asset)
 
     # 被动控制
-    dof_prop["driveMode"][slide_x_idx] = gymapi.DOF_MODE_NONE
-    dof_prop["driveMode"][slide_y_idx] = gymapi.DOF_MODE_NONE
-    dof_prop["driveMode"][slide_z_idx] = gymapi.DOF_MODE_NONE
-    dof_prop["stiffness"][slide_x_idx] = 100.0
-    dof_prop["stiffness"][slide_y_idx] = 100.0
-    dof_prop["stiffness"][slide_z_idx] = 100.0
-    dof_prop["damping"][slide_x_idx] = 20.0
-    dof_prop["damping"][slide_y_idx] = 20.0
-    dof_prop["damping"][slide_z_idx] = 20.0
+    # dof_prop["driveMode"][slide_x_idx] = gymapi.DOF_MODE_NONE
+    # dof_prop["driveMode"][slide_y_idx] = gymapi.DOF_MODE_NONE
+    # dof_prop["driveMode"][slide_z_idx] = gymapi.DOF_MODE_NONE
+    # dof_prop["stiffness"][slide_x_idx] = 200.0
+    # dof_prop["stiffness"][slide_y_idx] = 200.0
+    # dof_prop["stiffness"][slide_z_idx] = 200.0
+    # dof_prop["damping"][slide_x_idx] = 50.0
+    # dof_prop["damping"][slide_y_idx] = 50.0
+    # dof_prop["damping"][slide_z_idx] = 50.0
     gym.set_actor_dof_properties(env, actor_handle, dof_prop)
 
     # 位控
@@ -241,10 +241,16 @@ for i in range(num_envs):
     # gym.set_actor_dof_properties(env, actor_handle, dof_prop)
 
     # 力控
-    # dof_prop["driveMode"] = gymapi.DOF_MODE_EFFORT
-    # dof_prop["stiffness"].fill(0.0)
-    # dof_prop["damping"].fill(0.0)
-    # gym.set_actor_dof_properties(env, actor_handle, dof_prop)
+    dof_prop["driveMode"][slide_x_idx] = gymapi.DOF_MODE_EFFORT
+    dof_prop["driveMode"][slide_y_idx] = gymapi.DOF_MODE_EFFORT
+    dof_prop["driveMode"][slide_z_idx] = gymapi.DOF_MODE_EFFORT
+    dof_prop["stiffness"][slide_x_idx] = 0
+    dof_prop["stiffness"][slide_y_idx] = 0
+    dof_prop["stiffness"][slide_z_idx] = 0
+    dof_prop["damping"][slide_x_idx] = 0
+    dof_prop["damping"][slide_y_idx] = 0
+    dof_prop["damping"][slide_z_idx] = 0
+    gym.set_actor_dof_properties(env, actor_handle, dof_prop)
     
 
 # rigid body properties
@@ -292,6 +298,8 @@ pd_tar = torch.zeros(num_envs, num_dofs)
 step_count = 0
 force_data = []
 sensor_data = []
+sensor_data_x = []
+sensor_data_y = []
 position_data = []
 
 
@@ -301,10 +309,14 @@ position_data = []
 while not gym.query_viewer_has_closed(viewer):
     # get_actor_dof_forces
     force_value = dof_force_tensor[0, slide_z_idx].item()       # 关节受力
+    sensor_value_x = vec_sensor_tensor[0,srl_board_ssidx, 0].item() 
+    sensor_value_y = vec_sensor_tensor[0,srl_board_ssidx, 1].item() 
     sensor_value = vec_sensor_tensor[0,srl_board_ssidx, 2].item() 
     position_value = rigid_body_pos[0, srl_root_idx, 2].item()   # 第二个刚体的y轴位移
     print(f"Step {step_count} | Joint: {force_value}, Sensor: {sensor_value}, Pos: {position_value}")
     force_data.append(force_value)
+    sensor_data_x.append(sensor_value_x)
+    sensor_data_y.append(sensor_value_y)
     sensor_data.append(sensor_value)
     position_data.append(position_value)
     step_count += 1
@@ -328,9 +340,9 @@ while not gym.query_viewer_has_closed(viewer):
     # result = gym.set_dof_position_target_tensor( sim, pd_tar_tensor)
 
     # 力控
-    # for i in range(num_envs):
-    #     efforts = np.full(num_dofs, 0).astype(np.float32)
-    #     gym.apply_actor_dof_efforts(envs[i], actor_handles[i], efforts)
+    for i in range(num_envs):
+        efforts = np.full(num_dofs, 0).astype(np.float32)
+        gym.apply_actor_dof_efforts(envs[i], actor_handles[i], efforts)
 
     # step the physics
     gym.simulate(sim)
@@ -388,7 +400,6 @@ fig.tight_layout()
  
 
 fig2, ax3 = plt.subplots(figsize=(10, 6))
-
 # 左边 Y 轴：关节受力
 ax3.plot(time_axis, force_data,  label="Joint Force (N)",  linewidth=2)
 ax3.plot(time_axis, sensor_data, label="Sensor Force (N)",  linewidth=2)
@@ -400,6 +411,24 @@ ax3.grid(True)
 
 # 标题和图例
 plt.title("Sensor Force vs Joint Force")
+fig.tight_layout()
+
+plt.show()
+
+
+fig3, ax4 = plt.subplots(figsize=(10, 6))
+# 左边 Y 轴：关节受力
+ax4.plot(time_axis, sensor_data_x, label="Sensor Force X (N)",  linewidth=2)
+ax4.plot(time_axis, sensor_data_y, label="Sensor Force Y (N)",  linewidth=2)
+ax4.plot(time_axis, sensor_data,   label="Sensor Force Z (N)",  linewidth=2)
+ax4.set_xlabel("Time (s)")
+ax4.set_ylabel("Force (N)", color="red")
+ax4.legend()
+ax4.tick_params(axis="y", labelcolor="red")
+ax4.grid(True)
+
+# 标题和图例
+plt.title("Rigid Body Sensor Force ")
 fig.tight_layout()
 
 plt.show()
