@@ -1,5 +1,5 @@
 '''
-MJCF模型生成测试
+MJCF模型生成
 '''
 
 if __name__ == '__main__':
@@ -10,16 +10,16 @@ if __name__ == '__main__':
     from model_grammar import SRL_mode1, SRL_mode2, ModelGenerator
 
     srl_mode = 'mode1'
-    # name = 'humanoid_srl_mode1_p1'
-    name = 'hsrl_GA_314_iter37'
+    name = 'humanoid_srl_mode1'
+    # name = 'hsrl_GA_314_iter37'
     pretrain = False
-    # base_srl_params = {
-    #                 "first_leg_lenth" : 0.40,
-    #                 "first_leg_size"  : 0.03,
-    #                 "second_leg_lenth": 0.80,
-    #                 "second_leg_size" : 0.03,
-    #                 "third_leg_size"  : 0.05,
-    #             }    
+    base_srl_params = {
+                    "first_leg_lenth" : 0.40,
+                    "first_leg_size"  : 0.03,
+                    "second_leg_lenth": 0.80,
+                    "second_leg_size" : 0.03,
+                    "third_leg_size"  : 0.05,
+                }    
     # pretrian_srl_params = {
     #                 "first_leg_lenth" : 0.01,
     #                 "first_leg_size"  : 0.01,
@@ -27,16 +27,16 @@ if __name__ == '__main__':
     #                 "second_leg_size" : 0.01,
     #                 "third_leg_size"  : 0.01,
     #             }    
-    srl_params = {
-                    "first_leg_lenth" : 0.38374,
-                    "first_leg_size"  : 0.0270,
-                    "second_leg_lenth": 0.8942,
-                    "second_leg_size" : 0.039,
-                    "third_leg_size"  : 0.0231,
-                }    
+    # srl_params = {
+    #                 "first_leg_lenth" : 0.38374,
+    #                 "first_leg_size"  : 0.0270,
+    #                 "second_leg_lenth": 0.8942,
+    #                 "second_leg_size" : 0.039,
+    #                 "third_leg_size"  : 0.0231,
+    #             }    
     srl_generator = { "mode1": SRL_mode1 ,
                       "mode2": SRL_mode2 ,}[srl_mode]
-    srl_R = srl_generator( name=name, pretrain=pretrain, **srl_params)
+    srl_R = srl_generator( name=name, pretrain=pretrain, **base_srl_params)
 
     # 使用绝对路径来确定 save_path
     base_path = os.path.dirname(os.path.abspath(__file__))
@@ -47,7 +47,6 @@ if __name__ == '__main__':
     mjcf_generator.gen_basic_humanoid_xml()
     mjcf_generator.get_SRL_dfs(back_load=back_load)
     mjcf_generator.generate()
-
 
 
     srl_mode = 'mode2'

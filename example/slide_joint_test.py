@@ -181,8 +181,8 @@ sensor_pose = gymapi.Transform()
 
 # sensor props
 sensor_props = gymapi.ForceSensorProperties()
-sensor_props.enable_forward_dynamics_forces = True
-sensor_props.enable_constraint_solver_forces = False
+sensor_props.enable_forward_dynamics_forces = False
+sensor_props.enable_constraint_solver_forces = True
 sensor_props.use_world_frame = False
 
 board_ssidx = gym.create_asset_force_sensor(asset, board_idx, sensor_pose, sensor_props)

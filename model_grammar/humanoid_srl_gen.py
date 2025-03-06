@@ -186,14 +186,14 @@ if __name__ == '__main__':
     # M.get_SRL_dfs()
     # M.generate()
 
-    # R = SRL_mode1(name='humanoid_srl_mode1')
-    # M = ModelGenerator(R)
-    # M.gen_basic_humanoid_xml()
-    # M.get_SRL_dfs(back_load=True)
-    # M.generate()
-
-    R = SRL_mode2(name='humanoid_srl_mode2')
+    R = SRL_mode1(name='humanoid_srl_mode1')
     M = ModelGenerator(R)
     M.gen_basic_humanoid_xml()
     M.get_SRL_dfs(back_load=True)
     M.generate()
+
+    # R = SRL_mode2(name='humanoid_srl_mode2')
+    # M = ModelGenerator(R)
+    # M.gen_basic_humanoid_xml()
+    # M.get_SRL_dfs(back_load=True)
+    # M.generate()
