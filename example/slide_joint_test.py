@@ -181,8 +181,8 @@ sensor_pose = gymapi.Transform()
 
 # sensor props
 sensor_props = gymapi.ForceSensorProperties()
-sensor_props.enable_forward_dynamics_forces = False
-sensor_props.enable_constraint_solver_forces = True
+sensor_props.enable_forward_dynamics_forces = True
+sensor_props.enable_constraint_solver_forces = False
 sensor_props.use_world_frame = False
 
 board_ssidx = gym.create_asset_force_sensor(asset, board_idx, sensor_pose, sensor_props)
@@ -298,9 +298,9 @@ while not gym.query_viewer_has_closed(viewer):
     # get_actor_dof_forces
     force_value = dof_force_tensor[0, 0].item()       # 关节0的受力
     position_value = rigid_body_pos[0, 1, 1].item()   # 第二个刚体的y轴位移
-    sensor_value_x = vec_sensor_tensor[0,board_ssidx, 0].item()  #board_ssidx  head_geom_ssidx 
-    sensor_value_y = vec_sensor_tensor[0,board_ssidx, 1].item() 
-    sensor_value_z = vec_sensor_tensor[0,board_ssidx, 2].item() 
+    sensor_value_x = vec_sensor_tensor[0,head_geom_ssidx, 0].item()  #board_ssidx  head_geom_ssidx 
+    sensor_value_y = vec_sensor_tensor[0,head_geom_ssidx, 1].item() 
+    sensor_value_z = vec_sensor_tensor[0,head_geom_ssidx, 2].item() 
     print(f"Step {step_count} | Joint: {force_value}, Sensor: {sensor_value_z}, Pos: {position_value}")
     force_data.append(force_value)
     position_data.append(position_value)
@@ -397,6 +397,7 @@ ax4.set_ylabel("Force (N)", color="red")
 ax4.legend()
 ax4.tick_params(axis="y", labelcolor="red")
 ax4.grid(True)
+ax4.set_ylim(-1000, 1000)
 
 # 标题和图例
 plt.title("Rigid Body Sensor Force ")

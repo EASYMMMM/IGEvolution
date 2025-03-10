@@ -61,7 +61,7 @@ class SRLAgent(common_agent.CommonAgent):
         self.clip_actions = config.get('clip_actions', True)
         self.network_path = self.nn_dir 
         
-        net_config = self._build_net_config()  # 构建网络配置
+        net_config = self._build_net_config(params)  # 构建网络配置
         self.model = self.network.build(net_config,role='humanoid')
         self.model.to(self.ppo_device)
         self.model_srl = self.network.build(net_config,role='srl')
@@ -133,9 +133,9 @@ class SRLAgent(common_agent.CommonAgent):
             'use_action_masks' : self.use_action_masks
         }
         env_info = self.env_info
-        env_info['action_space'] = Box(-1,1,(28,1))
+        env_info['action_space'] = Box(-1,1,(self.actions_num_humanoid,1))
         self.experience_buffer = ExperienceBuffer(env_info, algo_info, self.ppo_device)
-        env_info['action_space'] = Box(-1,1,(8,1))
+        env_info['action_space'] = Box(-1,1,(self.actions_num_srl,1))
         
         self.current_rewards_srl = torch.zeros_like(self.current_rewards,dtype=torch.float32, device=self.ppo_device)
         self.current_rewards_amp = torch.zeros_like(self.current_rewards,dtype=torch.float32, device=self.ppo_device)
@@ -857,6 +857,9 @@ class SRLAgent(common_agent.CommonAgent):
     def _load_config_params(self, config):
         super()._load_config_params(config)
 
+        self.actions_num_humanoid = config['actions_num_humanoid']
+        self.actions_num_srl = config['actions_num_srl']
+
         self._start_frame = config.get('start_frame',0)
         self._task_reward_w = config['task_reward_w']
         self._disc_reward_w = config['disc_reward_w']
@@ -882,11 +885,11 @@ class SRLAgent(common_agent.CommonAgent):
 
         return
 
-    def _build_net_config(self):
+    def _build_net_config(self, params):
         # 在Common_Agent中定义所有网络：self.model = self.network.build(net_config)
         config = super()._build_net_config()
-        config['actions_num_humanoid'] = 28
-        config['actions_num_srl'] = 8
+        config['actions_num_humanoid'] = self.actions_num_humanoid
+        config['actions_num_srl'] = self.actions_num_srl
         config['amp_input_shape'] = self._amp_observation_space.shape
         return config
 

@@ -59,6 +59,9 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
         self._disc_reward_scale = config['disc_reward_scale']
         self._print_disc_prediction = config.get('print_disc_prediction', False)
         self.actions_num_humanoid = config.get('actions_num_humanoid')
+        # ---- SRL-Gym Defined ----
+        self._save_data = config.get('save_data', False)
+        self._save_load_cell_data = config.get('save_load_cell_data', False)
         super().__init__(params)
 
         
@@ -162,6 +165,8 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
             'done':[],
         }
 
+        load_cell_data = []
+
         need_init_rnn = self.is_rnn
         print('Start Playing')
         for _ in range(n_games):
@@ -214,6 +219,10 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                 episode_data['key_body_pos'].append(key_body_pos)
                 episode_data['dof_forces'].append(dof_forces[0].cpu().numpy())
                 episode_data['obs'].append( dof_pos)
+
+                if self._save_load_cell_data:
+                    load_cell_val = info["load_cell"].cpu().numpy()
+                    load_cell_data.append(load_cell_val)
                 
                 if render:
                     self.env.render(mode = 'human')
@@ -229,34 +238,72 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                     episode_data['done'].append(0)
 
                 if done_count > 0:
-                    if 0 in done_indices: # 第一个环境结束
-                        print('Env-0 end ')
-                        print('Env-0 average velocity (x):',np.mean(episode_velocity))
-                        episode_velocity = []
-                        actions_env0.append(episode_actions)
-                        episode_count_env0 += 1
-                        games_played += 1
+                    if self._save_data:
+                        if 0 in done_indices: # 第一个环境结束
+                            print('Env-0 end ')
+                            print('Env-0 average velocity (x):',np.mean(episode_velocity))
+                            episode_velocity = []
+                            actions_env0.append(episode_actions)
+                            episode_count_env0 += 1
+                            games_played += 1
 
-                        # 只保存当前 episode 的数据
-                        data_to_save = {
-                            f'episode_root_pos': episode_data['root_pos'],
-                            f'episode_srl_end_pos': episode_data['srl_end_pos'],
-                            f'episode_key_body_pos': episode_data['key_body_pos'],
-                            f'episode_dof_forces': episode_data['dof_forces'],
-                            f'episode_obs': episode_data['obs'],
-                            f'episode_dones': episode_data['done'],
-                        }
+                            # 只保存当前 episode 的数据
+                            data_to_save = {
+                                f'episode_root_pos': episode_data['root_pos'],
+                                f'episode_srl_end_pos': episode_data['srl_end_pos'],
+                                f'episode_key_body_pos': episode_data['key_body_pos'],
+                                f'episode_dof_forces': episode_data['dof_forces'],
+                                f'episode_obs': episode_data['obs'],
+                                f'episode_dones': episode_data['done'],
+                            }
 
-                        print(f"Episode {episode_count_env0} Data saved.")
-                        if episode_count_env0 == 3:
-                            sio.savemat('run_data/GA314_best_env0_episode_data.mat', data_to_save)
-                            print("已保存env0的前三个episode的数据到env0_episode_data.mat")
+                            print(f"Episode {episode_count_env0} Data saved.")
+                            if episode_count_env0 == 3:
+                                sio.savemat('run_data/GA314_best_env0_episode_data.mat', data_to_save)
+                                print("已保存env0的前三个episode的数据到env0_episode_data.mat")
 
-                        # 当第一个环境完成两个episode时，绘制动作曲线
-                        # if episode_count_env0 == 1:
-                        #     self.plot_actions(actions_env0)
-                        # if episode_count_env0 == 3:
-                        #     self.action0_ave(actions_env0)
+                            # 当第一个环境完成两个episode时，绘制动作曲线
+                            # if episode_count_env0 == 1:
+                            #     self.plot_actions(actions_env0)
+                            # if episode_count_env0 == 3:
+                            #     self.action0_ave(actions_env0)
+
+                    if self._save_load_cell_data:
+                        if 0 in done_indices:
+                            # 转换 load cell 数据为 NumPy 数组
+                            load_cell_data_np = np.array(load_cell_data)
+
+                            # 提取前三个维度 (Fx, Fy, Fz)
+                            forces = load_cell_data_np[:, :3]
+                            # 提取后三个维度 (Mx, My, Mz)
+                            torques = load_cell_data_np[:, 3:]
+
+                            # 生成时间轴
+                            time_steps = np.arange(len(load_cell_data_np))
+
+                            # 绘制 Fx, Fy, Fz 曲线
+                            plt.figure(figsize=(10, 5))
+                            plt.plot(time_steps, forces[:, 0], label='Fx', linestyle='-',  )
+                            plt.plot(time_steps, forces[:, 1], label='Fy', linestyle='-',  )
+                            plt.plot(time_steps, forces[:, 2], label='Fz', linestyle='-',  )
+                            plt.xlabel('Time Step')
+                            plt.ylabel('Force (N)')
+                            plt.title('Load Cell Forces (Fx, Fy, Fz)')
+                            plt.legend()
+                            plt.grid()
+                            plt.show()
+
+                            # 绘制 Mx, My, Mz 曲线
+                            plt.figure(figsize=(10, 5))
+                            plt.plot(time_steps, torques[:, 0], label='Mx', linestyle='-', )
+                            plt.plot(time_steps, torques[:, 1], label='My', linestyle='-', )
+                            plt.plot(time_steps, torques[:, 2], label='Mz', linestyle='-', )
+                            plt.xlabel('Time Step')
+                            plt.ylabel('Torque (Nm)')
+                            plt.title('Load Cell Torques (Mx, My, Mz)')
+                            plt.legend()
+                            plt.grid()
+                            plt.show()
 
                     if self.is_rnn:
                         for s in self.states:

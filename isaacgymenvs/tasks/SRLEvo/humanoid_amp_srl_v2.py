@@ -13,7 +13,7 @@ from gym import spaces
 from isaacgym import gymapi
 from isaacgym import gymtorch
 
-from isaacgymenvs.tasks.SRLEvo.humanoid_amp_srl_base import HumanoidAMPSRLBase, dof_to_obs
+from isaacgymenvs.tasks.SRLEvo.humanoid_amp_srl_v2_base import HumanoidAMPSRLv2Base, dof_to_obs
 from isaacgymenvs.tasks.amp.utils_amp import gym_util
 from isaacgymenvs.tasks.amp.utils_amp.motion_lib import MotionLib
 
@@ -23,7 +23,7 @@ from isaacgymenvs.utils.torch_jit_utils import quat_mul, to_torch, calc_heading_
 NUM_AMP_OBS_PER_STEP = 13 + 52 + 28 + 12 # [root_h, root_rot, root_vel, root_ang_vel, dof_pos, dof_vel, key_body_pos]
 
 
-class HumanoidAMPSRLGym(HumanoidAMPSRLBase):
+class HumanoidAMPSRLGym_v2(HumanoidAMPSRLv2Base):
 
     class StateInit(Enum):
         Default = 0
@@ -38,7 +38,7 @@ class HumanoidAMPSRLGym(HumanoidAMPSRLBase):
         self.cfg = cfg
 
         state_init = cfg["env"]["stateInit"]
-        self._state_init = HumanoidAMPSRLGym.StateInit[state_init] # 初始化方式 （随机重启）
+        self._state_init = HumanoidAMPSRLGym_v2.StateInit[state_init] # 初始化方式 （随机重启）
         self._hybrid_init_prob = cfg["env"]["hybridInitProb"]
         self._num_amp_obs_steps = cfg["env"]["numAMPObsSteps"]
         assert(self._num_amp_obs_steps >= 2)
@@ -133,12 +133,12 @@ class HumanoidAMPSRLGym(HumanoidAMPSRLBase):
         return
 
     def _reset_actors(self, env_ids):
-        if (self._state_init == HumanoidAMPSRLGym.StateInit.Default):
+        if (self._state_init == HumanoidAMPSRLGym_v2.StateInit.Default):
             self._reset_default(env_ids)
-        elif (self._state_init == HumanoidAMPSRLGym.StateInit.Start
-              or self._state_init == HumanoidAMPSRLGym.StateInit.Random):
+        elif (self._state_init == HumanoidAMPSRLGym_v2.StateInit.Start
+              or self._state_init == HumanoidAMPSRLGym_v2.StateInit.Random):
             self._reset_ref_state_init(env_ids)
-        elif (self._state_init == HumanoidAMPSRLGym.StateInit.Hybrid):
+        elif (self._state_init == HumanoidAMPSRLGym_v2.StateInit.Hybrid):
             self._reset_hybrid_state_init(env_ids)
         else:
             assert(False), "Unsupported state initialization strategy: {:s}".format(str(self._state_init))
@@ -167,10 +167,10 @@ class HumanoidAMPSRLGym(HumanoidAMPSRLBase):
         num_envs = env_ids.shape[0]
         motion_ids = self._motion_lib.sample_motions(num_envs)
         
-        if (self._state_init == HumanoidAMPSRLGym.StateInit.Random
-            or self._state_init == HumanoidAMPSRLGym.StateInit.Hybrid):
+        if (self._state_init == HumanoidAMPSRLGym_v2.StateInit.Random
+            or self._state_init == HumanoidAMPSRLGym_v2.StateInit.Hybrid):
             motion_times = self._motion_lib.sample_time(motion_ids)
-        elif (self._state_init == HumanoidAMPSRLGym.StateInit.Start):
+        elif (self._state_init == HumanoidAMPSRLGym_v2.StateInit.Start):
             motion_times = np.zeros(num_envs)
         else:
             assert(False), "Unsupported state initialization strategy: {:s}".format(str(self._state_init))

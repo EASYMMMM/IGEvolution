@@ -95,7 +95,7 @@ params:
 
     # ---- user defined ----
     actions_num_humanoid: 28
-    actions_num_srl: 8
+    actions_num_srl: 6
     train_srl_only: False
     humanoid_checkpoint: False
     hsrl_checkpoint: False

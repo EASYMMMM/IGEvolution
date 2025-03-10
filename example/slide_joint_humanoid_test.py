@@ -23,6 +23,7 @@ class AssetDesc:
 
 
 asset_descriptors = [
+    AssetDesc("mjcf/humanoid_srl_v2/hsrl_v2_pretrain.xml", False),
     AssetDesc("mjcf/humanoid_srl/hsrl_mode1_v2.xml", False),
     # AssetDesc("mjcf/humanoid_srl/hsrl_mode1_prismatic_test.xml", False),
     AssetDesc("mjcf/humanoid_srl/hsrl_mode1.xml", False),
@@ -191,7 +192,7 @@ sensor_pose = gymapi.Transform()
 # sensor props
 sensor_props = gymapi.ForceSensorProperties()
 sensor_props.enable_forward_dynamics_forces = True
-sensor_props.enable_constraint_solver_forces = True
+sensor_props.enable_constraint_solver_forces = False
 sensor_props.use_world_frame = False
 
 right_foot_ssidx = gym.create_asset_force_sensor(asset, right_foot_idx, sensor_pose, sensor_props)
@@ -310,9 +311,9 @@ position_data = []
 while not gym.query_viewer_has_closed(viewer):
     # get_actor_dof_forces
     force_value = dof_force_tensor[0, slide_z_idx].item()       # 关节受力
-    sensor_value_x = vec_sensor_tensor[0,srl_board_ssidx, 0].item() 
-    sensor_value_y = vec_sensor_tensor[0,srl_board_ssidx, 1].item() 
-    sensor_value = vec_sensor_tensor[0,srl_board_ssidx, 2].item() 
+    sensor_value_x = vec_sensor_tensor[0,srl_root_ssidx, 0].item() 
+    sensor_value_y = vec_sensor_tensor[0,srl_root_ssidx, 1].item() 
+    sensor_value = vec_sensor_tensor[0,srl_root_ssidx, 2].item() 
     position_value = rigid_body_pos[0, srl_root_idx, 2].item()   # 第二个刚体的y轴位移
     print(f"Step {step_count} | Joint: {force_value}, Sensor: {sensor_value}, Pos: {position_value}")
     force_data.append(force_value)
@@ -326,8 +327,9 @@ while not gym.query_viewer_has_closed(viewer):
     if step_count > 240:
         forces = torch.zeros((num_envs, num_bodies, 3),   dtype=torch.float)
         torques = torch.zeros((num_envs, num_bodies, 3),  dtype=torch.float)
-        forces[:, right_foot_idx, 2] = 200
-        forces[:, left_foot_idx, 2] = 200
+        # forces[:, right_foot_idx, 2] = -200
+        # forces[:, left_foot_idx, 2] = -200
+        forces[:, srl_root_idx, 2] = -200
         gym.apply_rigid_body_force_tensors(sim, gymtorch.unwrap_tensor(forces), gymtorch.unwrap_tensor(torques), gymapi.ENV_SPACE)
 
 
