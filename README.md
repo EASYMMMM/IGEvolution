@@ -15,7 +15,7 @@
    `wandb login` 
    随后输出自己账户的API。
    仅在当前终端登录账号：
-   `export WANDB_API_KEY=d9e147c0c0f29ad02ca38e65742ce8ce2bbd52ab`   
+   `export WANDB_API_KEY=95d44e5266d5325cb6a1b4dda1b8d100de903ace`   
 
 - **重启todesk：**
    `sudo systemctl stop  todeskd.service`
