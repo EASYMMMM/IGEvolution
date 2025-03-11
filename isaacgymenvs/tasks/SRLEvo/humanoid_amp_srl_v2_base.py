@@ -84,6 +84,7 @@ class HumanoidAMPSRLv2Base(VecTask):
         self._torque_threshold = self.cfg["env"]["torque_threshold"]
         self._upper_reward_w = self.cfg["env"]["upper_reward_w"]
         self._srl_torque_reward_w = self.cfg["env"]["srl_torque_reward_w"]
+        self._srl_load_cell_w = self.cfg["env"]["srl_load_cell_w"]
         self._srl_root_force_reward_w = self.cfg["env"]["srl_root_force_reward_w"]
         self._srl_endpos_obs = self.cfg["env"]["srl_endpos_obs"]
         self._target_v_task = self.cfg["env"]["target_v_task"]
@@ -413,6 +414,7 @@ class HumanoidAMPSRLv2Base(VecTask):
 
     def _compute_reward(self, actions):
         upper_body_pos = self._rigid_body_pos[:, self._upper_body_ids, :]
+        load_cell_sensor = self.vec_sensor_tensor[:,self.load_cell_ssidx,:]
         self.rew_buf[:], self.rew_v_pen_buf[:], self.rew_joint_cost_buf[:], self.rew_upper_buf[:] = compute_humanoid_reward(self.obs_buf, 
                                                                                                      self.dof_force_tensor, 
                                                                                                      self._contact_forces,
@@ -421,9 +423,10 @@ class HumanoidAMPSRLv2Base(VecTask):
                                                                                                      upper_body_pos,
                                                                                                      self._upper_reward_w,
                                                                                                      self._srl_joint_ids,
+                                                                                                     load_cell_sensor,
                                                                                                      target_v_task = self._target_v_task,
-                                                                                                     srl_torque_w  = self._srl_torque_reward_w,
-                                                                                                     srl_root_force_w = self._srl_root_force_reward_w)
+                                                                                                     srl_torque_w  = self._srl_torque_reward_w, 
+                                                                                                     srl_load_cell_w = self._srl_load_cell_w)
         self.srl_rew_buf[:] = compute_srl_reward(self.obs_buf, self.dof_force_tensor, actions)
         return
 
@@ -838,10 +841,11 @@ def compute_humanoid_reward(obs_buf,
                             upper_body_pos, 
                             upper_reward_w, 
                             srl_joint_ids,
+                            srl_load_cell_sensor,
                             target_v_task = False,
-                            srl_torque_w = 0,
-                            srl_root_force_w = 0):
-    # type: (Tensor, Tensor, Tensor, Tensor, int, Tensor, int, Tensor, bool, float, float ) -> Tuple[Tensor, Tensor, Tensor, Tensor]
+                            srl_torque_w = 0.0,
+                            srl_load_cell_w  = 0.0 ):
+    # type: (Tensor, Tensor, Tensor, Tensor, int, Tensor, int, Tensor, Tensor, bool, float, float ) -> Tuple[Tensor, Tensor, Tensor, Tensor]
     
     # TODO: 目标速度跟随
     velocity_threshold = 1.4
@@ -888,12 +892,17 @@ def compute_humanoid_reward(obs_buf,
     srl_torque_reward = srl_torque_sum * srl_torque_w
 
     # SRL Root受力惩罚
-    srl_root_force = contact_buf[:,15,2]  # root net force (Z-axis)
-    srl_root_force_penalty = torch.where(srl_root_force > 0, torch.tensor(0., device=srl_root_force.device),
-                                         srl_root_force * srl_root_force_w)
+    load_cell_z = srl_load_cell_sensor[:,2] # 原始数据为正
+    load_cell_x = srl_load_cell_sensor[:,0] 
+    z_penalty = torch.log(1.0 + load_cell_z / 100.0) / 3.0  # ~1 当load cell z=2000
+    scaled_x = torch.clamp(load_cell_x ,min=0)
+    x_penalty = scaled_x / 1000.0  # ~1 if x=1000
+
+    load_cell_penalty = (z_penalty + x_penalty)   
+    srl_load_cell_reward = -load_cell_penalty * srl_load_cell_w       
 
     # reward = -velocity_penalty + torque_reward
-    reward = velocity_penalty + torque_reward + upper_reward + srl_torque_reward + srl_root_force_penalty
+    reward = velocity_penalty + torque_reward + upper_reward + srl_torque_reward + srl_load_cell_reward
 
     return reward, velocity_penalty, torque_reward, upper_reward
 
