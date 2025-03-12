@@ -894,7 +894,8 @@ def compute_humanoid_reward(obs_buf,
     # SRL Root受力惩罚
     load_cell_z = srl_load_cell_sensor[:,2] # 原始数据为正
     load_cell_x = srl_load_cell_sensor[:,0] 
-    z_penalty = torch.log(1.0 + load_cell_z / 100.0) / 3.0  # ~1 当load cell z=2000
+    scaled_z = torch.clamp(load_cell_z , min=10, max=2000)
+    z_penalty = torch.log(1.0 + scaled_z / 100.0) / 3.0  # ~1 当load cell z=2000
     scaled_x = torch.clamp(load_cell_x ,min=0)
     x_penalty = scaled_x / 1000.0  # ~1 if x=1000
 
