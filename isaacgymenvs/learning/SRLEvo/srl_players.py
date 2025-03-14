@@ -281,6 +281,18 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                             # 生成时间轴
                             time_steps = np.arange(len(load_cell_data_np))
 
+                            period_z_data = forces[:, 2]  # 取前 estimated_period 长度的数据
+
+                            # 计算一个周期内的均值、方差、积分
+                            mean_fz = np.mean(period_z_data)  # 均值
+                            var_fz = np.var(period_z_data)    # 方差
+                            integral_fz = np.trapz(period_z_data, dx=1) / len(load_cell_data_np) # 梯形积分，dx=1 代表等间距采样
+
+                            # **打印结果**
+                            print(f"Fz 交互力的单周期均值: {mean_fz:.4f}")
+                            print(f"Fz 交互力的单周期方差: {var_fz:.4f}")
+                            print(f"Fz 交互力的单周期积分: {integral_fz:.4f}")
+
                             # 绘制 Fx, Fy, Fz 曲线
                             plt.figure(figsize=(10, 5))
                             plt.plot(time_steps, forces[:, 0], label='Fx', linestyle='-',  )
@@ -304,6 +316,7 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                             plt.legend()
                             plt.grid()
                             plt.show()
+                            load_cell_data = []
 
                     if self.is_rnn:
                         for s in self.states:
