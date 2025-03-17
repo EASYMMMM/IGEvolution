@@ -14,7 +14,7 @@ from gym import spaces
 from isaacgym import gymapi
 from isaacgym import gymtorch
 
-from isaacgymenvs.tasks.SRLEvo.humanoid_amp_srl_v2_base import HumanoidAMPSRLv2Base, dof_to_obs
+from isaacgymenvs.tasks.SRLEvo.hsrl_marl_base import HumanoidAMPSRLmarlBase, dof_to_obs
 from isaacgymenvs.tasks.amp.utils_amp import gym_util
 from isaacgymenvs.tasks.amp.utils_amp.motion_lib import MotionLib
 
@@ -24,7 +24,7 @@ from isaacgymenvs.utils.torch_jit_utils import quat_mul, to_torch, calc_heading_
 NUM_AMP_OBS_PER_STEP = 13 + 52 + 28 + 12 # [root_h, root_rot, root_vel, root_ang_vel, dof_pos, dof_vel, key_body_pos]
 
 
-class HumanoidAMPSRLGym_v2(HumanoidAMPSRLv2Base):
+class HumanoidAMPSRLGym_marl(HumanoidAMPSRLmarlBase):
 
     class StateInit(Enum):
         Default = 0

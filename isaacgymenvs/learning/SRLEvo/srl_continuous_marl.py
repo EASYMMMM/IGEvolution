@@ -892,9 +892,10 @@ class SRL_MultiAgent(common_agent.CommonAgent):
     def _build_net_config(self, params):
         # 在Common_Agent中定义所有网络：self.model = self.network.build(net_config)
         config = super()._build_net_config()
-        config['actions_num_humanoid'] = self.actions_num_humanoid
-        config['actions_num_srl'] = self.actions_num_srl
+        config['actions_num_humanoid'] = self.vec_env.env.get_humanoid_action_size()
+        config['actions_num_srl'] = self.vec_env.env.get_srl_action_size()
         config['amp_input_shape'] = self._amp_observation_space.shape
+
         config['obs_num_humanoid'] = self.vec_env.env.get_humanoid_obs_size()
         config['obs_num_srl'] = self.vec_env.env.get_srl_obs_size()
         return config
