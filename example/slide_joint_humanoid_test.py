@@ -23,8 +23,8 @@ class AssetDesc:
 
 
 asset_descriptors = [
-    AssetDesc("mjcf/humanoid_srl_v2/hsrl_v2_pretrain.xml", False),
-    AssetDesc("mjcf/humanoid_srl/hsrl_mode1_v2.xml", False),
+    # AssetDesc("mjcf/humanoid_srl_v2/hsrl_v2_pretrain.xml", False),
+    AssetDesc("mjcf/humanoid_srl/hsrl_mode1_v3.xml", False),
     # AssetDesc("mjcf/humanoid_srl/hsrl_mode1_prismatic_test.xml", False),
     AssetDesc("mjcf/humanoid_srl/hsrl_mode1.xml", False),
     # AssetDesc("mjcf/amp_humanoid_srl_V2_1.xml", False),
@@ -178,9 +178,7 @@ cam_pos = gymapi.Vec3(10, 10, 5)
 cam_target = gymapi.Vec3(0, 0, 1)
 gym.viewer_camera_look_at(viewer, None, cam_pos, cam_target)
 
-slide_x_idx = gym.find_asset_dof_index(asset, 'sensor_x' )
-slide_y_idx = gym.find_asset_dof_index(asset, 'sensor_y' )
-slide_z_idx = gym.find_asset_dof_index(asset, 'sensor_z' )
+ 
 
 
 srl_board_idx = gym.find_asset_rigid_body_index(asset, 'SRL' )
@@ -243,15 +241,15 @@ for i in range(num_envs):
     # gym.set_actor_dof_properties(env, actor_handle, dof_prop)
 
     # 力控
-    dof_prop["driveMode"][slide_x_idx] = gymapi.DOF_MODE_EFFORT
-    dof_prop["driveMode"][slide_y_idx] = gymapi.DOF_MODE_EFFORT
-    dof_prop["driveMode"][slide_z_idx] = gymapi.DOF_MODE_EFFORT
-    dof_prop["stiffness"][slide_x_idx] = 0
-    dof_prop["stiffness"][slide_y_idx] = 0
-    dof_prop["stiffness"][slide_z_idx] = 0
-    dof_prop["damping"][slide_x_idx] = 0
-    dof_prop["damping"][slide_y_idx] = 0
-    dof_prop["damping"][slide_z_idx] = 0
+    # dof_prop["driveMode"][slide_x_idx] = gymapi.DOF_MODE_EFFORT
+    # dof_prop["driveMode"][slide_y_idx] = gymapi.DOF_MODE_EFFORT
+    # dof_prop["driveMode"][slide_z_idx] = gymapi.DOF_MODE_EFFORT
+    # dof_prop["stiffness"][slide_x_idx] = 0
+    # dof_prop["stiffness"][slide_y_idx] = 0
+    # dof_prop["stiffness"][slide_z_idx] = 0
+    # dof_prop["damping"][slide_x_idx] = 0
+    # dof_prop["damping"][slide_y_idx] = 0
+    # dof_prop["damping"][slide_z_idx] = 0
     gym.set_actor_dof_properties(env, actor_handle, dof_prop)
     
 

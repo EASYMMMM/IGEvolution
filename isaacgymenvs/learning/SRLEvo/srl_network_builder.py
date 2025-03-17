@@ -51,6 +51,9 @@ class HumanoidBuilder(network_builder.A2CBuilder):
         def __init__(self, params, **kwargs):
             actions_num = kwargs.pop('actions_num_humanoid') # 获取动作数量
             input_shape = kwargs.pop('input_shape') # 获取输入形状
+            humanoid_obs_shape = kwargs.pop('obs_num_humanoid',False)
+            if humanoid_obs_shape:
+                input_shape = humanoid_obs_shape
             self.value_size = kwargs.pop('value_size', 1) # 获取价值输出的大小，默认为1
             self.num_seqs = num_seqs = kwargs.pop('num_seqs', 1)
 
@@ -248,6 +251,9 @@ class SRLBuilder(network_builder.A2CBuilder):
         def __init__(self, params, **kwargs):
             actions_num = kwargs.pop('actions_num_srl') # 获取动作数量
             input_shape = kwargs.pop('input_shape') # 获取输入形状
+            srl_obs_shape = kwargs.pop('obs_num_srl',False)
+            if srl_obs_shape:
+                input_shape = srl_obs_shape  
             self.value_size = kwargs.pop('value_size', 1) # 获取价值输出的大小，默认为1
             self.num_seqs = num_seqs = kwargs.pop('num_seqs', 1)
 

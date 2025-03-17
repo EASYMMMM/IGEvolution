@@ -211,6 +211,9 @@ class HumanoidAMPSRLv2Base(VecTask):
 
     def get_action_size(self):
         return NUM_ACTIONS
+    
+    def get_humanoid_obs_size(self):
+        return NUM_OBS
 
     def create_sim(self):
         self.up_axis_idx = 2 # index of up axis: Y=1, Z=2

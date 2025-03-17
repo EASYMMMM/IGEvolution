@@ -44,7 +44,10 @@ def my_load_checkpoint(filename,**kwargs):
     return state
 
 class SRLAgent(common_agent.CommonAgent):
-
+    '''
+    SRL-Gym v1
+    SRL Agent 和 Humanoid Agent使用相同的观测和奖励
+    '''
     def __init__(self, base_name, params, cfg = None):
         # super().__init__(base_name, params)
 
