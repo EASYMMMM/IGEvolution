@@ -59,6 +59,8 @@ env:
     second_leg_lenth: 0.80
     second_leg_size: 0.03
     third_leg_size: 0.03
+  freejoint_y: False
+  
   # ------------ ------------
 
 sim:

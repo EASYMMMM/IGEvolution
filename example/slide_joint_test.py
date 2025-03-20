@@ -84,7 +84,7 @@ asset_file = asset_descriptors[args.asset_id].file_name
 
 asset_options = gymapi.AssetOptions()
 # 固定基座位置
-asset_options.fix_base_link = False
+asset_options.fix_base_link = True
 asset_options.flip_visual_attachments = asset_descriptors[args.asset_id].flip_visual_attachments
 asset_options.use_mesh_materials = True
 asset_options.default_dof_drive_mode = gymapi.DOF_MODE_NONE
@@ -220,8 +220,8 @@ for i in range(num_envs):
 
     # 位控
     dof_prop["driveMode"] = gymapi.DOF_MODE_POS
-    dof_prop["stiffness"].fill(100000)
-    dof_prop["damping"].fill(2000)
+    dof_prop["stiffness"].fill(0)
+    dof_prop["damping"].fill(0)
     gym.set_actor_dof_properties(env, actor_handle, dof_prop)
 
     # 力控

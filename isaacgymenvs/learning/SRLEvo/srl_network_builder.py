@@ -255,7 +255,7 @@ class SRLBuilder(network_builder.A2CBuilder):
             if srl_obs_shape:
                 input_shape = srl_obs_shape  
             self.value_size = kwargs.pop('value_size', 1) # 获取价值输出的大小，默认为1
-            self.num_seqs = num_seqs = kwargs.pop('num_seqs', 1)
+            self.num_seqs  = kwargs.pop('num_seqs', 1)
 
             NetworkBuilder.BaseNetwork.__init__(self)
             self.load(params) # 载入参数设置

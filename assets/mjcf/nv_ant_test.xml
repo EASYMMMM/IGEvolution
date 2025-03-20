@@ -53,8 +53,8 @@
         <site class="force-torque" name="board_sensor"/>
         <geom name="board" pos="0 0 0" size="0.2 0.2 0.0005" type="box" density='100'/> 
         <body name="upper_head" pos="0.0 0.0 0.5">
-          <joint axis="0 0 1" name="neck" pos="0.0 0.0 0.0" range="-0.02 0.02"  />
-          <geom name="head_geom" pos="0  0  0" size="0.2" type="sphere" density='2000' /> 
+          <joint axis="1 0 0" name="neck" pos="0.0 0.0 0.0" range="-0.5 0.5"  />
+          <geom name="head_geom" pos="0  0  0.5" size="0.2" type="sphere" density='2000' /> 
         </body>
       </body>
 

@@ -91,6 +91,7 @@ class HumanoidAMPSRLv2Base(VecTask):
         self._autogen_model = self.cfg["env"].get("autogen_model", False)
         self._design_param_obs = self.cfg["env"].get("design_param_obs", False)
         self._load_cell_activate = self.cfg["env"].get("load_cell",False)
+        self._freejoint_y = self.cfg["env"].get("freejoint_y",True)
         # --- SRL-Gym Defined End ---
 
         self.cfg["env"]["numObservations"] = self.get_obs_size()
@@ -110,12 +111,16 @@ class HumanoidAMPSRLv2Base(VecTask):
                                                  7, -8, 9, -21, 22, -23, 24, -25, 26, -27, -14, 
                                                  15, -16, 17, -18, 19, -20,])
         self.mirror_idx_srl = np.array([-31, 32, 33, -28, 29, 30])
+        if self._freejoint_y:
+            self.mirror_idx_srl = np.array([28,-32,33,34,-29,30,31])
         self.mirror_idx = np.concatenate((self.mirror_idx_humanoid, self.mirror_idx_srl))
         obs_dim = self.mirror_idx.shape[0]
         self.mirror_mat = torch.zeros((obs_dim, obs_dim), dtype=torch.float32, device=self.device)
         for i, perm in enumerate(self.mirror_idx):
             self.mirror_mat[i, int(abs(perm))] = np.sign(perm)
         self.mirror_idx_act_srl = np.array([-3, 4, 5, -0.01, 1, 2, ])
+        if self._freejoint_y:
+            self.mirror_idx_act_srl = np.array([0.01, -4, 5, 6, -1, 2, 3, ])
         self.mirror_act_srl_mat = torch.zeros((self.mirror_idx_act_srl.shape[0], self.mirror_idx_act_srl.shape[0]), dtype=torch.float32, device=self.device)
         for i, perm in enumerate(self.mirror_idx_act_srl):
             self.mirror_act_srl_mat[i, int(abs(perm))] = np.sign(perm)
@@ -207,10 +212,15 @@ class HumanoidAMPSRLv2Base(VecTask):
             if self.cfg['env']['design_params']['mode'] == 'mode1':
                 design_param_num = 5
             obs_size = obs_size + design_param_num
+        if self._freejoint_y:
+            obs_size = obs_size + 2
         return obs_size
 
     def get_action_size(self):
-        return NUM_ACTIONS
+        num_actions = NUM_ACTIONS
+        if self._freejoint_y:
+            num_actions = num_actions + 1
+        return num_actions
     
     def get_humanoid_obs_size(self):
         return NUM_OBS
@@ -728,7 +738,7 @@ def dof_to_obs(pose):
     return dof_obs
 
 
-# @torch.jit.script
+@torch.jit.script
 def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, local_root_obs, load_cell):
     # type: (Tensor, Tensor, Tensor, Tensor, bool, Tensor) -> Tensor
     root_pos = root_states[:, 0:3]
