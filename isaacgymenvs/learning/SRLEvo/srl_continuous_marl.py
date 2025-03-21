@@ -811,18 +811,18 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         # self.scaler.step(self.optimizer)    # 2. 调用优化器的 step 方法，更新模型参数，并处理梯度的取消缩放
         # self.scaler.update()                # 3. 更新缩放因子，根据训练情况调整缩放因子以适应下一次迭代
 
-        if not self._train_srl_only:
-            self.scaler.scale(loss).backward()
-             
-            if self.truncate_grads:
-                # multiGPU相关代码已删除
-                self.scaler.unscale_(self.optimizer)
-                nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_norm)
-                self.scaler.step(self.optimizer)
-                self.scaler.update()    
-            else:
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
+         
+        self.scaler.scale(loss).backward()
+            
+        if self.truncate_grads:
+            # multiGPU相关代码已删除
+            self.scaler.unscale_(self.optimizer)
+            nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_norm)
+            self.scaler.step(self.optimizer)
+            self.scaler.update()    
+        else:
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
         
         # 计算 KL 散度
         with torch.no_grad():
