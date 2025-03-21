@@ -96,7 +96,6 @@ params:
     # ---- user defined ----
     actions_num_humanoid: 28
     actions_num_srl: 6
-    train_srl_only: False
     humanoid_checkpoint: False
     hsrl_checkpoint: False
     mirror_loss: True
@@ -107,6 +106,8 @@ params:
     train_dir: runs
     save_data: False  # 储存结果数据，用于演示
     save_load_cell_data: False  # 储存load cell数据，用于演示
+    train_srl: True
+    train_humanoid: True
     # -----------------------
 
 gym:

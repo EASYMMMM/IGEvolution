@@ -65,9 +65,11 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         self.network_path = self.nn_dir 
         
         net_config = self._build_net_config(params)  # 构建网络配置
+        net_config['input_shape'] = self.obs_num_humanoid
         # self.network: srl_models.ModelSRLContinuous
         self.model = self.network.build(net_config,role='humanoid')
         self.model.to(self.ppo_device)
+        net_config['input_shape'] = self.obs_num_srl
         self.model_srl = self.network.build(net_config,role='srl')
         self.model_srl.to(self.ppo_device)
         self.states = None
@@ -138,9 +140,9 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         }
         env_info = self.env_info
         # env_info['observation_space'] =  # TODO: Observation Space
+        env_info['observation_space'] = Box(np.ones(self.obs_num_humanoid) * -np.Inf, np.ones(self.obs_num_humanoid) * np.Inf)
         env_info['action_space'] = Box(-1,1,(self.actions_num_humanoid,1))
         self.experience_buffer = ExperienceBuffer(env_info, algo_info, self.ppo_device)
-        env_info['action_space'] = Box(-1,1,(self.actions_num_srl,1))
         
         self.current_rewards_srl = torch.zeros_like(self.current_rewards,dtype=torch.float32, device=self.ppo_device)
         self.current_rewards_amp = torch.zeros_like(self.current_rewards,dtype=torch.float32, device=self.ppo_device)
@@ -151,6 +153,8 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         self.current_rewards_srl_t_c = torch.zeros_like(self.current_rewards,dtype=torch.float32, device=self.ppo_device)
 
 
+        env_info['action_space'] = Box(-1,1,(self.actions_num_srl,1))
+        env_info['observation_space'] = Box(np.ones(self.obs_num_srl) * -np.Inf, np.ones(self.obs_num_srl) * np.Inf)
         self.experience_buffer_srl = ExperienceBuffer(env_info, algo_info, self.ppo_device)
         self.experience_buffer.tensor_dict['next_obses'] = torch.zeros_like(self.experience_buffer.tensor_dict['obses'])
         self.experience_buffer.tensor_dict['next_values'] = torch.zeros_like(self.experience_buffer.tensor_dict['values'])
@@ -205,8 +209,8 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         processed_obs = self._preproc_obs(obs['obs'])
         self.model.eval()
         self.model_srl.eval()
-        humanoid_obs = processed_obs[:, :self.obs_num_humanoid]
-        srl_obs = processed_obs[:, self.obs_num_humanoid:]
+        humanoid_obs = processed_obs[:, :self.obs_num_humanoid[0]]
+        srl_obs = processed_obs[:, self.obs_num_humanoid[0]:]
         humanoid_input_dict = {
             'is_train': False,
             'prev_actions': None, 
@@ -234,13 +238,28 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             #     res_dict['values'] = value
         return res_dict, res_dict_srl
 
-    # def mask_humanoid_obs(self, obs):
-    #     # root_h 1; root_rot_obs 6; local_root_vel 3 ; local_root_ang_vel 3 ; dof_obs 60; dof_vel 36 ; flat_local_key_pos 12
-    #     mask = torch.ones_like(obs)
-    #     mask[: , 66-1 : 66-1+self._srl_dof]  = 0  # SRL dof position
-    #     mask[: , 66-1+self._srl_dof+28:66-1+self._srl_dof+28+self._srl_dof] = 0
-    #     masked_obs = obs * mask
-    #     return masked_obs
+    def get_srl_mirrored_action_values(self, obs):
+        processed_obs = self._preproc_obs(obs['obs'])
+        self.model_srl.eval()
+        srl_input_dict = {
+            'is_train': False,
+            'prev_actions': None, 
+            'obs' : processed_obs,
+            'rnn_states' : self.rnn_states
+        }
+
+        with torch.no_grad():
+
+            res_dict_srl = self.model_srl(srl_input_dict)
+            # if self.has_central_value:
+            #     states = obs['states']
+            #     input_dict = {
+            #         'is_train': False,
+            #         'states' : states,
+            #     }
+            #     value = self.get_central_value(input_dict)
+            #     res_dict['values'] = value
+        return   res_dict_srl
     
     def play_steps(self):
         # 执行一轮完整的经验收集过程 
@@ -252,8 +271,8 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         for n in range(self.horizon_length):
             self.obs, done_env_ids = self._env_reset_done() # 重置环境
             total_obs = self.obs['obs']
-            humanoid_obs = total_obs[:, :self.obs_num_humanoid]
-            srl_obs = total_obs[:, self.obs_num_humanoid:]
+            humanoid_obs = total_obs[:, :self.obs_num_humanoid[0]]
+            srl_obs = total_obs[:, self.obs_num_humanoid[0]:]
             self.experience_buffer.update_data('obses', n, humanoid_obs)
             self.experience_buffer_srl.update_data('obses', n, srl_obs)
             
@@ -280,9 +299,9 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             
             total_obs = self.obs['obs']
             humanoid_obs = {} 
-            humanoid_obs['obs'] = total_obs[:, :self.obs_num_humanoid]
+            humanoid_obs['obs'] = total_obs[:, :self.obs_num_humanoid[0]]
             srl_obs = {}
-            srl_obs['obs'] = total_obs[:, self.obs_num_humanoid:]
+            srl_obs['obs'] = total_obs[:, self.obs_num_humanoid[0]:]
             
             # # srl reward
             # rewards_srl = infos["srl_rewards"]
@@ -313,15 +332,14 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             _srl_torque_cost = infos['srl_torque_cost']
             
             ''' humanoid value of next state '''
-            next_vals = self._eval_critic(self.obs)  
+            next_vals = self._eval_critic_humanoid(self.obs)  
             next_vals *= (1.0 - terminated)
             self.experience_buffer.update_data('next_values', n, next_vals)
             
             ''' Srl value of next state '''
-            # next_vals_srl = self._eval_critic_srl(self.obs)  
-            # next_vals_srl *= (1.0 - terminated)
-            # self.experience_buffer_srl.update_data('next_values', n, next_vals_srl)
-            self.experience_buffer_srl.update_data('next_values', n, next_vals)
+            next_vals_srl = self._eval_critic_srl(self.obs)  
+            next_vals_srl *= (1.0 - terminated)
+            self.experience_buffer_srl.update_data('next_values', n, next_vals_srl)
             
             # self.current_rewards_srl += rewards_srl
 
@@ -568,8 +586,10 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         return train_info
 
     def train_actor_critic(self, input_dict, input_dict_srl):
-        self.calc_gradients(input_dict)
-        self.calc_gradients_srl(input_dict_srl)
+        if self._train_humanoid:
+            self.calc_gradients(input_dict)
+        if self._train_srl:
+            self.calc_gradients_srl(input_dict_srl)
         
         return self.train_result
 
@@ -603,7 +623,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             obs_mirrored_batch = self._preproc_obs(obs_mirrored_batch) # 预处理观测
             batch_mirrored_dict = {}
             batch_mirrored_dict['obs'] = obs_mirrored_batch
-            _, res_dict_srl_mirrored =  self.get_action_values(batch_mirrored_dict)
+            res_dict_srl_mirrored =  self.get_srl_mirrored_action_values(batch_mirrored_dict)
             mu_mirrored = res_dict_srl_mirrored['mus']
         rnn_masks = None
         
@@ -892,7 +912,8 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         self._disc_reward_scale = config['disc_reward_scale']
         self._normalize_amp_input = config.get('normalize_amp_input', True)
 
-        self._train_srl_only = config['train_srl_only']
+        self._train_srl = config['train_srl']
+        self._train_humanoid  = config['train_humanoid']
         self._humanoid_checkpoint = config.get('humanoid_checkpoint',False)
         self._hsrl_checkpoint = config.get('hsrl_checkpoint',False)
 
@@ -908,8 +929,8 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         config['actions_num_srl'] = self.vec_env.env.get_srl_action_size()
         config['amp_input_shape'] = self._amp_observation_space.shape
 
-        config['obs_num_humanoid'] = self.vec_env.env.get_humanoid_obs_size()
-        config['obs_num_srl'] = self.vec_env.env.get_srl_obs_size()
+        config['obs_num_humanoid'] = (self.vec_env.env.get_humanoid_obs_size(),)
+        config['obs_num_srl'] = (self.vec_env.env.get_srl_obs_size(),)
 
         self.actions_num_humanoid = config['actions_num_humanoid']
         self.actions_num_srl = config['actions_num_srl']
@@ -1208,14 +1229,31 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             print("disc_pred: ", disc_pred, disc_reward)
         return
     
+    def _eval_critic_humanoid(self, obs_dict):
+        self.model.eval()
+        obs = obs_dict['obs']
+         
+        processed_obs = self._preproc_obs(obs)
+        humanoid_obs = processed_obs[:, :self.obs_num_humanoid[0]]
+        
+        if self.normalize_input:
+            processed_obs = self.model.norm_obs(humanoid_obs)
+        value = self.model.a2c_network.eval_critic(humanoid_obs)
+
+        if self.normalize_value:
+            value = self.value_mean_std(value, True)
+        return value
+    
     def _eval_critic_srl(self, obs_dict):
         self.model_srl.eval()
         obs = obs_dict['obs']
-
+        
         processed_obs = self._preproc_obs(obs)
+        srl_obs = processed_obs[:, :self.obs_num_srl[0]]
+
         if self.normalize_input:
-            processed_obs = self.model_srl.norm_obs(processed_obs)
-        value = self.model_srl.a2c_network.eval_critic(processed_obs)
+            processed_obs = self.model_srl.norm_obs(srl_obs)
+        value = self.model_srl.a2c_network.eval_critic(srl_obs)
 
         if self.normalize_value:
             value = self.value_mean_std(value, True)

@@ -50,7 +50,7 @@ from ..base.vec_task import VecTask
 
 DOF_BODY_IDS = [1, 2, 3, 4, 6, 7, 9, 10, 11, 12, 13, 14]
 DOF_OFFSETS = [0, 3, 6, 9, 10, 13, 14, 17, 18, 21, 24, 25, 28]
-NUM_OBS = 39 + 111 # humanoid: 111, 
+NUM_OBS = 38 + 111 # humanoid: 111, SRL 38
 NUM_HUMANOID_OBS = 13 + 52 + 28 + 12 + 6  # Humanoid基本观测 + 人机交互力
 NUM_ACTIONS = 28 + 6 + 1  # Actions humanoid (Dof=28) + SRL + freejoint-Y
 NUM_HUMANOID_ACTIONS = 28
@@ -112,13 +112,13 @@ class HumanoidAMPSRLmarlBase(VecTask):
         self.mirror_idx_humanoid = np.array([-0.0001, 1, -2, -3, 4, -5, -10, 11, -12,  13, -6,
                                                  7, -8, 9, -21, 22, -23, 24, -25, 26, -27, -14, 
                                                  15, -16, 17, -18, 19, -20,])
-        self.mirror_idx_srl = np.array([-31, 32, 33, -28, 29, 30])
+        self.mirror_idx_srl = np.array([28,-32,33,34,-29,30,31])
         self.mirror_idx = np.concatenate((self.mirror_idx_humanoid, self.mirror_idx_srl))
         obs_dim = self.mirror_idx.shape[0]
         self.mirror_mat = torch.zeros((obs_dim, obs_dim), dtype=torch.float32, device=self.device)
         for i, perm in enumerate(self.mirror_idx):
             self.mirror_mat[i, int(abs(perm))] = np.sign(perm)
-        self.mirror_idx_act_srl = np.array([-3, 4, 5, -0.01, 1, 2, ])
+        self.mirror_idx_act_srl = np.array([0.01, -4, 5, 6, -1, 2, 3, ])
         self.mirror_act_srl_mat = torch.zeros((self.mirror_idx_act_srl.shape[0], self.mirror_idx_act_srl.shape[0]), dtype=torch.float32, device=self.device)
         for i, perm in enumerate(self.mirror_idx_act_srl):
             self.mirror_act_srl_mat[i, int(abs(perm))] = np.sign(perm)
@@ -179,9 +179,10 @@ class HumanoidAMPSRLmarlBase(VecTask):
         self.rew_upper_buf = torch.zeros(           # 直立惩罚
             self.num_envs, device=self.device, dtype=torch.float)
         self.obs_mirrored_buf = torch.zeros(
-            (self.num_envs, self.num_obs), device=self.device, dtype=torch.float)
+            (self.num_envs, self.get_srl_obs_size()), device=self.device, dtype=torch.float)
         if self._design_param_obs:
             design_param = self._get_design_param()
+        self.observation_space
 
         if self.viewer != None:
             self._init_camera()
@@ -469,7 +470,7 @@ class HumanoidAMPSRLmarlBase(VecTask):
             self.obs_buf[:] = obs
             self.obs_mirrored_buf[:] = obs_mirrored
         else:
-            self.obs_buf[env_ids] = obs
+            self.obs_buf[env_ids] = obs # FIXME
             self.obs_mirrored_buf[env_ids] = obs_mirrored
 
         return
@@ -485,6 +486,7 @@ class HumanoidAMPSRLmarlBase(VecTask):
                 srl_end_body_pos = self._rigid_body_pos[:,self._srl_endpos_ids, :]
                 key_body_pos = torch.cat((key_body_pos, srl_end_body_pos), dim=1)
             target_v = self.get_task_target_v() # Target speed
+            dof_force_tensor = self.dof_force_tensor
         else:
             root_states = self._root_states[env_ids]
             dof_pos = self._dof_pos[env_ids]
@@ -495,17 +497,18 @@ class HumanoidAMPSRLmarlBase(VecTask):
                 srl_end_body_pos = self._rigid_body_pos[env_ids][:,self._srl_endpos_ids, :]
                 key_body_pos = torch.cat((key_body_pos, srl_end_body_pos), dim=1)
             target_v = self.get_task_target_v(env_ids) # Target speed
-        
+            dof_force_tensor = self.dof_force_tensor[env_ids]
+
         humanoid_obs = compute_humanoid_observations(root_states, dof_pos, dof_vel,
                                             key_body_pos, self._local_root_obs,
                                             load_cell_sensor)
-        srl_obs = compute_humanoid_observations(root_states, dof_pos, dof_vel,
+        srl_obs = compute_srl_observations(root_states, dof_pos, dof_vel,
                                             key_body_pos, self._local_root_obs,
-                                            load_cell_sensor,self.dof_force_tensor)
+                                            load_cell_sensor, dof_force_tensor)
         obs = torch.cat((humanoid_obs, srl_obs),dim=1)
         obs_mirrored = compute_srl_observations_mirrored(root_states, dof_pos, dof_vel,
                                             key_body_pos, self._local_root_obs, 
-                                            load_cell_sensor, self.mirror_mat)
+                                            load_cell_sensor, self.mirror_mat, dof_force_tensor)
         if self._target_v_task:
             #target_v= target_v.unsqueeze(1)
             obs = torch.cat((obs, target_v),dim=1)
@@ -808,15 +811,15 @@ def compute_srl_observations(root_states, dof_pos, dof_vel, key_body_pos, local_
 
     load_cell_force = - load_cell
 
-    # TODO: 考虑去除Y轴free joint信息
+    # Y轴free joint仅保留角度信息
     srl_dof_obs = dof_pos[:,28:] # 仅保留srl关节位置
-    srl_dof_vel = dof_vel[:,28:]
-    srl_dof_force = dof_force_tensor[:,28:]
+    srl_dof_vel = dof_vel[:,29:]
+    srl_dof_force = dof_force_tensor[:,29:]
     # root_h 1; root_rot_obs 6; local_root_vel 3 ; local_root_ang_vel 3 ; dof_obs 6; dof_vel 6 ; load_cell_force 6, dof_force 12
     obs = torch.cat((root_h, root_rot_obs, local_root_vel, local_root_ang_vel, srl_dof_obs, srl_dof_vel, load_cell_force, srl_dof_force), dim=-1)
     return obs
 
-@torch.jit.script
+# @torch.jit.script
 def compute_srl_observations_mirrored(root_states, dof_pos, dof_vel, key_body_pos, local_root_obs , load_cell , mirror_mat, dof_force_tensor):
     # type: (Tensor, Tensor, Tensor, Tensor, bool, Tensor, Tensor, Tensor) -> Tensor
     root_pos = root_states[:, 0:3]
@@ -876,10 +879,10 @@ def compute_srl_observations_mirrored(root_states, dof_pos, dof_vel, key_body_po
     load_cell_mirror[:,3] = -load_cell_mirror[:,3]  # x轴角速度
     load_cell_mirror[:,5] = -load_cell_mirror[:,5]  # z轴角速度
 
-    # TODO: 考虑去除Y轴free joint信息
+    # Y轴free joint仅保留角度信息
     srl_dof_obs = dof_obs[:,52:] # 仅保留srl关节位置
-    srl_dof_vel = dof_vel[:,28:]
-    srl_dof_force = dof_force[:,28:] 
+    srl_dof_vel = dof_vel[:,29:]
+    srl_dof_force = dof_force[:,29:] 
 
     # root_h 1; root_rot_obs 6; local_root_vel 3 ; local_root_ang_vel 3 ; dof_obs 60; dof_vel 36 ; flat_local_key_pos 12
     obs = torch.cat((root_h, root_rot_obs, local_root_vel, local_root_ang_vel, srl_dof_obs, srl_dof_vel, load_cell_mirror, srl_dof_force), dim=-1)

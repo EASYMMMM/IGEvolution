@@ -194,7 +194,7 @@ def launch_rlg_hydra(cfg: DictConfig):
         model_builder.register_network('amp', lambda **kwargs : amp_network_builder.AMPBuilder())
         # SRL 
         runner.algo_factory.register_builder('srl_continuous', lambda **kwargs : srl_continuous.SRLAgent(**kwargs))
-        runner.algo_factory.register_builder('srl_marl_continuous', lambda **kwargs : srl_continuous_marl.SRL_MultiAgent(**kwargs))
+        runner.algo_factory.register_builder('srl_continuous_marl', lambda **kwargs : srl_continuous_marl.SRL_MultiAgent(**kwargs))
         runner.player_factory.register_builder('srl_continuous', lambda **kwargs : srl_players.SRLPlayerContinuous(**kwargs))
         model_builder.register_model('continuous_srl', lambda network, **kwargs : srl_models.ModelSRLContinuous(network))
         model_builder.register_network('amp_humanoid', lambda **kwargs : srl_network_builder.HumanoidBuilder())
