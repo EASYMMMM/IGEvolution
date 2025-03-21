@@ -53,7 +53,8 @@ DOF_OFFSETS = [0, 3, 6, 9, 10, 13, 14, 17, 18, 21, 24, 25, 28]
 NUM_OBS = 13 + 58 + 28 + 12 + 6 + 6 #TODO： 单纯humanoid为103+6(6D Load Cell) SRL修改为6  [root_h, root_rot, root_vel, root_ang_vel, dof_pos, dof_vel, key_body_pos]
 NUM_ACTIONS = 28 + 6   # Actions humanoid (Dof=28) + SRL
 
-UPPER_BODY_NAMES = ["pelvis", "torso"]
+SRL_ROOT_BODY_NAMES = ["SRL", "SRL_root"] 
+UPPER_BODY_NAMES = ["pelvis", "torso"]  # TODO： SRL Direction
 KEY_BODY_NAMES = ["right_hand", "left_hand", "right_foot", "left_foot"]  # body end + SRL end
 SRL_END_BODY_NAMES = ["SRL_right_end","SRL_left_end"] 
 SRL_CONTACT_BODY_NAMES = ['SRL_root', 'SRL_leg2', 'SRL_shin11', 'SRL_right_end', 'SRL_leg1', 'SRL_shin1', 'SRL_left_end']
@@ -361,6 +362,7 @@ class HumanoidAMPSRLv2Base(VecTask):
 
         self._key_body_ids = self._build_key_body_ids_tensor(env_ptr, handle)
         self._upper_body_ids = self._build_upper_body_ids_tensor(env_ptr, handle)
+        self._srl_root_body_ids = self._build_srl_root_body_ids_tensor(env_ptr, handle)
         self._contact_body_ids = self._build_contact_body_ids_tensor(env_ptr, handle)
         
         self._srl_endpos_ids = self._build_srl_endpos_body_ids_tensor(env_ptr, handle)
@@ -427,13 +429,14 @@ class HumanoidAMPSRLv2Base(VecTask):
 
     def _compute_reward(self, actions):
         upper_body_pos = self._rigid_body_pos[:, self._upper_body_ids, :]
+        srl_root_body_pos = self._rigid_body_pos[:, self._srl_root_body_ids, :]
         load_cell_sensor = self.vec_sensor_tensor[:,self.load_cell_ssidx,:]
         self.rew_buf[:], self.rew_v_pen_buf[:], self.rew_joint_cost_buf[:], self.rew_upper_buf[:] = compute_humanoid_reward(self.obs_buf, 
                                                                                                      self.dof_force_tensor, 
                                                                                                      self._contact_forces,
                                                                                                      actions,
                                                                                                      self._torque_threshold,
-                                                                                                     upper_body_pos,
+                                                                                                     srl_root_body_pos,
                                                                                                      self._upper_reward_w,
                                                                                                      self._srl_joint_ids,
                                                                                                      load_cell_sensor,
@@ -596,6 +599,18 @@ class HumanoidAMPSRLv2Base(VecTask):
         # used to calculate the balance reward
         body_ids = []
         for body_name in UPPER_BODY_NAMES:
+            body_id = self.gym.find_actor_rigid_body_handle(env_ptr, actor_handle, body_name)
+            assert(body_id != -1)
+            body_ids.append(body_id)
+
+        body_ids = to_torch(body_ids, device=self.device, dtype=torch.long)
+        return body_ids
+    
+    def _build_srl_root_body_ids_tensor(self, env_ptr, actor_handle):
+        # get id of upper body 
+        # used to calculate the balance reward
+        body_ids = []
+        for body_name in SRL_ROOT_BODY_NAMES:
             body_id = self.gym.find_actor_rigid_body_handle(env_ptr, actor_handle, body_name)
             assert(body_id != -1)
             body_ids.append(body_id)
@@ -845,7 +860,7 @@ def compute_humanoid_observations_mirrored(root_states, dof_pos, dof_vel, key_bo
 
 
 # 计算任务奖励函数
-@torch.jit.script
+# @torch.jit.script
 def compute_humanoid_reward(obs_buf, 
                             dof_force_tensor, 
                             contact_buf,  # body net contact force
@@ -892,12 +907,13 @@ def compute_humanoid_reward(obs_buf,
                                  torch.zeros_like(torque_usage))
     torque_reward  = - torch.sum(torque_penalty, dim=1)
     
-    # 躯干直立奖励
-    lower_pos = upper_body_pos[:, 0, :]  # (4096, 3)
-    upper_pos = upper_body_pos[:, 1, :]  # (4096, 3)
-    upper_body_direction = upper_pos - lower_pos  # 维度 (4096, 3)
+    # 外肢体平面奖励
+    board_pos = upper_body_pos[:, 0, :]  # (4096, 3)
+    root_pos = upper_body_pos[:, 1, :]  # (4096, 3)
+    upper_body_direction = board_pos - root_pos  # 维度 (4096, 3)
     norm_upper_body_direction = upper_body_direction / torch.norm(upper_body_direction, dim=1, keepdim=True)
-    upper_reward = upper_reward_w * (norm_upper_body_direction[:,2] - 1 )
+    # upper_reward = upper_reward_w * (norm_upper_body_direction[:,2] - 1 )
+    upper_reward = upper_reward_w * (torch.abs(norm_upper_body_direction[:,2]) )
 
     # SRL受到力矩惩罚
     srl_joint_forces = dof_force_tensor[:,  srl_joint_ids]

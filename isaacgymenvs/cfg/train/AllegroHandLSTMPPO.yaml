@@ -58,7 +58,7 @@ params:
     mixed_precision: False
     normalize_input: True
     normalize_value: True
-    value_bootstrap: False  # TODO: enable bootstrap?
+    value_bootstrap: False   
     num_actors: ${....task.env.numEnvs}
     reward_shaper:
       scale_value: 1.0

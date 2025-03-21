@@ -22,11 +22,11 @@
    `sudo systemctl start todeskd.service`
 
 - **通过SCP从服务器传输训练模型回本地：**
-   `scp -r  QH-MAIS:/nfs/IGEvolution/IGEvolution/isaacgymenvs/runs/TRO_SRL_v2.3.2.3_A100_17-21-29-12  /home/zdh232/mly/IGEvolution/isaacgymenvs/runs`
+   `scp -r  QH-MAIS:/nfs/IGEvolution/IGEvolution/isaacgymenvs/runs/TRO_SRL_v2.3.4.2_A100_20-15-06-53  /home/zdh232/mly/IGEvolution/isaacgymenvs/runs`
    `scp -r user@172.18.41.167:/home/user/mly/IGEvolution/isaacgymenvs/runs/SRL_walk_v2.0_A100_16-18-37-52  /home/zdh/mly/IGEvolution/isaacgymenvs/runs`
 
 - **通过SCP从本地传输训练模型到服务器：**
-   `scp -r TRO_SRL_v2.1.1_4090D_10-21-04-43 QH-MAIS:/nfs/IGEvolution/IGEvolution/isaacgymenvs/runs/`
+   `scp -r TRO_SRL_v2.3.3.1_4090D_20-11-08-14 QH-MAIS:/nfs/IGEvolution/IGEvolution/isaacgymenvs/runs/`
 
 ### 0.1 一键配置Titan Ubuntu训练终端
 ```bash

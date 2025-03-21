@@ -50,9 +50,9 @@ from ..base.vec_task import VecTask
 
 DOF_BODY_IDS = [1, 2, 3, 4, 6, 7, 9, 10, 11, 12, 13, 14]
 DOF_OFFSETS = [0, 3, 6, 9, 10, 13, 14, 17, 18, 21, 24, 25, 28]
-NUM_OBS = 13 + 58 + 28 + 12 + 6 + 6 #TODO： 单纯humanoid为103+6(6D Load Cell) SRL修改为6  [root_h, root_rot, root_vel, root_ang_vel, dof_pos, dof_vel, key_body_pos]
+NUM_OBS = 39 + 111 # humanoid: 111, 
 NUM_HUMANOID_OBS = 13 + 52 + 28 + 12 + 6  # Humanoid基本观测 + 人机交互力
-NUM_ACTIONS = 28 + 6   # Actions humanoid (Dof=28) + SRL
+NUM_ACTIONS = 28 + 6 + 1  # Actions humanoid (Dof=28) + SRL + freejoint-Y
 NUM_HUMANOID_ACTIONS = 28
 
 

@@ -137,6 +137,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             'use_action_masks' : self.use_action_masks
         }
         env_info = self.env_info
+        # env_info['observation_space'] =  # TODO: Observation Space
         env_info['action_space'] = Box(-1,1,(self.actions_num_humanoid,1))
         self.experience_buffer = ExperienceBuffer(env_info, algo_info, self.ppo_device)
         env_info['action_space'] = Box(-1,1,(self.actions_num_srl,1))
@@ -204,26 +205,25 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         processed_obs = self._preproc_obs(obs['obs'])
         self.model.eval()
         self.model_srl.eval()
-        input_dict = {
+        humanoid_obs = processed_obs[:, :self.obs_num_humanoid]
+        srl_obs = processed_obs[:, self.obs_num_humanoid:]
+        humanoid_input_dict = {
             'is_train': False,
             'prev_actions': None, 
-            'obs' : processed_obs,
+            'obs' : humanoid_obs,
             'rnn_states' : self.rnn_states
         }
-        if self._humanoid_obs_masked :  # humanoid 部分观测
-            masked_input_dict = {
+        srl_input_dict = {
             'is_train': False,
             'prev_actions': None, 
-            'obs' : self.mask_humanoid_obs(processed_obs), # TODO:humanoid观测掩码
-            'rnn_states' : self.rnn_states                
-            }
+            'obs' : srl_obs,
+            'rnn_states' : self.rnn_states
+        }
 
         with torch.no_grad():
-            if self._humanoid_obs_masked : # humanoid 部分观测
-                res_dict = self.model(masked_input_dict)
-            else:
-                res_dict = self.model(input_dict)
-            res_dict_srl = self.model_srl(input_dict)
+
+            res_dict = self.model(humanoid_input_dict)
+            res_dict_srl = self.model_srl(srl_input_dict)
             # if self.has_central_value:
             #     states = obs['states']
             #     input_dict = {
@@ -234,13 +234,13 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             #     res_dict['values'] = value
         return res_dict, res_dict_srl
 
-    def mask_humanoid_obs(self, obs):
-        # root_h 1; root_rot_obs 6; local_root_vel 3 ; local_root_ang_vel 3 ; dof_obs 60; dof_vel 36 ; flat_local_key_pos 12
-        mask = torch.ones_like(obs)
-        mask[: , 66-1 : 66-1+self._srl_dof]  = 0  # SRL dof position
-        mask[: , 66-1+self._srl_dof+28:66-1+self._srl_dof+28+self._srl_dof] = 0
-        masked_obs = obs * mask
-        return masked_obs
+    # def mask_humanoid_obs(self, obs):
+    #     # root_h 1; root_rot_obs 6; local_root_vel 3 ; local_root_ang_vel 3 ; dof_obs 60; dof_vel 36 ; flat_local_key_pos 12
+    #     mask = torch.ones_like(obs)
+    #     mask[: , 66-1 : 66-1+self._srl_dof]  = 0  # SRL dof position
+    #     mask[: , 66-1+self._srl_dof+28:66-1+self._srl_dof+28+self._srl_dof] = 0
+    #     masked_obs = obs * mask
+    #     return masked_obs
     
     def play_steps(self):
         # 执行一轮完整的经验收集过程 
@@ -251,8 +251,11 @@ class SRL_MultiAgent(common_agent.CommonAgent):
 
         for n in range(self.horizon_length):
             self.obs, done_env_ids = self._env_reset_done() # 重置环境
-            self.experience_buffer.update_data('obses', n, self.obs['obs'])
-            self.experience_buffer_srl.update_data('obses', n, self.obs['obs'])
+            total_obs = self.obs['obs']
+            humanoid_obs = total_obs[:, :self.obs_num_humanoid]
+            srl_obs = total_obs[:, self.obs_num_humanoid:]
+            self.experience_buffer.update_data('obses', n, humanoid_obs)
+            self.experience_buffer_srl.update_data('obses', n, srl_obs)
             
 
             res_dict, res_dict_srl = self.get_action_values(self.obs) # 获取动作值
@@ -272,8 +275,14 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             # action拼接
             conbined_action = torch.cat((res_dict['actions'], res_dict_srl['actions']), dim=-1)
             
-            #self.obs, rewards, self.dones, infos = self.env_step(res_dict['actions'])
+            # simulation step
             self.obs, rewards, self.dones, infos = self.env_step(conbined_action)
+            
+            total_obs = self.obs['obs']
+            humanoid_obs = {} 
+            humanoid_obs['obs'] = total_obs[:, :self.obs_num_humanoid]
+            srl_obs = {}
+            srl_obs['obs'] = total_obs[:, self.obs_num_humanoid:]
             
             # # srl reward
             # rewards_srl = infos["srl_rewards"]
@@ -282,14 +291,14 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             ''' humanoid buffer '''
             shaped_rewards = self.rewards_shaper(rewards)  # DefaultRewardsShaper
             self.experience_buffer.update_data('rewards', n, shaped_rewards)
-            self.experience_buffer.update_data('next_obses', n, self.obs['obs'])
+            self.experience_buffer.update_data('next_obses', n, humanoid_obs['obs'])
             self.experience_buffer.update_data('dones', n, self.dones)
             self.experience_buffer.update_data('amp_obs', n, infos['amp_obs'])
             
             ''' srl buffer '''
             # shaped_rewards_srl = self.rewards_shaper(rewards_srl)
             self.experience_buffer_srl.update_data('rewards', n, shaped_rewards)
-            self.experience_buffer_srl.update_data('next_obses', n, self.obs['obs'])
+            self.experience_buffer_srl.update_data('next_obses', n, srl_obs['obs'])
             self.experience_buffer_srl.update_data('dones', n, self.dones)
             if self.mirror_loss:
                 self.experience_buffer_srl.update_data('obs_mirrored', n, mirrored_obs['obs'])
@@ -861,8 +870,11 @@ class SRL_MultiAgent(common_agent.CommonAgent):
     def _load_config_params(self, config):
         super()._load_config_params(config)
 
-        self.actions_num_humanoid = config['actions_num_humanoid']
-        self.actions_num_srl = config['actions_num_srl']
+        # self.actions_num_humanoid = config['actions_num_humanoid']
+        # self.actions_num_srl = config['actions_num_srl']
+        # self.obs_num_humanoid = config['obs_num_humanoid']
+        # self.obs_num_srl = config['obs_num_srl']
+
 
         self._start_frame = config.get('start_frame',0)
         self._task_reward_w = config['task_reward_w']
@@ -898,6 +910,11 @@ class SRL_MultiAgent(common_agent.CommonAgent):
 
         config['obs_num_humanoid'] = self.vec_env.env.get_humanoid_obs_size()
         config['obs_num_srl'] = self.vec_env.env.get_srl_obs_size()
+
+        self.actions_num_humanoid = config['actions_num_humanoid']
+        self.actions_num_srl = config['actions_num_srl']
+        self.obs_num_humanoid = config['obs_num_humanoid']
+        self.obs_num_srl = config['obs_num_srl']
         return config
 
     def _init_train(self):
