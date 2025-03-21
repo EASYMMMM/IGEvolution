@@ -586,8 +586,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         return train_info
 
     def train_actor_critic(self, input_dict, input_dict_srl):
-        if self._train_humanoid:
-            self.calc_gradients(input_dict)
+        self.calc_gradients(input_dict)
         if self._train_srl:
             self.calc_gradients_srl(input_dict_srl)
         
@@ -687,11 +686,13 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             # multiGPU 相关代码已删除
             self.scaler_srl.unscale_(self.optimizer_srl)
             nn.utils.clip_grad_norm_(self.model_srl.parameters(), self.grad_norm)
-            self.scaler_srl.step(self.optimizer_srl)
-            self.scaler_srl.update()    
+            if self._train_srl:
+                self.scaler_srl.step(self.optimizer_srl)
+                self.scaler_srl.update()    
         else:
-            self.scaler_srl.step(self.optimizer_srl)
-            self.scaler_srl.update()
+            if self._train_srl:
+                self.scaler_srl.step(self.optimizer_srl)
+                self.scaler_srl.update()
         
         # 计算 KL 散度
         with torch.no_grad():
@@ -818,11 +819,13 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             # multiGPU相关代码已删除
             self.scaler.unscale_(self.optimizer)
             nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_norm)
-            self.scaler.step(self.optimizer)
-            self.scaler.update()    
+            if self._train_humanoid:
+                self.scaler.step(self.optimizer)
+                self.scaler.update()    
         else:
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
+            if self._train_humanoid:
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
         
         # 计算 KL 散度
         with torch.no_grad():
