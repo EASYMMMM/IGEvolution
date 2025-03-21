@@ -587,8 +587,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
 
     def train_actor_critic(self, input_dict, input_dict_srl):
         self.calc_gradients(input_dict)
-        if self._train_srl:
-            self.calc_gradients_srl(input_dict_srl)
+        self.calc_gradients_srl(input_dict_srl)
         
         return self.train_result
 
