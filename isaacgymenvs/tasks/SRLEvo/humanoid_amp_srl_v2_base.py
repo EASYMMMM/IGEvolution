@@ -913,7 +913,7 @@ def compute_humanoid_reward(obs_buf,
     upper_body_direction = board_pos - root_pos  # 维度 (4096, 3)
     norm_upper_body_direction = upper_body_direction / torch.norm(upper_body_direction, dim=1, keepdim=True)
     # upper_reward = upper_reward_w * (norm_upper_body_direction[:,2] - 1 )
-    upper_reward = upper_reward_w * (torch.abs(norm_upper_body_direction[:,2]) )
+    upper_reward = - upper_reward_w * (torch.abs(norm_upper_body_direction[:,2]) )
 
     # SRL受到力矩惩罚
     srl_joint_forces = dof_force_tensor[:,  srl_joint_ids]
