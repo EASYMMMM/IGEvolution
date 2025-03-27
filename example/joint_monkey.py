@@ -34,7 +34,7 @@ class AssetDesc:
 
 
 asset_descriptors = [
-    AssetDesc("mjcf/humanoid_srl_v3/hsrl_mode1_v3_s1.xml", False),
+    AssetDesc("mjcf/humanoid_srl_v3/hsrl_mode1_v3_2.xml", False),
     AssetDesc("mjcf/nv_ant_test.xml", False),
     AssetDesc("mjcf/humanoid_srl/humanoid_srl_mode2.xml", False),
 

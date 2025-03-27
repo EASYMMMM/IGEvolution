@@ -508,6 +508,7 @@ def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, l
     local_end_pos = my_quat_rotate(flat_heading_rot, flat_end_pos)
     flat_local_key_pos = local_end_pos.view(local_key_body_pos.shape[0], local_key_body_pos.shape[1] * local_key_body_pos.shape[2])
 
+    # 6D人机交互力
     load_cell_force = - load_cell
     
     dof_obs = dof_to_obs(dof_pos)
