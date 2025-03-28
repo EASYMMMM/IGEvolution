@@ -128,7 +128,7 @@
 				<body name="SRL_root" pos="0.55 0 0" >
                     <joint armature="0.02" axis="0 1 0" damping="0" name="SRL_freejoint_y" pos="-0.525 0 0" range="-45 45" stiffness="0"/>
 					<geom density="25" name="SRL_geom_root" pos="0 0 0" size="0.2 0.095 0.05" type="box"/>
-					<geom density="1000" name="SRL_geom_load" pos="0 0 0.35" size="0.13 0.13 0.22" type="box"/>
+					<geom density="20" name="SRL_geom_load" pos="0 0 0.35" size="0.13 0.13 0.22" type="box"/>
 					<body name="SRL_right_leg1" pos="0.02 0.13 0" quat="1.0 0.0 0.0 0.0">
 						<geom density="25" fromto="0 0 0 0.35 0 0" name="SRL_geom_right_leg1" size="0.03" type="capsule"/>
 						<joint armature="0.02" axis="0 0 1" damping="30" name="SRL_joint_right_hipjoint_z" pos="0 0 0" range="0 40" stiffness="300"/>
