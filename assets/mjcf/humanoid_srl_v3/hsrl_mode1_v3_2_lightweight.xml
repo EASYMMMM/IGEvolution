@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 添加board刚体用作六轴力传感器 -->
+<!-- 分段训练 将SRL系统重量设置为非常轻 -->
 <mujoco model="XMLModel">
 	<statistic center="0 0 1" extent="2"/>
 	<option timestep="0.00555"/>
@@ -127,30 +127,30 @@
                 <geom name="board" pos="0 0 0" size="0.0005 0.1 0.1 " type="box" density='100'/> 
 				<body name="SRL_root" pos="0.55 0 0" >
                     <joint armature="0.02" axis="0 1 0" damping="0" name="SRL_freejoint_y" pos="-0.525 0 0" range="-45 45" stiffness="0"/>
-					<geom density="2500" name="SRL_geom_root" pos="0 0 0" size="0.2 0.095 0.05" type="box"/>
-					<geom density="2000" name="SRL_geom_load" pos="0 0 0.35" size="0.13 0.13 0.22" type="box"/>
+					<geom density="25" name="SRL_geom_root" pos="0 0 0" size="0.2 0.095 0.05" type="box"/>
+					<geom density="1000" name="SRL_geom_load" pos="0 0 0.35" size="0.13 0.13 0.22" type="box"/>
 					<body name="SRL_right_leg1" pos="0.02 0.13 0" quat="1.0 0.0 0.0 0.0">
-						<geom density="2500" fromto="0 0 0 0.35 0 0" name="SRL_geom_right_leg1" size="0.03" type="capsule"/>
+						<geom density="25" fromto="0 0 0 0.35 0 0" name="SRL_geom_right_leg1" size="0.03" type="capsule"/>
 						<joint armature="0.02" axis="0 0 1" damping="30" name="SRL_joint_right_hipjoint_z" pos="0 0 0" range="0 40" stiffness="300"/>
 						<joint armature="0.02" axis="0 1 0" damping="30" name="SRL_joint_right_hipjoint_y" pos="0 0 0" range="-5 70" stiffness="300"/>
 						<body name="SRL_right_leg2" pos="0.35 0 0" quat="0.92388 0.0 0.38268 0.0">
-							<geom density="2500" fromto="0 0 0 0.7 0 0" name="SRL_geom_right_leg2" size="0.03" type="capsule"/>
+							<geom density="25" fromto="0 0 0 0.7 0 0" name="SRL_geom_right_leg2" size="0.03" type="capsule"/>
 							<joint armature="0.02" axis="0 1 0" damping="30" name="SRL_joint_right_kneejoint" pos="0 0 0" range="-50 50" stiffness="300"/>
 							<body name="SRL_right_end" pos="0.7 0 0" quat="0.70711 0.0 -0.70711 0.0">
-								<geom density="2500" friction="5.0 0.05 0.05" name="SRL_geom_right_end" pos="0 0 -0.045" size="0.05" type="sphere"/>
+								<geom density="25" friction="5.0 0.05 0.05" name="SRL_geom_right_end" pos="0 0 -0.045" size="0.05" type="sphere"/>
 								<!-- <joint armature="0.02" axis="0 1 0" damping="30" name="SRL_joint_right_ankle" pos="0 0 0" range="-5 5" stiffness="300"/> -->
 							</body>
 						</body>
 					</body>
 					<body name="SRL_left_leg1" pos="0.02 -0.13 0" quat="1.0 0.0 0.0 0.0">
-						<geom density="2500" fromto="0 0 0 0.35 0 0" name="SRL_geom_left_leg1" size="0.03" type="capsule"/>
+						<geom density="25" fromto="0 0 0 0.35 0 0" name="SRL_geom_left_leg1" size="0.03" type="capsule"/>
 						<joint armature="0.02" axis="0 0 1" damping="30" name="SRL_joint_left_hip_z" pos="0 0 0" range="-40 0" stiffness="300"/>
 						<joint armature="0.02" axis="0 1 0" damping="30" name="SRL_joint_left_hip_y" pos="0 0 0" range="-5 70" stiffness="300"/>
 						<body name="SRL_left_leg2" pos="0.35 0 0" quat="0.92388 0.0 0.38268 0.0">
-							<geom density="2500" fromto="0 0 0 0.7 0 0" name="SRL_geom_left_leg2" size="0.03" type="capsule"/>
+							<geom density="25" fromto="0 0 0 0.7 0 0" name="SRL_geom_left_leg2" size="0.03" type="capsule"/>
 							<joint armature="0.02" axis="0 1 0" damping="30" name="SRL_joint_left_kneejoint" pos="0 0 0" range="-50 50" stiffness="300"/>
 							<body name="SRL_left_end" pos="0.7 0 0" quat="0.70711 0.0 -0.70711 0.0">
-								<geom density="2500" friction="5.0 0.05 0.05" name="SRL_geom_left_end" pos="0 0 -0.045" size="0.05" type="sphere"/>
+								<geom density="25" friction="5.0 0.05 0.05" name="SRL_geom_left_end" pos="0 0 -0.045" size="0.05" type="sphere"/>
 								<!-- <joint armature="0.02" axis="0 1 0" damping="30" name="SRL_joint_left_ankle" pos="0 0 0" range="-5 5" stiffness="300"/> -->
 							</body>
 						</body>

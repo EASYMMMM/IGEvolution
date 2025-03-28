@@ -60,6 +60,9 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
         self._print_disc_prediction = config.get('print_disc_prediction', False)
         self.actions_num_humanoid = config.get('actions_num_humanoid')
         # ---- SRL-Gym Defined ----
+        self.seperate_obs = config.get('seperate_obs',False)
+        self.obs_num_humanoid = config.get('obs_num_humanoid',False)
+        self.obs_num_srl = config.get('obs_num_srl',False)
         self._save_data = config.get('save_data', False)
         self._save_load_cell_data = config.get('save_load_cell_data', False)
         super().__init__(params)
@@ -85,8 +88,12 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
     
     def _build_net(self, config):
         #super()._build_net(config)
+        if self.obs_num_humanoid:
+            config['input_shape'] = self.obs_num_humanoid
         self.model = self.network.build(config,role='humanoid')
         self.model.to(self.device)
+        if self.obs_num_srl:
+            config['input_shape'] = self.obs_num_srl
         self.model_srl = self.network.build(config,role='srl')
         self.model_srl.to(self.device)
 
@@ -113,6 +120,53 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
         with torch.no_grad():
             res_dict = self.model(input_dict)
             res_dict_srl = self.model_srl(input_dict)
+        mu_humanoid = res_dict['mus']
+        action_humanoid = res_dict['actions']
+        mu_srl = res_dict_srl['mus']
+        action_srl = res_dict_srl['actions']
+        mu = torch.cat((mu_humanoid,mu_srl),1)
+        action = torch.cat((action_humanoid, action_srl),1)
+        self.states = res_dict['rnn_states']
+        if is_deterministic:
+            current_action = mu
+        else:
+            current_action = action
+        if self.has_batch_dimension == False:
+            current_action = torch.squeeze(current_action.detach())
+
+        if self.clip_actions:
+            return rescale_actions(self.actions_low, self.actions_high, torch.clamp(current_action, -1.0, 1.0))
+        else:
+            return current_action
+        
+    def get_action_ma(self, obs_dict, is_deterministic = False):
+        # used for multi agents
+        # The obs spaces of SRL & Humanoid are seperated.
+        obs = obs_dict['obs']
+        if self.has_batch_dimension == False:
+            obs = unsqueeze_obs(obs)
+        processed_obs = self._preproc_obs(obs)
+        self.model.eval()
+        self.model_srl.eval()
+        humanoid_obs = processed_obs[:, :self.obs_num_humanoid]
+        srl_obs = processed_obs[:, self.obs_num_humanoid:]
+        humanoid_input_dict = {
+            'is_train': False,
+            'prev_actions': None, 
+            'obs' : humanoid_obs,
+            'rnn_states' : self.states
+        }
+        srl_input_dict = {
+            'is_train': False,
+            'prev_actions': None, 
+            'obs' : srl_obs,
+            'rnn_states' : self.states
+        }
+
+        with torch.no_grad():
+            res_dict = self.model(humanoid_input_dict)
+            res_dict_srl = self.model_srl(srl_input_dict)
+ 
         mu_humanoid = res_dict['mus']
         action_humanoid = res_dict['actions']
         mu_srl = res_dict_srl['mus']
@@ -196,7 +250,11 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                     masks = self.env.get_action_mask()
                     action = self.get_masked_action(obs_dict, masks, is_determenistic)
                 else:
-                    action = self.get_action(obs_dict, is_determenistic)
+                    if not self.seperate_obs:
+                        action = self.get_action(obs_dict, is_determenistic)
+                    else:
+                        action = self.get_action_ma(obs_dict, is_determenistic)
+
                 obs_dict, r, done, info =  self.env_step(self.env, action)
                 cr += r
                 steps += 1
@@ -413,6 +471,8 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
         config['actions_num_humanoid'] = self.actions_num_humanoid
         self.actions_num_srl = - self.actions_num_humanoid + self.actions_num
         config['actions_num_srl'] = self.actions_num_srl
+        config['obs_num_humanoid'] = (self.obs_num_humanoid,)
+        config['obs_num_srl'] = (self.obs_num_srl,)
         return config
 
     def _amp_debug(self, info):

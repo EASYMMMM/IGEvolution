@@ -159,6 +159,17 @@ class HumanoidAMPSRLmarlBase(VecTask):
         self._initial_dof_pos[:, right_shoulder_x_handle] = 0.5 * np.pi
         self._initial_dof_pos[:, left_shoulder_x_handle] = -0.5 * np.pi
 
+        # FIXME:SRL初始姿态
+        # =============== user define ===================
+        self.srl_joint_r1_idx = self.gym.find_actor_dof_handle(self.envs[0], self.humanoid_handles[0],'SRL_joint_right_hipjoint_y')
+        self.srl_joint_r3_idx = self.gym.find_actor_dof_handle(self.envs[0], self.humanoid_handles[0],'SRL_joint_right_kneejoint')
+        self.srl_joint_l1_idx = self.gym.find_actor_dof_handle(self.envs[0], self.humanoid_handles[0],'SRL_joint_left_hip_y')
+        self.srl_joint_l3_idx = self.gym.find_actor_dof_handle(self.envs[0], self.humanoid_handles[0],'SRL_joint_left_kneejoint')
+        # self._initial_dof_pos[:, srl_joint_r1] = 0.15*np.pi
+        # self._initial_dof_pos[:, srl_joint_r3] = 0.25*np.pi
+        # self._initial_dof_pos[:, srl_joint_l1] = 0.15*np.pi
+        # self._initial_dof_pos[:, srl_joint_l3] = 0.25*np.pi
+
         self._initial_dof_vel = torch.zeros_like(self._dof_vel, device=self.device, dtype=torch.float)
         
         self._rigid_body_state = gymtorch.wrap_tensor(rigid_body_state)
