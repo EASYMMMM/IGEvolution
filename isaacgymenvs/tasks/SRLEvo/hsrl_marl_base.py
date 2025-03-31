@@ -955,6 +955,8 @@ def compute_humanoid_reward(obs_buf,
     srl_joint_forces = dof_force_tensor[:,  srl_joint_ids]
     srl_torque_sum = - torch.sum((srl_joint_forces/100) ** 2, dim=1)
     srl_torque_reward = srl_torque_sum * srl_torque_w
+    # MLY: 暂时关闭HUMANOID受力惩罚
+    srl_torque_reward = srl_torque_sum * 0
 
     # SRL Root受力惩罚
     load_cell_z = srl_load_cell_sensor[:,2] # 原始数据为正
@@ -976,8 +978,9 @@ def compute_humanoid_reward(obs_buf,
 
     # reward = -velocity_penalty + torque_reward
     reward = velocity_penalty + torque_reward + upper_reward + srl_torque_reward + srl_load_cell_reward
-
-    return reward, velocity_penalty, torque_reward, upper_reward
+    
+    # return reward, velocity_penalty, torque_reward, upper_reward
+    return reward, velocity_penalty, srl_torque_reward, upper_reward
 
 # 计算外肢体奖励函数
 @torch.jit.script
