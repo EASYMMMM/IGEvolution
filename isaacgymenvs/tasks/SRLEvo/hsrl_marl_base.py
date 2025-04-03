@@ -596,7 +596,7 @@ class HumanoidAMPSRLmarlBase(VecTask):
 
     def SRL_joint_torque_cost(self):
         joint_forces = self.dof_force_tensor[:, self._srl_joint_ids]
-        torque_sum = torch.sum((joint_forces/100) ** 2, dim=1).to(self.rl_device)
+        torque_sum = - torch.sum((joint_forces/100) ** 2, dim=1).to(self.rl_device)
         return torque_sum
 
     def render(self):
@@ -943,7 +943,9 @@ def compute_humanoid_reward(obs_buf,
                                  (torch.abs(torque_usage) - torque_threshold) / torque_threshold, 
                                  torch.zeros_like(torque_usage))
     torque_reward  = - torch.sum(torque_penalty, dim=1)
-    
+    # MLY: 暂时关闭HUMANOID受力惩罚
+    torque_reward = torque_reward * 0
+
     # 躯干直立奖励
     lower_pos = upper_body_pos[:, 0, :]  # (4096, 3)
     upper_pos = upper_body_pos[:, 1, :]  # (4096, 3)
@@ -955,19 +957,18 @@ def compute_humanoid_reward(obs_buf,
     srl_joint_forces = dof_force_tensor[:,  srl_joint_ids]
     srl_torque_sum = - torch.sum((srl_joint_forces/100) ** 2, dim=1)
     srl_torque_reward = srl_torque_sum * srl_torque_w
-    # MLY: 暂时关闭HUMANOID受力惩罚
-    srl_torque_reward = srl_torque_sum * 0
+
 
     # SRL Root受力惩罚
     load_cell_z = srl_load_cell_sensor[:,2] # 原始数据为正
     load_cell_y = srl_load_cell_sensor[:,1]
     load_cell_x = srl_load_cell_sensor[:,0] 
-    scaled_z  = torch.clamp(torch.abs(load_cell_z), min=50, max=2500)  # 限制受力范围
-    scaled_y  = torch.clamp(torch.abs(load_cell_y), min=50, max=2500) 
-    scaled_x  = torch.clamp(torch.abs(load_cell_x), min=50, max=2500)
-    z_penalty =  ((scaled_z - 50) / 50) ** 2 # 平方
-    y_penalty =  ((scaled_y - 50) / 50) ** 2  
-    x_penalty =  ((scaled_x - 50) / 50) ** 2  
+    scaled_z    = torch.clamp(torch.abs(load_cell_z), min=50, max=2500)  # 限制受力范围
+    scaled_y    = torch.clamp(torch.abs(load_cell_y), min=50, max=2500) 
+    scaled_x    = torch.clamp(torch.abs(load_cell_x), min=50, max=2500)
+    z_penalty   = ((scaled_z - 50) / 50) ** 2 # 平方
+    y_penalty   = ((scaled_y - 50) / 50) ** 2  
+    x_penalty   = ((scaled_x - 50) / 50) ** 2  
     # z_penalty =  torch.log(1.0 + (scaled_z - 100) / 100.0) / 3.0  # 对数
     srl_load_cell_reward = -srl_load_cell_w * (z_penalty + y_penalty + x_penalty)
 
@@ -980,7 +981,7 @@ def compute_humanoid_reward(obs_buf,
     reward = velocity_penalty + torque_reward + upper_reward + srl_torque_reward + srl_load_cell_reward
     
     # return reward, velocity_penalty, torque_reward, upper_reward
-    return reward, velocity_penalty, srl_torque_reward, upper_reward
+    return reward, velocity_penalty, srl_load_cell_reward, upper_reward
 
 # 计算外肢体奖励函数
 @torch.jit.script
