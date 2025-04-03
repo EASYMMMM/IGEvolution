@@ -957,6 +957,8 @@ def compute_humanoid_reward(obs_buf,
     srl_joint_forces = dof_force_tensor[:,  srl_joint_ids]
     srl_torque_sum = - torch.sum((srl_joint_forces/100) ** 2, dim=1)
     srl_torque_reward = srl_torque_sum * srl_torque_w
+    # MLY: 暂时关闭SRL受力惩罚
+    srl_torque_reward = 0
 
 
     # SRL Root受力惩罚
