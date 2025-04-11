@@ -162,6 +162,12 @@ class HumanoidAMPSRLv2Base(VecTask):
         self._initial_dof_pos[:, right_shoulder_x_handle] = 0.5 * np.pi
         self._initial_dof_pos[:, left_shoulder_x_handle] = -0.5 * np.pi
 
+        # MLY: set SRL init pos
+        self.srl_joint_r1_idx = self.gym.find_actor_dof_handle(self.envs[0], self.humanoid_handles[0],'SRL_joint_right_hipjoint_y')
+        self.srl_joint_r3_idx = self.gym.find_actor_dof_handle(self.envs[0], self.humanoid_handles[0],'SRL_joint_right_kneejoint')
+        self.srl_joint_l1_idx = self.gym.find_actor_dof_handle(self.envs[0], self.humanoid_handles[0],'SRL_joint_left_hip_y')
+        self.srl_joint_l3_idx = self.gym.find_actor_dof_handle(self.envs[0], self.humanoid_handles[0],'SRL_joint_left_kneejoint')
+
         self._initial_dof_vel = torch.zeros_like(self._dof_vel, device=self.device, dtype=torch.float)
         
         self._rigid_body_state = gymtorch.wrap_tensor(rigid_body_state)
@@ -860,7 +866,7 @@ def compute_humanoid_observations_mirrored(root_states, dof_pos, dof_vel, key_bo
 
 
 # 计算任务奖励函数
-# @torch.jit.script
+@torch.jit.script
 def compute_humanoid_reward(obs_buf, 
                             dof_force_tensor, 
                             contact_buf,  # body net contact force
@@ -875,7 +881,7 @@ def compute_humanoid_reward(obs_buf,
                             srl_load_cell_w  = 0.0 ):
     # type: (Tensor, Tensor, Tensor, Tensor, int, Tensor, int, Tensor, Tensor, bool, float, float ) -> Tuple[Tensor, Tensor, Tensor, Tensor]
     
-    # TODO: 目标速度跟随
+    # 目标速度奖励项
     velocity_threshold = 1.4
     if not target_v_task:  # 速度惩罚
         velocity  = obs_buf[:,7]  # vx
@@ -898,7 +904,7 @@ def compute_humanoid_reward(obs_buf,
         # velocity_penalty[mask] = d_penalty[mask]
         # velocity_penalty[~mask] = 0.5 * v_penalty[~mask] + 0.5 * d_penalty[~mask]
     
-    
+    # Humanoid力矩惩罚项
     # v1.5.12 比例惩罚，humanoid力矩绝对值超过100
     torque_threshold = _torque_threshold
     torque_usage   = dof_force_tensor[:, 14:28]
@@ -906,8 +912,10 @@ def compute_humanoid_reward(obs_buf,
                                  (torch.abs(torque_usage) - torque_threshold) / torque_threshold, 
                                  torch.zeros_like(torque_usage))
     torque_reward  = - torch.sum(torque_penalty, dim=1)
+    # MLY: 暂时关闭humanoid力矩惩罚项
+    torque_reward = 0
     
-    # 外肢体平面奖励
+    # 外肢体水平奖励项
     board_pos = upper_body_pos[:, 0, :]  # (4096, 3)
     root_pos = upper_body_pos[:, 1, :]  # (4096, 3)
     upper_body_direction = board_pos - root_pos  # 维度 (4096, 3)
@@ -922,14 +930,17 @@ def compute_humanoid_reward(obs_buf,
 
     # SRL Root受力惩罚
     load_cell_z = srl_load_cell_sensor[:,2] # 原始数据为正
+    load_cell_y = srl_load_cell_sensor[:,1]
     load_cell_x = srl_load_cell_sensor[:,0] 
-    scaled_z  = torch.clamp(load_cell_z, min=501, max=2500)  # 限制受力范围
-    z_penalty =  torch.log(1.0 + (scaled_z - 500) / 100.0) / 3.0  # 受力 > 500 时施加对数惩罚
-
-    scaled_x = torch.clamp(load_cell_x ,min=0)
-    x_penalty = scaled_x / 1000.0  # ~1 if x=1000
-    load_cell_penalty =  z_penalty    
-    srl_load_cell_reward = -load_cell_penalty * srl_load_cell_w       
+    scaled_z    = torch.clamp(torch.abs(load_cell_z), min=50, max=2500)  # 限制受力范围
+    scaled_y    = torch.clamp(torch.abs(load_cell_y), min=50, max=2500) 
+    scaled_x    = torch.clamp(torch.abs(load_cell_x), min=50, max=2500)
+    z_penalty   = ((scaled_z - 50) / 50) ** 2 # 平方
+    y_penalty   = ((scaled_y - 50) / 50) ** 2  
+    x_penalty   = ((scaled_x - 50) / 50) ** 2  
+    # z_penalty =  torch.log(1.0 + (scaled_z - 100) / 100.0) / 3.0  # 对数
+    srl_load_cell_reward = -srl_load_cell_w * (z_penalty + y_penalty + x_penalty)
+      
 
     # reward = -velocity_penalty + torque_reward
     reward = velocity_penalty + torque_reward + upper_reward + srl_torque_reward + srl_load_cell_reward

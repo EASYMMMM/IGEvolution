@@ -248,7 +248,7 @@ class HumanoidAMPSRLGym_marl(HumanoidAMPSRLmarlBase):
         
         self._dof_pos[env_ids] = dof_pos
         self._dof_vel[env_ids] = dof_vel
-        # FIXME: SRL init
+        # MLY: SRL init
         self._dof_pos[env_ids, self.srl_joint_r1_idx] = 0.15*np.pi
         self._dof_pos[env_ids, self.srl_joint_r3_idx] = 0.25*np.pi
         self._dof_pos[env_ids, self.srl_joint_l1_idx] = 0.15*np.pi

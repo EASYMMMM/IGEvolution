@@ -159,7 +159,7 @@ class HumanoidAMPSRLmarlBase(VecTask):
         self._initial_dof_pos[:, right_shoulder_x_handle] = 0.5 * np.pi
         self._initial_dof_pos[:, left_shoulder_x_handle] = -0.5 * np.pi
 
-        # set SRL init pos
+        # MLY: set SRL init pos
         self.srl_joint_r1_idx = self.gym.find_actor_dof_handle(self.envs[0], self.humanoid_handles[0],'SRL_joint_right_hipjoint_y')
         self.srl_joint_r3_idx = self.gym.find_actor_dof_handle(self.envs[0], self.humanoid_handles[0],'SRL_joint_right_kneejoint')
         self.srl_joint_l1_idx = self.gym.find_actor_dof_handle(self.envs[0], self.humanoid_handles[0],'SRL_joint_left_hip_y')

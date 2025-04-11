@@ -248,6 +248,11 @@ class HumanoidAMPSRLGym_v2(HumanoidAMPSRLv2Base):
         
         self._dof_pos[env_ids] = dof_pos
         self._dof_vel[env_ids] = dof_vel
+        # MLY: SRL init
+        self._dof_pos[env_ids, self.srl_joint_r1_idx] = 0.15*np.pi
+        self._dof_pos[env_ids, self.srl_joint_r3_idx] = 0.25*np.pi
+        self._dof_pos[env_ids, self.srl_joint_l1_idx] = 0.15*np.pi
+        self._dof_pos[env_ids, self.srl_joint_l3_idx] = 0.25*np.pi
 
         env_ids_int32 = env_ids.to(dtype=torch.int32)
         self.gym.set_actor_root_state_tensor_indexed(self.sim, gymtorch.unwrap_tensor(self._root_states), 

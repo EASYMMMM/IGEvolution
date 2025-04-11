@@ -94,6 +94,9 @@ params:
     disc_reward_w: 1.0
 
     # ---- user defined ----
+    seperate_obs: True # used for player
+    obs_num_humanoid: 125  # used for player
+    obs_num_srl: 125 # used for player
     actions_num_humanoid: 28
     actions_num_srl: 6
     train_srl_only: False

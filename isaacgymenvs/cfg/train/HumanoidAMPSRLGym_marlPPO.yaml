@@ -96,7 +96,7 @@ params:
     # ---- user defined ----
     seperate_obs: True # used for player
     obs_num_humanoid: 111  # used for player
-    obs_num_srl: 38 
+    obs_num_srl: 38 # used for player
     actions_num_humanoid: 28
     actions_num_srl: 6
     humanoid_checkpoint: False

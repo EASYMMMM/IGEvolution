@@ -149,7 +149,7 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
         self.model.eval()
         self.model_srl.eval()
         humanoid_obs = processed_obs[:, :self.obs_num_humanoid]
-        srl_obs = processed_obs[:, self.obs_num_humanoid:]
+        srl_obs = processed_obs[:, -self.obs_num_srl:]   # SRL obs拼接在humanoid后面
         humanoid_input_dict = {
             'is_train': False,
             'prev_actions': None, 
