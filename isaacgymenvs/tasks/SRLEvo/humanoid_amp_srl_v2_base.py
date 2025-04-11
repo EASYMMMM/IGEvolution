@@ -913,7 +913,7 @@ def compute_humanoid_reward(obs_buf,
                                  torch.zeros_like(torque_usage))
     torque_reward  = - torch.sum(torque_penalty, dim=1)
     # MLY: 暂时关闭humanoid力矩惩罚项
-    torque_reward = 0
+    torque_reward = torque_reward * 0
     
     # 外肢体水平奖励项
     board_pos = upper_body_pos[:, 0, :]  # (4096, 3)
