@@ -29,6 +29,7 @@
 - **通过SCP从本地传输训练模型到服务器：**
    `scp -r TRO_SRL_v2.4.1_4090D_24-16-28-29 QH-MAIS:/nfs/IGEvolution/IGEvolution/isaacgymenvs/runs/`
    `scp -r /home/zdh232/mly/isaacgym/ MAIS10:/home/pc/mly/`
+   `scp -r /home/zdh232/mly/IGEvolution/ MAIS10:/home/pc/mly/`
 
 ### 0.1 一键配置Titan Ubuntu训练终端
 ```bash
@@ -165,8 +166,7 @@ python train.py task=Ant checkpoint=runs/Ant/nn/Ant.pth test=True num_envs=64
 python train.py task=HumanoidAMP ++task.env.motion_file=amp_humanoid_run.npy experiment=AMP_run rl_device=cuda:1 sim_device=cuda:1
 ```
 
-
-
+x11vnc -display :1 -auth /run/user/1000/gdm/Xauthority -forever -rfbauth ~/.vnc/passwd -listen 0.0.0.0
 
 
 

@@ -59,8 +59,10 @@ env:
     second_leg_lenth: 0.80
     second_leg_size: 0.03
     third_leg_size: 0.03
-  freejoint_y: False
-  
+  freejoint_y: True
+  action_in_obs: False  # 在Obs中添加a_t-1
+  obs_frame_stack: 1
+  task_early_termination: False  # 任务提前终止
   # ------------ ------------
 
 sim:

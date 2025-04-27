@@ -209,35 +209,32 @@ class SRLAgent(common_agent.CommonAgent):
             'obs' : processed_obs,
             'rnn_states' : self.rnn_states
         }
-        if self._humanoid_obs_masked :  # humanoid 部分观测
+        if self._humanoid_obs_masked : # MLY:humanoid观测掩码
             masked_input_dict = {
             'is_train': False,
             'prev_actions': None, 
-            'obs' : self.mask_humanoid_obs(processed_obs), # TODO:humanoid观测掩码
+            'obs' : self.mask_humanoid_obs(processed_obs), 
             'rnn_states' : self.rnn_states                
             }
 
         with torch.no_grad():
-            if self._humanoid_obs_masked : # humanoid 部分观测
-                res_dict = self.model(masked_input_dict)
-            else:
-                res_dict = self.model(input_dict)
+            res_dict = self.model(input_dict)
+            if self._humanoid_obs_masked : # humanoid 部分观测  
+                # Asymmetric A-C
+                res_dict_masked = self.model(masked_input_dict)
+                res_dict['actions'] = res_dict_masked['actions'] 
+                res_dict['neglogpacs'] = res_dict_masked['neglogpacs'] 
+                res_dict['mus'] = res_dict_masked['mus'] 
+                res_dict['sigmas'] = res_dict_masked['sigmas'] 
+            
             res_dict_srl = self.model_srl(input_dict)
-            # if self.has_central_value:
-            #     states = obs['states']
-            #     input_dict = {
-            #         'is_train': False,
-            #         'states' : states,
-            #     }
-            #     value = self.get_central_value(input_dict)
-            #     res_dict['values'] = value
+
         return res_dict, res_dict_srl
 
     def mask_humanoid_obs(self, obs):
         # root_h 1; root_rot_obs 6; local_root_vel 3 ; local_root_ang_vel 3 ; dof_obs 60; dof_vel 36 ; flat_local_key_pos 12
         mask = torch.ones_like(obs)
-        mask[: , 66-1 : 66-1+self._srl_dof]  = 0  # SRL dof position
-        mask[: , 66-1+self._srl_dof+28:66-1+self._srl_dof+28+self._srl_dof] = 0
+        mask[: , 125: ]  = 0  # SRL dof position
         masked_obs = obs * mask
         return masked_obs
     
@@ -722,6 +719,8 @@ class SRLAgent(common_agent.CommonAgent):
         lr_mul = 1.0 # 初始化学习率倍乘因子
         curr_e_clip = lr_mul * self.e_clip # 计算当前的裁剪阈值
 
+        if self._humanoid_obs_masked:
+            obs_batch = self.mask_humanoid_obs(obs_batch)
         batch_dict = {
             'is_train': True,
             'prev_actions': actions_batch, 

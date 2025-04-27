@@ -65,6 +65,7 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
         self.obs_num_srl = config.get('obs_num_srl',False)
         self._save_data = config.get('save_data', False)
         self._save_load_cell_data = config.get('save_load_cell_data', False)
+        self._humanoid_obs_masked = config.get('humanoid_obs_masked', False)
         super().__init__(params)
 
         
@@ -105,7 +106,14 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
             self._amp_input_mean_std = RunningMeanStd(config['amp_input_shape']).to(self.device)
             self._amp_input_mean_std.eval()
         return
-
+    
+    def mask_humanoid_obs(self, obs):
+        # root_h 1; root_rot_obs 6; local_root_vel 3 ; local_root_ang_vel 3 ; dof_obs 60; dof_vel 36 ; flat_local_key_pos 12
+        mask = torch.ones_like(obs)
+        mask[: , 125: ]  = 0  # SRL dof position
+        masked_obs = obs * mask
+        return masked_obs
+    
     def get_action(self, obs_dict, is_deterministic = False):
         obs = obs_dict['obs']
         if self.has_batch_dimension == False:
@@ -117,8 +125,20 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
             'obs' : obs,
             'rnn_states' : self.states
         }
+
+        if self._humanoid_obs_masked : # MLY:humanoid观测掩码
+            masked_input_dict = {
+                'is_train': False,
+                'prev_actions': None, 
+                'obs' : self.mask_humanoid_obs(obs), 
+                'rnn_states' : self.states               
+                }
+            
         with torch.no_grad():
-            res_dict = self.model(input_dict)
+            if self._humanoid_obs_masked :
+                res_dict = self.model(masked_input_dict)
+            else:
+                res_dict = self.model(input_dict)
             res_dict_srl = self.model_srl(input_dict)
         mu_humanoid = res_dict['mus']
         action_humanoid = res_dict['actions']

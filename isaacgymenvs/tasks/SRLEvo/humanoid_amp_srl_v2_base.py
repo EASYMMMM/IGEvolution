@@ -93,6 +93,8 @@ class HumanoidAMPSRLv2Base(VecTask):
         self._design_param_obs = self.cfg["env"].get("design_param_obs", False)
         self._load_cell_activate = self.cfg["env"].get("load_cell",False)
         self._freejoint_y = self.cfg["env"].get("freejoint_y",True)
+        self._action_in_obs = self.cfg["env"].get("action_in_obs", False)
+        self._task_early_termination = self.cfg["env"].get("task_early_termination", False)
         # --- SRL-Gym Defined End ---
 
         self.cfg["env"]["numObservations"] = self.get_obs_size()
@@ -179,6 +181,8 @@ class HumanoidAMPSRLv2Base(VecTask):
         
         self._terminate_buf = torch.ones(self.num_envs, device=self.device, dtype=torch.long)
         
+        self.actions = torch.zeros([self.num_envs, self.get_action_size()], device=self.device, dtype=torch.float)
+
         self.srl_rew_buf = torch.zeros(
             self.num_envs, device=self.device, dtype=torch.float)
         self.rew_joint_cost_buf = torch.zeros(      # 关节力矩惩罚
@@ -221,6 +225,8 @@ class HumanoidAMPSRLv2Base(VecTask):
             obs_size = obs_size + design_param_num
         if self._freejoint_y:
             obs_size = obs_size + 2
+        if self._action_in_obs:
+            obs_size = obs_size + self.get_action_size() - 28
         return obs_size
 
     def get_action_size(self):
@@ -456,7 +462,8 @@ class HumanoidAMPSRLv2Base(VecTask):
         self.reset_buf[:], self._terminate_buf[:] = compute_humanoid_reset(self.reset_buf, self.progress_buf,
                                                    self._contact_forces, self._contact_body_ids,
                                                    self._rigid_body_pos, self.max_episode_length,
-                                                   self._enable_early_termination, self._termination_height)
+                                                   self._enable_early_termination, self._termination_height,
+                                                   self._root_states, self._task_early_termination)
         return
 
     def _refresh_sim_tensors(self):
@@ -492,6 +499,7 @@ class HumanoidAMPSRLv2Base(VecTask):
                 srl_end_body_pos = self._rigid_body_pos[:,self._srl_endpos_ids, :]
                 key_body_pos = torch.cat((key_body_pos, srl_end_body_pos), dim=1)
             target_v = self.get_task_target_v() # Target speed
+            last_action = self.actions
         else:
             root_states = self._root_states[env_ids]
             dof_pos = self._dof_pos[env_ids]
@@ -502,7 +510,8 @@ class HumanoidAMPSRLv2Base(VecTask):
                 srl_end_body_pos = self._rigid_body_pos[env_ids][:,self._srl_endpos_ids, :]
                 key_body_pos = torch.cat((key_body_pos, srl_end_body_pos), dim=1)
             target_v = self.get_task_target_v(env_ids) # Target speed
-        
+            last_action = self.actions[env_ids]
+            
         obs = compute_humanoid_observations(root_states, dof_pos, dof_vel,
                                             key_body_pos, self._local_root_obs,
                                             load_cell_sensor)
@@ -518,6 +527,10 @@ class HumanoidAMPSRLv2Base(VecTask):
             design_param = design_param.unsqueeze(0).repeat(obs.shape[0], 1)
             obs = torch.cat([obs, design_param], dim=1)
             obs_mirrored = torch.cat([obs_mirrored, design_param], dim=1)
+        if self._action_in_obs:  # 在obs中添加上一时刻的动作
+            last_action = last_action[:, 28:]
+            obs = torch.cat((obs, last_action),dim=1)
+            obs_mirrored = torch.cat((obs_mirrored, last_action),dim=1)
         return obs, obs_mirrored
 
     def _reset_actors(self, env_ids):
@@ -928,7 +941,7 @@ def compute_humanoid_reward(obs_buf,
     srl_torque_sum = - torch.sum((srl_joint_forces/100) ** 2, dim=1)
     srl_torque_reward = srl_torque_sum * srl_torque_w
 
-    # SRL Root受力惩罚
+    # SRL-Humanoid 交互力惩罚
     load_cell_z = srl_load_cell_sensor[:,2] # 原始数据为正
     load_cell_y = srl_load_cell_sensor[:,1]
     load_cell_x = srl_load_cell_sensor[:,0] 
@@ -964,8 +977,8 @@ def compute_srl_reward(obs_buf, dof_force_tensor, action):
 
 @torch.jit.script
 def compute_humanoid_reset(reset_buf, progress_buf, contact_buf, contact_body_ids, rigid_body_pos,
-                           max_episode_length, enable_early_termination, termination_height):
-    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, float, bool, float) -> Tuple[Tensor, Tensor]
+                           max_episode_length, enable_early_termination, termination_height, root_states, task_early_ermination):
+    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, float, bool, float, Tensor, bool,) -> Tuple[Tensor, Tensor]
     terminated = torch.zeros_like(reset_buf)
 
     # 提前终止
@@ -983,11 +996,28 @@ def compute_humanoid_reset(reset_buf, progress_buf, contact_buf, contact_body_id
 
         has_fallen = torch.logical_and(fall_contact, fall_height)
 
+        if task_early_ermination:
+            # 基于任务约束的提前终止
+            v_x = root_states[:, 7]
+            v_y = root_states[:, 8]
+            # 计算速度的绝对值
+            speed = torch.sqrt(v_x ** 2 + v_y ** 2)
+            # 只有当速度大于 0.3 时，才进行朝向约束
+            move_deviation = torch.abs(v_y / (v_x + 1e-6)) > 0.5774  # tan(30°) = 0.5774
+            # 结合速度条件：只有当速度大于0.3时，才考虑朝向约束
+            move_deviation = move_deviation & (speed > 0.3)
+        else:
+            move_deviation = torch.zeros_like(reset_buf, dtype=torch.bool)
+
         # first timestep can sometimes still have nonzero contact forces
         # so only check after first couple of steps
         has_fallen *= (progress_buf > 1)
-        terminated = torch.where(has_fallen, torch.ones_like(reset_buf), terminated)
-    
+        move_deviation = move_deviation * (progress_buf > 1)
+        
+        terminated = torch.where(torch.logical_or(has_fallen, move_deviation),
+                                 torch.ones_like(reset_buf),
+                                 terminated )
+                        
     reset = torch.where(progress_buf >= max_episode_length - 1, torch.ones_like(reset_buf), terminated)
 
     return reset, terminated
