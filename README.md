@@ -27,7 +27,7 @@
    `scp -r user@172.18.41.167:/home/user/mly/IGEvolution/isaacgymenvs/runs/SRL_walk_v2.0_A100_16-18-37-52  /home/zdh/mly/IGEvolution/isaacgymenvs/runs`
 
 - **通过SCP从本地传输训练模型到服务器：**
-   `scp -r TRO_SRL_v2.4.1_4090D_24-16-28-29 QH-MAIS:/nfs/IGEvolution/IGEvolution/isaacgymenvs/runs/`
+   `scp -r TRO_SRL_v3.2.0_28-16-34-54 QH-MAIS:/nfs/IGEvolution/IGEvolution/isaacgymenvs/runs/`
    `scp -r /home/zdh232/mly/isaacgym/ MAIS10:/home/pc/mly/`
    `scp -r /home/zdh232/mly/IGEvolution/ MAIS10:/home/pc/mly/`
 

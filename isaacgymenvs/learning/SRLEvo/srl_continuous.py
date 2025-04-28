@@ -221,6 +221,7 @@ class SRLAgent(common_agent.CommonAgent):
             res_dict = self.model(input_dict)
             if self._humanoid_obs_masked : # humanoid 部分观测  
                 # Asymmetric A-C
+                # self.model.forward (eval): {"actions", "neglogpacs", "values", "rnn_states", "mus", "sigmas"}
                 res_dict_masked = self.model(masked_input_dict)
                 res_dict['actions'] = res_dict_masked['actions'] 
                 res_dict['neglogpacs'] = res_dict_masked['neglogpacs'] 
@@ -233,7 +234,7 @@ class SRLAgent(common_agent.CommonAgent):
 
     def mask_humanoid_obs(self, obs):
         # root_h 1; root_rot_obs 6; local_root_vel 3 ; local_root_ang_vel 3 ; dof_obs 60; dof_vel 36 ; flat_local_key_pos 12
-        mask = torch.ones_like(obs)
+        mask = torch.ones_like(obs,device=self.ppo_device)
         mask[: , 125: ]  = 0  # SRL dof position
         masked_obs = obs * mask
         return masked_obs
@@ -720,7 +721,15 @@ class SRLAgent(common_agent.CommonAgent):
         curr_e_clip = lr_mul * self.e_clip # 计算当前的裁剪阈值
 
         if self._humanoid_obs_masked:
-            obs_batch = self.mask_humanoid_obs(obs_batch)
+            masked_obs_batch = self.mask_humanoid_obs(obs_batch)
+            masked_batch_dict = {
+                'is_train': True,
+                'prev_actions': actions_batch, 
+                'obs' : masked_obs_batch,
+                'amp_obs' : amp_obs,
+                'amp_obs_replay' : amp_obs_replay,
+                'amp_obs_demo' : amp_obs_demo
+            }
         batch_dict = {
             'is_train': True,
             'prev_actions': actions_batch, 
@@ -730,19 +739,24 @@ class SRLAgent(common_agent.CommonAgent):
             'amp_obs_demo' : amp_obs_demo
         }
 
+
         rnn_masks = None
 
         with torch.cuda.amp.autocast(enabled=self.mixed_precision):
             res_dict = self.model(batch_dict) # 通过模型计算结果  srl_model forward
-            action_log_probs = res_dict['prev_neglogp']  # 获取动作的对数概率
             values = res_dict['values'] # 获取值函数输出
+
+            if self._humanoid_obs_masked:  # Asymmetric A-C
+                res_dict = self.model(masked_batch_dict) # 通过模型计算结果  srl_model forward
+            
+            action_log_probs = res_dict['prev_neglogp']  # 获取动作的对数概率
             entropy = res_dict['entropy'] # 获取熵
             mu = res_dict['mus'] # 获取动作均值
             sigma = res_dict['sigmas'] # 获取动作标准差
             disc_agent_logit = res_dict['disc_agent_logit'] # 获取对抗网络输出（代理）
             disc_agent_replay_logit = res_dict['disc_agent_replay_logit'] # 获取对抗网络输出（重放）
             disc_demo_logit = res_dict['disc_demo_logit'] # 获取对抗网络输出（示范）
-
+            
             # 计算 actor 损失
             a_info = self._actor_loss(old_action_log_probs_batch, action_log_probs, advantage, curr_e_clip)
             a_loss = a_info['actor_loss']
