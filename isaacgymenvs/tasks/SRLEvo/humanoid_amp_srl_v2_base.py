@@ -892,7 +892,7 @@ def compute_humanoid_reward(obs_buf,
                             target_v_task = False,
                             srl_torque_w = 0.0,
                             srl_load_cell_w  = 0.0 ):
-    # type: (Tensor, Tensor, Tensor, Tensor, int, Tensor, int, Tensor, Tensor, bool, float, float ) -> Tuple[Tensor, Tensor, Tensor, Tensor]
+    # type: (Tensor, Tensor, Tensor, Tensor, int, Tensor, float, Tensor, Tensor, bool, float, float ) -> Tuple[Tensor, Tensor, Tensor, Tensor]
     
     # 目标速度奖励项
     velocity_threshold = 1.4
