@@ -529,8 +529,9 @@ class HumanoidAMPSRLv2Base(VecTask):
             obs_mirrored = torch.cat([obs_mirrored, design_param], dim=1)
         if self._action_in_obs:  # 在obs中添加上一时刻的动作
             last_action = last_action[:, 28:]
+            mirrored_last_action = torch.matmul(last_action,self.mirror_act_srl_mat)
             obs = torch.cat((obs, last_action),dim=1)
-            obs_mirrored = torch.cat((obs_mirrored, last_action),dim=1)
+            obs_mirrored = torch.cat((obs_mirrored, mirrored_last_action),dim=1)
         return obs, obs_mirrored
 
     def _reset_actors(self, env_ids):
