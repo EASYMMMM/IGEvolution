@@ -126,6 +126,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
 
         self.evaluate_rewards = deque(maxlen=6)  # Reward used to evaluate the design
         self.evaluate_amp_rewards = deque(maxlen=6) 
+        self.train_result = {}
         return
 
     def init_tensors(self):
@@ -417,15 +418,15 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         mb_returns = mb_advs + mb_values # 价值 = 当前价值+未来折扣价值
 
         # calculate SRL minibatch returns
-        # mb_fdones_srl = self.experience_buffer_srl.tensor_dict['dones'].float()  # 获取完成标志
-        # mb_values_srl = self.experience_buffer_srl.tensor_dict['values'] # 获取价值
-        # mb_next_values_srl = self.experience_buffer_srl.tensor_dict['next_values'] # 获取下一个价值
+        mb_fdones_srl = self.experience_buffer_srl.tensor_dict['dones'].float()  # 获取完成标志
+        mb_values_srl = self.experience_buffer_srl.tensor_dict['values'] # 获取价值
+        mb_next_values_srl = self.experience_buffer_srl.tensor_dict['next_values'] # 获取下一个价值
 
-        # mb_rewards_srl = self.experience_buffer_srl.tensor_dict['rewards'] # 获取奖励
-        # mb_rewards_srl = self._combine_rewards(mb_rewards_srl, amp_rewards) # 合并奖励
+        mb_rewards_srl = self.experience_buffer_srl.tensor_dict['rewards'] # 获取奖励
+        mb_rewards_srl = self._combine_rewards(mb_rewards_srl, amp_rewards) # 合并奖励
 
-        # mb_advs_srl = self.discount_values(mb_fdones_srl, mb_values_srl, mb_rewards_srl, mb_next_values_srl) # 折扣价值
-        # mb_returns_srl = mb_advs_srl + mb_values_srl # 价值 = 当前价值+未来折扣价值
+        mb_advs_srl = self.discount_values(mb_fdones_srl, mb_values_srl, mb_rewards_srl, mb_next_values_srl) # 折扣价值
+        mb_returns_srl = mb_advs_srl + mb_values_srl # 价值 = 当前价值+未来折扣价值
 
         # humanoid batch
         batch_dict = self.experience_buffer.get_transformed_list(a2c_common.swap_and_flatten01, self.tensor_list) # 获取转换后的批次字典
@@ -434,7 +435,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
 
         # srl batch
         batch_dict_srl = self.experience_buffer_srl.get_transformed_list(a2c_common.swap_and_flatten01, self.tensor_list) # 获取转换后的批次字典
-        batch_dict_srl['returns'] = a2c_common.swap_and_flatten01(mb_returns) # 设置返回值
+        batch_dict_srl['returns'] = a2c_common.swap_and_flatten01(mb_returns_srl) # 设置返回值
         batch_dict_srl['obs_mirrored'] = a2c_common.swap_and_flatten01(self.experience_buffer_srl.tensor_dict['obs_mirrored'] ) # 设置返回值
         batch_dict_srl['played_frames'] = self.batch_size
 
@@ -506,6 +507,11 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         return
 
     def train_epoch(self):
+
+        # freeze 
+        # if self._train_humanoid == False:
+        #     self._freeze_humanoid_model()
+
         play_time_start = time.time()
         with torch.no_grad():
             batch_dict, batch_dict_srl = self.play_steps() 
@@ -545,7 +551,11 @@ class SRL_MultiAgent(common_agent.CommonAgent):
 
                 curr_train_info = self.train_actor_critic(self.dataset[i],self.dataset_srl[i])
                 if self.schedule_type == 'legacy':
-                    self.last_lr, self.entropy_coef = self.scheduler.update(self.last_lr, self.entropy_coef, self.epoch_num, 0, curr_train_info['kl'].item())
+                    if self._train_humanoid:
+                        kl = curr_train_info['kl'].item()
+                    else:
+                        kl = curr_train_info['kl_srl'].item()
+                    self.last_lr, self.entropy_coef = self.scheduler.update(self.last_lr, self.entropy_coef, self.epoch_num, 0, kl)
                     self.update_lr(self.last_lr)
 
                 if (train_info is None):
@@ -586,7 +596,8 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         return train_info
 
     def train_actor_critic(self, input_dict, input_dict_srl):
-        self.calc_gradients(input_dict)
+        if self._train_humanoid:
+            self.calc_gradients(input_dict)
         self.calc_gradients_srl(input_dict_srl)
         
         return self.train_result
@@ -668,7 +679,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             
             # 梯度清零
             if self.multi_gpu:
-                self.optimizer.zero_grad()
+                self.optimizer_srl.zero_grad()
             else:
                 for param in self.model_srl.parameters():
                     param.grad = None
@@ -707,6 +718,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             'lr_mul_srl': lr_mul, 
             'b_loss_srl': b_loss
         }
+
         self.train_result.update(srl_train_result)
         self.train_result.update(a_info)
         self.train_result.update(c_info)
@@ -845,6 +857,10 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         self.train_result.update(disc_info)
 
         return
+
+    def _freeze_humanoid_model(self):
+        for param in self.model.parameters():
+            param.requires_grad = False
 
     def _actor_loss(self, old_action_log_probs_batch, action_log_probs, advantage, curr_e_clip):
         clip_frac = None
@@ -1187,22 +1203,44 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         return
 
     def _log_train_info(self, train_info, frame):
-        super()._log_train_info(train_info, frame)
+        '''
+                self.train_result = {
+            'entropy': entropy,
+            'kl': kl_dist,
+            'last_lr': self.last_lr, 
+            'lr_mul': lr_mul, 
+            'b_loss': b_loss
+        }
+        self.train_result.update(a_info)
+        self.train_result.update(c_info)
+        self.train_result.update(disc_info)'''
+        self.writer.add_scalar('performance/update_time', train_info['update_time'], frame)
+        self.writer.add_scalar('performance/play_time', train_info['play_time'], frame)
+        
+        if self._train_humanoid:
+            self.writer.add_scalar('losses/a_loss', torch_ext.mean_list(train_info['actor_loss']).item(), frame)
+            self.writer.add_scalar('losses/c_loss', torch_ext.mean_list(train_info['critic_loss']).item(), frame)
+            self.writer.add_scalar('losses/bounds_loss', torch_ext.mean_list(train_info['b_loss']).item(), frame)
+            self.writer.add_scalar('losses/entropy', torch_ext.mean_list(train_info['entropy']).item(), frame)
+            self.writer.add_scalar('info/last_lr', train_info['last_lr'][-1] * train_info['lr_mul'][-1], frame)
+            self.writer.add_scalar('info/lr_mul', train_info['lr_mul'][-1], frame)
+            self.writer.add_scalar('losses/disc_loss', torch_ext.mean_list(train_info['disc_loss']).item(), frame)
+            self.writer.add_scalar('info/kl', torch_ext.mean_list(train_info['kl']).item(), frame)
+            self.writer.add_scalar('info/e_clip', self.e_clip * train_info['lr_mul'][-1], frame)
+            self.writer.add_scalar('info/clip_frac', torch_ext.mean_list(train_info['actor_clip_frac']).item(), frame)
+      
+            self.writer.add_scalar('info/disc_agent_acc', torch_ext.mean_list(train_info['disc_agent_acc']).item(), frame)
+            self.writer.add_scalar('info/disc_demo_acc', torch_ext.mean_list(train_info['disc_demo_acc']).item(), frame)
+            self.writer.add_scalar('info/disc_agent_logit', torch_ext.mean_list(train_info['disc_agent_logit']).item(), frame)
+            self.writer.add_scalar('info/disc_demo_logit', torch_ext.mean_list(train_info['disc_demo_logit']).item(), frame)
+            self.writer.add_scalar('info/disc_grad_penalty', torch_ext.mean_list(train_info['disc_grad_penalty']).item(), frame)
+            self.writer.add_scalar('info/disc_logit_loss', torch_ext.mean_list(train_info['disc_logit_loss']).item(), frame)
+            disc_reward_std, disc_reward_mean = torch.std_mean(train_info['disc_rewards'])
+            self.writer.add_scalar('info/disc_reward_mean', disc_reward_mean.item(), frame)
+            self.writer.add_scalar('info/disc_reward_std', disc_reward_std.item(), frame)
+
         self.writer.add_scalar('performance/total_time',train_info['total_time'], frame)
         self.writer.add_scalar('performance/prepare_dataset_time', train_info['prepare_dataset_time'], frame)
-
-        self.writer.add_scalar('losses/disc_loss', torch_ext.mean_list(train_info['disc_loss']).item(), frame)
-
-        self.writer.add_scalar('info/disc_agent_acc', torch_ext.mean_list(train_info['disc_agent_acc']).item(), frame)
-        self.writer.add_scalar('info/disc_demo_acc', torch_ext.mean_list(train_info['disc_demo_acc']).item(), frame)
-        self.writer.add_scalar('info/disc_agent_logit', torch_ext.mean_list(train_info['disc_agent_logit']).item(), frame)
-        self.writer.add_scalar('info/disc_demo_logit', torch_ext.mean_list(train_info['disc_demo_logit']).item(), frame)
-        self.writer.add_scalar('info/disc_grad_penalty', torch_ext.mean_list(train_info['disc_grad_penalty']).item(), frame)
-        self.writer.add_scalar('info/disc_logit_loss', torch_ext.mean_list(train_info['disc_logit_loss']).item(), frame)
-
-        disc_reward_std, disc_reward_mean = torch.std_mean(train_info['disc_rewards'])
-        self.writer.add_scalar('info/disc_reward_mean', disc_reward_mean.item(), frame)
-        self.writer.add_scalar('info/disc_reward_std', disc_reward_std.item(), frame)
 
         self.writer.add_scalar('losses/a_loss_srl', torch_ext.mean_list(train_info['actor_loss_srl']).item(), frame)
         self.writer.add_scalar('losses/c_loss_srl', torch_ext.mean_list(train_info['critic_loss_srl']).item(), frame)
@@ -1251,12 +1289,12 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         obs = obs_dict['obs']
         
         processed_obs = self._preproc_obs(obs)
-        srl_obs = processed_obs[:, :self.obs_num_srl[0]]
+        srl_obs = processed_obs[:, -self.obs_num_srl[0]:]
 
         if self.normalize_input:
             processed_obs = self.model_srl.norm_obs(srl_obs)
         value = self.model_srl.a2c_network.eval_critic(srl_obs)
 
         if self.normalize_value:
-            value = self.value_mean_std(value, True)
+            value = self.value_mean_std_srl(value, True)
         return value

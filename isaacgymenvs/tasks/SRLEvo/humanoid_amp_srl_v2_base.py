@@ -937,7 +937,7 @@ def compute_humanoid_reward(obs_buf,
     # upper_reward = upper_reward_w * (norm_upper_body_direction[:,2] - 1 )
     upper_reward = - upper_reward_w * (torch.abs(norm_upper_body_direction[:,2]) )
 
-    # SRL受到力矩惩罚
+    # SRL 关节力矩惩罚
     srl_joint_forces = dof_force_tensor[:,  srl_joint_ids]
     srl_torque_sum = - torch.sum((srl_joint_forces/100) ** 2, dim=1)
     srl_torque_reward = srl_torque_sum * srl_torque_w

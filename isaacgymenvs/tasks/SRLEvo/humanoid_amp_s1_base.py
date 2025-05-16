@@ -43,6 +43,8 @@ class HumanoidAMP_s1_Base(VecTask):
         self._termination_height = self.cfg["env"]["terminationHeight"]
         self._enable_early_termination = self.cfg["env"]["enableEarlyTermination"]
 
+        self._humanoid_load_cell_obs = self.cfg["env"]["humanoid_load_cell_obs"]
+
         self.cfg["env"]["numObservations"] = self.get_obs_size()
         self.cfg["env"]["numActions"] = self.get_action_size()
 
@@ -324,7 +326,7 @@ class HumanoidAMP_s1_Base(VecTask):
             load_cell_sensor = self.vec_sensor_tensor[env_ids,self.load_cell_ssidx,:]
 
         obs = compute_humanoid_observations(root_states, dof_pos, dof_vel,
-                                            key_body_pos, self._local_root_obs, load_cell_sensor)
+                                            key_body_pos, self._local_root_obs, load_cell_sensor, self._humanoid_load_cell_obs)
         return obs
 
     def _reset_actors(self, env_ids):
@@ -478,8 +480,8 @@ def dof_to_obs(pose):
     return dof_obs
 
 @torch.jit.script
-def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, local_root_obs, load_cell):
-    # type: (Tensor, Tensor, Tensor, Tensor, bool, Tensor) -> Tensor
+def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, local_root_obs, load_cell, humanoid_load_cell_obs):
+    # type: (Tensor, Tensor, Tensor, Tensor, bool, Tensor, bool) -> Tensor
     root_pos = root_states[:, 0:3]
     root_rot = root_states[:, 3:7]
     root_vel = root_states[:, 7:10]
@@ -509,7 +511,10 @@ def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, l
     flat_local_key_pos = local_end_pos.view(local_key_body_pos.shape[0], local_key_body_pos.shape[1] * local_key_body_pos.shape[2])
 
     # 6D人机交互力
-    load_cell_force = - load_cell
+    if humanoid_load_cell_obs:        
+        load_cell_force = - load_cell 
+    else:
+        load_cell_force = load_cell * 0
     
     dof_obs = dof_to_obs(dof_pos)
 

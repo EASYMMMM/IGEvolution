@@ -51,6 +51,8 @@ env:
   target_v_task: False  # 目标速度跟随任务
   autogen_model: True  # 模型自动生成
   load_cell: True      # 背板处受力传感器
+  humanoid_load_cell_obs: False      # Humanoid 观测中是否添加load cell
+  srl_partial_obs: False             # SRL使用部分观测，指的是不包含Humanoid相关观测
   design_param_obs: False
   design_params:
     mode: mode1

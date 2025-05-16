@@ -50,12 +50,12 @@ from ..base.vec_task import VecTask
 
 DOF_BODY_IDS = [1, 2, 3, 4, 6, 7, 9, 10, 11, 12, 13, 14]
 DOF_OFFSETS = [0, 3, 6, 9, 10, 13, 14, 17, 18, 21, 24, 25, 28]
-NUM_OBS = 38 + 111 # humanoid: 111, SRL 38
+NUM_OBS = 131 + 111 # humanoid: 111, SRL 38
 NUM_HUMANOID_OBS = 13 + 52 + 28 + 12 + 6  # Humanoid基本观测 + 人机交互力
 NUM_ACTIONS = 28 + 6 + 1  # Actions humanoid (Dof=28) + SRL + freejoint-Y
 NUM_HUMANOID_ACTIONS = 28
 
-
+SRL_ROOT_BODY_NAMES = ["SRL", "SRL_root"]
 UPPER_BODY_NAMES = ["pelvis", "torso"]
 KEY_BODY_NAMES = ["right_hand", "left_hand", "right_foot", "left_foot"]  # body end + SRL end
 SRL_END_BODY_NAMES = ["SRL_right_end","SRL_left_end"] 
@@ -94,6 +94,8 @@ class HumanoidAMPSRLmarlBase(VecTask):
         self._autogen_model = self.cfg["env"].get("autogen_model", False)
         self._design_param_obs = self.cfg["env"].get("design_param_obs", False)
         self._load_cell_activate = self.cfg["env"].get("load_cell",False)
+        self._humanoid_load_cell_obs = self.cfg["env"].get("humanoid_load_cell_obs", False)
+        self._srl_partial_obs = self.cfg["env"].get("srl_partial_obs", False)
         # --- SRL-Gym Defined End ---
 
         self.cfg["env"]["numObservations"] = self.get_obs_size()
@@ -105,7 +107,8 @@ class HumanoidAMPSRLmarlBase(VecTask):
         self.dt = self.control_freq_inv * dt
 
         # --- srl defined ---
-        self._srl_joint_ids = to_torch([28, 29, 30, 31, 32, 33], device=self.device, dtype=torch.long)
+        # 28 为被动链接关节
+        self._srl_joint_ids = to_torch([ 29, 30, 31, 32, 33, 34], device=self.device, dtype=torch.long)
         # --- srl defined end ---
 
         # mirror matrix
@@ -209,6 +212,8 @@ class HumanoidAMPSRLmarlBase(VecTask):
 
     def get_obs_size(self):
         obs_size = NUM_OBS
+        if self._srl_partial_obs:
+            obs_size = NUM_HUMANOID_OBS + 38
         if self._srl_endpos_obs:
             obs_size = obs_size + 6
         if self._target_v_task:
@@ -232,7 +237,10 @@ class HumanoidAMPSRLmarlBase(VecTask):
         return NUM_HUMANOID_OBS
     
     def get_srl_obs_size(self):
-        return NUM_OBS - NUM_HUMANOID_OBS
+        if self._srl_partial_obs:
+            return 38
+        else:
+            return NUM_OBS - NUM_HUMANOID_OBS
 
     def create_sim(self):
         self.up_axis_idx = 2 # index of up axis: Y=1, Z=2
@@ -370,6 +378,7 @@ class HumanoidAMPSRLmarlBase(VecTask):
 
         self._key_body_ids = self._build_key_body_ids_tensor(env_ptr, handle)
         self._upper_body_ids = self._build_upper_body_ids_tensor(env_ptr, handle)
+        self._srl_root_body_ids = self._build_srl_root_body_ids_tensor(env_ptr, handle)
         self._contact_body_ids = self._build_contact_body_ids_tensor(env_ptr, handle)
         
         self._srl_endpos_ids = self._build_srl_endpos_body_ids_tensor(env_ptr, handle)
@@ -436,13 +445,14 @@ class HumanoidAMPSRLmarlBase(VecTask):
 
     def _compute_reward(self, actions):
         upper_body_pos = self._rigid_body_pos[:, self._upper_body_ids, :]
+        srl_root_body_pos = self._rigid_body_pos[:, self._srl_root_body_ids, :]
         load_cell_sensor = self.vec_sensor_tensor[:,self.load_cell_ssidx,:]
         self.rew_buf[:], self.rew_v_pen_buf[:], self.rew_joint_cost_buf[:], self.rew_upper_buf[:] = compute_humanoid_reward(self.obs_buf, 
                                                                                                      self.dof_force_tensor, 
                                                                                                      self._contact_forces,
                                                                                                      actions,
                                                                                                      self._torque_threshold,
-                                                                                                     upper_body_pos,
+                                                                                                     srl_root_body_pos,
                                                                                                      self._upper_reward_w,
                                                                                                      self._srl_joint_ids,
                                                                                                      load_cell_sensor,
@@ -476,7 +486,7 @@ class HumanoidAMPSRLmarlBase(VecTask):
             self.obs_buf[:] = obs
             self.obs_mirrored_buf[:] = obs_mirrored
         else:
-            self.obs_buf[env_ids] = obs # FIXME
+            self.obs_buf[env_ids] = obs  
             self.obs_mirrored_buf[env_ids] = obs_mirrored
 
         return
@@ -507,14 +517,14 @@ class HumanoidAMPSRLmarlBase(VecTask):
 
         humanoid_obs = compute_humanoid_observations(root_states, dof_pos, dof_vel,
                                             key_body_pos, self._local_root_obs,
-                                            load_cell_sensor)
+                                            load_cell_sensor, self._humanoid_load_cell_obs)
         srl_obs = compute_srl_observations(root_states, dof_pos, dof_vel,
                                             key_body_pos, self._local_root_obs,
-                                            load_cell_sensor, dof_force_tensor)
+                                            load_cell_sensor, dof_force_tensor, self._srl_partial_obs)
         obs = torch.cat((humanoid_obs, srl_obs),dim=1)
         obs_mirrored = compute_srl_observations_mirrored(root_states, dof_pos, dof_vel,
                                             key_body_pos, self._local_root_obs, 
-                                            load_cell_sensor, self.mirror_mat, dof_force_tensor)
+                                            load_cell_sensor, self.mirror_mat, dof_force_tensor, self._srl_partial_obs)
         if self._target_v_task:
             #target_v= target_v.unsqueeze(1)
             obs = torch.cat((obs, target_v),dim=1)
@@ -611,6 +621,18 @@ class HumanoidAMPSRLmarlBase(VecTask):
         # used to calculate the balance reward
         body_ids = []
         for body_name in UPPER_BODY_NAMES:
+            body_id = self.gym.find_actor_rigid_body_handle(env_ptr, actor_handle, body_name)
+            assert(body_id != -1)
+            body_ids.append(body_id)
+
+        body_ids = to_torch(body_ids, device=self.device, dtype=torch.long)
+        return body_ids
+    
+    def _build_srl_root_body_ids_tensor(self, env_ptr, actor_handle):
+        # get id of upper body 
+        # used to calculate the balance reward
+        body_ids = []
+        for body_name in SRL_ROOT_BODY_NAMES:
             body_id = self.gym.find_actor_rigid_body_handle(env_ptr, actor_handle, body_name)
             assert(body_id != -1)
             body_ids.append(body_id)
@@ -752,8 +774,52 @@ def dof_to_obs(pose):
 
 
 @torch.jit.script
-def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, local_root_obs, load_cell):
-    # type: (Tensor, Tensor, Tensor, Tensor, bool, Tensor) -> Tensor
+def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, local_root_obs, load_cell, humanoid_load_cell_obs):
+    # type: (Tensor, Tensor, Tensor, Tensor, bool, Tensor, bool) -> Tensor
+    root_pos = root_states[:, 0:3]
+    root_rot = root_states[:, 3:7]
+    root_vel = root_states[:, 7:10]
+    root_ang_vel = root_states[:, 10:13]
+
+    root_h = root_pos[:, 2:3] # root高度
+    heading_rot = calc_heading_quat_inv(root_rot)
+
+    if (local_root_obs):
+        root_rot_obs = quat_mul(heading_rot, root_rot)
+    else:
+        root_rot_obs = root_rot
+    root_rot_obs = quat_to_tan_norm(root_rot_obs) # root朝向
+
+    local_root_vel = my_quat_rotate(heading_rot, root_vel) # 局部root速度
+    local_root_ang_vel = my_quat_rotate(heading_rot, root_ang_vel) # 局部根部角速度
+
+    root_pos_expand = root_pos.unsqueeze(-2)
+    local_key_body_pos = key_body_pos - root_pos_expand
+    
+    heading_rot_expand = heading_rot.unsqueeze(-2)
+    heading_rot_expand = heading_rot_expand.repeat((1, local_key_body_pos.shape[1], 1))
+    flat_end_pos = local_key_body_pos.view(local_key_body_pos.shape[0] * local_key_body_pos.shape[1], local_key_body_pos.shape[2])
+    flat_heading_rot = heading_rot_expand.view(heading_rot_expand.shape[0] * heading_rot_expand.shape[1], 
+                                               heading_rot_expand.shape[2])
+    local_end_pos = my_quat_rotate(flat_heading_rot, flat_end_pos)
+    flat_local_key_pos = local_end_pos.view(local_key_body_pos.shape[0], local_key_body_pos.shape[1] * local_key_body_pos.shape[2])
+
+    # 6D人机交互力
+    if humanoid_load_cell_obs:        
+        load_cell_force = - load_cell 
+    else:
+        load_cell_force = load_cell * 0
+
+    humanoid_dof_obs = dof_to_obs(dof_pos[:,0:28]) # 仅保留humanoid关节位置
+    humanoid_dof_vel = dof_vel[:,0:28]
+    # root_h 1; root_rot_obs 6; local_root_vel 3 ; local_root_ang_vel 3 ; dof_obs 58; dof_vel 36 ; load_cell_force 6, flat_local_key_pos 12
+    obs = torch.cat((root_h, root_rot_obs, local_root_vel, local_root_ang_vel, humanoid_dof_obs, humanoid_dof_vel, load_cell_force, flat_local_key_pos), dim=-1)
+    return obs
+
+
+@torch.jit.script
+def compute_srl_observations(root_states, dof_pos, dof_vel, key_body_pos, local_root_obs, load_cell, dof_force_tensor, srl_partial_obs):
+    # type: (Tensor, Tensor, Tensor, Tensor, bool, Tensor, Tensor, bool) -> Tensor
     root_pos = root_states[:, 0:3]
     root_rot = root_states[:, 3:7]
     root_vel = root_states[:, 7:10]
@@ -784,50 +850,26 @@ def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, l
 
     load_cell_force = - load_cell
 
-    humanoid_dof_obs = dof_to_obs(dof_pos[:,0:28]) # 仅保留humanoid关节位置
-    humanoid_dof_vel = dof_vel[:,0:28]
-    # root_h 1; root_rot_obs 6; local_root_vel 3 ; local_root_ang_vel 3 ; dof_obs 58; dof_vel 36 ; load_cell_force 6, flat_local_key_pos 12
-    obs = torch.cat((root_h, root_rot_obs, local_root_vel, local_root_ang_vel, humanoid_dof_obs, humanoid_dof_vel, load_cell_force, flat_local_key_pos), dim=-1)
-    return obs
-
-
-@torch.jit.script
-def compute_srl_observations(root_states, dof_pos, dof_vel, key_body_pos, local_root_obs, load_cell, dof_force_tensor):
-    # type: (Tensor, Tensor, Tensor, Tensor, bool, Tensor, Tensor) -> Tensor
-    root_pos = root_states[:, 0:3]
-    root_rot = root_states[:, 3:7]
-    root_vel = root_states[:, 7:10]
-    root_ang_vel = root_states[:, 10:13]
-
-    root_h = root_pos[:, 2:3] # root高度
-    heading_rot = calc_heading_quat_inv(root_rot)
-
-    if (local_root_obs):
-        root_rot_obs = quat_mul(heading_rot, root_rot)
-    else:
-        root_rot_obs = root_rot
-    root_rot_obs = quat_to_tan_norm(root_rot_obs) # root朝向
-
-    local_root_vel = my_quat_rotate(heading_rot, root_vel) # 局部root速度
-    local_root_ang_vel = my_quat_rotate(heading_rot, root_ang_vel) # 局部根部角速度
-
-    root_pos_expand = root_pos.unsqueeze(-2)
-    local_key_body_pos = key_body_pos - root_pos_expand
+    dof_obs = dof_to_obs(dof_pos) # dof_pos 34
     
-
-    load_cell_force = - load_cell
+    dof_vel[:,28] = 0.00   # SRL连接处被动自由关节不考虑
 
     # Y轴free joint仅保留角度信息
-    srl_dof_obs = dof_pos[:,28:] # 仅保留srl关节位置
-    srl_dof_vel = dof_vel[:,29:]
+    srl_dof_obs = dof_pos[:, 28:] # 7D 仅保留srl关节位置
+    srl_dof_vel = dof_vel[:, 29:] # 6D 仅保留srl关节速度
     srl_dof_force = dof_force_tensor[:,29:]
-    # root_h 1; root_rot_obs 6; local_root_vel 3 ; local_root_ang_vel 3 ; dof_obs 6; dof_vel 6 ; load_cell_force 6, dof_force 12
-    obs = torch.cat((root_h, root_rot_obs, local_root_vel, local_root_ang_vel, srl_dof_obs, srl_dof_vel, load_cell_force, srl_dof_force), dim=-1)
+
+    if srl_partial_obs:
+        # SRL使用部分可观测，移除Humanoid相关的信息
+        obs = torch.cat((root_h, root_rot_obs, local_root_vel, local_root_ang_vel, srl_dof_obs, srl_dof_vel, load_cell_force, srl_dof_force), dim=-1)
+    else: 
+        # root_h 1; root_rot_obs 6; local_root_vel 3 ; local_root_ang_vel 3 ; dof_obs 58; dof_vel 36 ; load_cell_force 6, flat_local_key_pos 12
+        obs = torch.cat((root_h, root_rot_obs, local_root_vel, local_root_ang_vel, dof_obs, dof_vel, load_cell_force, flat_local_key_pos, srl_dof_force), dim=-1)
     return obs
 
-# @torch.jit.script
-def compute_srl_observations_mirrored(root_states, dof_pos, dof_vel, key_body_pos, local_root_obs , load_cell , mirror_mat, dof_force_tensor):
-    # type: (Tensor, Tensor, Tensor, Tensor, bool, Tensor, Tensor, Tensor) -> Tensor
+@torch.jit.script
+def compute_srl_observations_mirrored(root_states, dof_pos, dof_vel, key_body_pos, local_root_obs , load_cell , mirror_mat, dof_force_tensor, srl_partial_obs):
+    # type: (Tensor, Tensor, Tensor, Tensor, bool, Tensor, Tensor, Tensor, bool) -> Tensor
     root_pos = root_states[:, 0:3]
     root_rot = root_states[:, 3:7]
     root_vel = root_states[:, 7:10]
@@ -857,6 +899,7 @@ def compute_srl_observations_mirrored(root_states, dof_pos, dof_vel, key_body_po
     flat_local_key_pos = local_end_pos.view(local_key_body_pos.shape[0], local_key_body_pos.shape[1] * local_key_body_pos.shape[2])
 
     # dof_obs = dof_to_obs(dof_pos) # dof_pos 36
+    dof_vel[:,28] = 0.00   # SRL连接处被动自由关节不考虑
 
     # Mirror
     root_rot_obs[:,1] =  -root_rot_obs[:,1]  # 切向量
@@ -886,12 +929,17 @@ def compute_srl_observations_mirrored(root_states, dof_pos, dof_vel, key_body_po
     load_cell_mirror[:,5] = -load_cell_mirror[:,5]  # z轴角速度
 
     # Y轴free joint仅保留角度信息
-    srl_dof_obs = dof_obs[:,52:] # 仅保留srl关节位置
-    srl_dof_vel = dof_vel[:,29:]
-    srl_dof_force = dof_force[:,29:] 
+    srl_dof_obs = dof_pos[:, 28:] # 7D 仅保留srl关节位置
+    srl_dof_vel = dof_vel[:, 29:] # 6D 仅保留srl关节速度
+    srl_dof_force = dof_force[:,29:]
+    srl_dof_force = srl_dof_force[:, [3, 4, 5, 0, 1, 2]] # mirrored 
 
-    # root_h 1; root_rot_obs 6; local_root_vel 3 ; local_root_ang_vel 3 ; dof_obs 60; dof_vel 36 ; flat_local_key_pos 12
-    obs = torch.cat((root_h, root_rot_obs, local_root_vel, local_root_ang_vel, srl_dof_obs, srl_dof_vel, load_cell_mirror, srl_dof_force), dim=-1)
+    if srl_partial_obs:
+        # SRL使用部分可观测，移除Humanoid相关的信息
+        obs = torch.cat((root_h, root_rot_obs, local_root_vel, local_root_ang_vel, srl_dof_obs, srl_dof_vel, load_cell_mirror, srl_dof_force), dim=-1)
+    else: 
+        # root_h 1; root_rot_obs 6; local_root_vel 3 ; local_root_ang_vel 3 ; dof_obs 58; dof_vel 36 ; load_cell_force 6, flat_local_key_pos 12
+        obs = torch.cat((root_h, root_rot_obs, local_root_vel, local_root_ang_vel, dof_obs, dof_vel, load_cell_mirror, flat_local_key_pos, srl_dof_force), dim=-1)
     return obs
 
 
@@ -946,14 +994,15 @@ def compute_humanoid_reward(obs_buf,
     # MLY: 暂时关闭HUMANOID受力惩罚
     torque_reward = torque_reward * 0
 
-    # 躯干直立奖励
-    lower_pos = upper_body_pos[:, 0, :]  # (4096, 3)
-    upper_pos = upper_body_pos[:, 1, :]  # (4096, 3)
-    upper_body_direction = upper_pos - lower_pos  # 维度 (4096, 3)
+    # 外肢体水平奖励项
+    board_pos = upper_body_pos[:, 0, :]  # (4096, 3)
+    root_pos = upper_body_pos[:, 1, :]  # (4096, 3)
+    upper_body_direction = board_pos - root_pos  # 维度 (4096, 3)
     norm_upper_body_direction = upper_body_direction / torch.norm(upper_body_direction, dim=1, keepdim=True)
-    upper_reward = upper_reward_w * (norm_upper_body_direction[:,2] - 1 )
+    # upper_reward = upper_reward_w * (norm_upper_body_direction[:,2] - 1 )
+    upper_reward = - upper_reward_w * (torch.abs(norm_upper_body_direction[:,2]) )
 
-    # SRL受到力矩惩罚
+    # SRL 关节力矩惩罚
     srl_joint_forces = dof_force_tensor[:,  srl_joint_ids]
     srl_torque_sum = - torch.sum((srl_joint_forces/100) ** 2, dim=1)
     srl_torque_reward = srl_torque_sum * srl_torque_w

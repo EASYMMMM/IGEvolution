@@ -207,217 +207,218 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
             return current_action
         
     def run(self):
-        n_games = self.games_num
-        render = self.render_env
-        n_game_life = self.n_game_life
-        is_determenistic = self.is_deterministic
-        sum_rewards = 0
-        sum_steps = 0
-        sum_game_res = 0
-        n_games = n_games * n_game_life
-        games_played = 0
-        has_masks = False
-        has_masks_func = getattr(self.env, "has_action_mask", None) is not None
+        with torch.no_grad():
+            n_games = self.games_num
+            render = self.render_env
+            n_game_life = self.n_game_life
+            is_determenistic = self.is_deterministic
+            sum_rewards = 0
+            sum_steps = 0
+            sum_game_res = 0
+            n_games = n_games * n_game_life
+            games_played = 0
+            has_masks = False
+            has_masks_func = getattr(self.env, "has_action_mask", None) is not None
 
-        op_agent = getattr(self.env, "create_agent", None)
-        if op_agent:
-            agent_inited = True
+            op_agent = getattr(self.env, "create_agent", None)
+            if op_agent:
+                agent_inited = True
 
-        if has_masks_func:
-            has_masks = self.env.has_action_mask()
+            if has_masks_func:
+                has_masks = self.env.has_action_mask()
 
-        # 存储第一个环境的动作数据
-        actions_env0 = []
-        episode_count_env0 = 0
-        # 新增：为每个 episode 创建列表来存储数据
-        episode_data = {
-            'root_pos': [],
-            'srl_end_pos': [],
-            'key_body_pos': [],
-            'dof_forces':[],
-            'obs':[],
-            'done':[],
-        }
+            # 存储第一个环境的动作数据
+            actions_env0 = []
+            episode_count_env0 = 0
+            # 新增：为每个 episode 创建列表来存储数据
+            episode_data = {
+                'root_pos': [],
+                'srl_end_pos': [],
+                'key_body_pos': [],
+                'dof_forces':[],
+                'obs':[],
+                'done':[],
+            }
 
-        load_cell_data = []
+            load_cell_data = []
 
-        need_init_rnn = self.is_rnn
-        print('Start Playing')
-        for _ in range(n_games):
-            if games_played >= n_games:
-                break
+            need_init_rnn = self.is_rnn
+            print('Start Playing')
+            for _ in range(n_games):
+                if games_played >= n_games:
+                    break
 
-            obs_dict = self.env_reset(self.env)
-            batch_size = 1
-            batch_size = self.get_batch_size(obs_dict['obs'], batch_size)
+                obs_dict = self.env_reset(self.env)
+                batch_size = 1
+                batch_size = self.get_batch_size(obs_dict['obs'], batch_size)
 
-            if need_init_rnn:
-                self.init_rnn()
-                need_init_rnn = False
+                if need_init_rnn:
+                    self.init_rnn()
+                    need_init_rnn = False
 
-            cr = torch.zeros(batch_size, dtype=torch.float32)
-            steps = torch.zeros(batch_size, dtype=torch.float32)
+                cr = torch.zeros(batch_size, dtype=torch.float32)
+                steps = torch.zeros(batch_size, dtype=torch.float32)
 
-            print_game_res = False
+                print_game_res = False
 
-            episode_actions = []
-            episode_velocity = []
+                episode_actions = []
+                episode_velocity = []
 
-            for n in range(self.max_steps):
-                obs_dict, done_env_ids = self._env_reset_done()
+                for n in range(self.max_steps):
+                    obs_dict, done_env_ids = self._env_reset_done()
 
-                if has_masks:
-                    masks = self.env.get_action_mask()
-                    action = self.get_masked_action(obs_dict, masks, is_determenistic)
-                else:
-                    if not self.seperate_obs:
-                        action = self.get_action(obs_dict, is_determenistic)
+                    if has_masks:
+                        masks = self.env.get_action_mask()
+                        action = self.get_masked_action(obs_dict, masks, is_determenistic)
                     else:
-                        action = self.get_action_ma(obs_dict, is_determenistic)
+                        if not self.seperate_obs:
+                            action = self.get_action(obs_dict, is_determenistic)
+                        else:
+                            action = self.get_action_ma(obs_dict, is_determenistic)
 
-                obs_dict, r, done, info =  self.env_step(self.env, action)
-                cr += r
-                steps += 1
-  
-                self._post_step(info)
-                
-                # 只记录第一个环境的动作
-                dof_forces = info["dof_forces"]
-                episode_actions.append(dof_forces[0].cpu().numpy())  # 假设动作输出是Tensor
-                episode_velocity.append(info["x_velocity"][0].cpu().numpy()) # 
+                    obs_dict, r, done, info =  self.env_step(self.env, action)
+                    cr += r
+                    steps += 1
+    
+                    self._post_step(info)
+                    
+                    # 只记录第一个环境的动作
+                    dof_forces = info["dof_forces"]
+                    episode_actions.append(dof_forces[0].cpu().numpy())  # 假设动作输出是Tensor
+                    episode_velocity.append(info["x_velocity"][0].cpu().numpy()) # 
 
-                # 记录第一个智能体的肢体位置数据
-                root_pos = info["root_pos"].cpu().numpy()
-                srl_end_pos = info["srl_end_pos"].cpu().numpy()
-                key_body_pos = info["key_body_pos"].cpu().numpy()
-                dof_pos = info["dof_pos"].cpu().numpy()
-                # 将这些数据分别存储在当前 episode 的对应列表中
-                episode_data['root_pos'].append(root_pos)
-                episode_data['srl_end_pos'].append(srl_end_pos)
-                episode_data['key_body_pos'].append(key_body_pos)
-                episode_data['dof_forces'].append(dof_forces[0].cpu().numpy())
-                episode_data['obs'].append( dof_pos)
-
-                if self._save_load_cell_data:
-                    load_cell_val = info["load_cell"].cpu().numpy()
-                    load_cell_data.append(load_cell_val)
-                
-                if render:
-                    self.env.render(mode = 'human')
-                    time.sleep(self.render_sleep)
-
-                all_done_indices = done.nonzero(as_tuple=False)
-                done_indices = all_done_indices[::self.num_agents]
-                done_count = len(done_indices)
-                games_played += done_count
-                if 0 in done_indices:
-                    episode_data['done'].append(1)
-                else:
-                    episode_data['done'].append(0)
-
-                if done_count > 0:
-                    if self._save_data:
-                        if 0 in done_indices: # 第一个环境结束
-                            print('Env-0 end ')
-                            print('Env-0 average velocity (x):',np.mean(episode_velocity))
-                            episode_velocity = []
-                            actions_env0.append(episode_actions)
-                            episode_count_env0 += 1
-                            games_played += 1
-
-                            # 只保存当前 episode 的数据
-                            data_to_save = {
-                                f'episode_root_pos': episode_data['root_pos'],
-                                f'episode_srl_end_pos': episode_data['srl_end_pos'],
-                                f'episode_key_body_pos': episode_data['key_body_pos'],
-                                f'episode_dof_forces': episode_data['dof_forces'],
-                                f'episode_obs': episode_data['obs'],
-                                f'episode_dones': episode_data['done'],
-                            }
-
-                            print(f"Episode {episode_count_env0} Data saved.")
-                            if episode_count_env0 == 3:
-                                sio.savemat('run_data/GA314_best_env0_episode_data.mat', data_to_save)
-                                print("已保存env0的前三个episode的数据到env0_episode_data.mat")
-
-                            # 当第一个环境完成两个episode时，绘制动作曲线
-                            # if episode_count_env0 == 1:
-                            #     self.plot_actions(actions_env0)
-                            # if episode_count_env0 == 3:
-                            #     self.action0_ave(actions_env0)
+                    # 记录第一个智能体的肢体位置数据
+                    root_pos = info["root_pos"].cpu().numpy()
+                    srl_end_pos = info["srl_end_pos"].cpu().numpy()
+                    key_body_pos = info["key_body_pos"].cpu().numpy()
+                    dof_pos = info["dof_pos"].cpu().numpy()
+                    # 将这些数据分别存储在当前 episode 的对应列表中
+                    episode_data['root_pos'].append(root_pos)
+                    episode_data['srl_end_pos'].append(srl_end_pos)
+                    episode_data['key_body_pos'].append(key_body_pos)
+                    episode_data['dof_forces'].append(dof_forces[0].cpu().numpy())
+                    episode_data['obs'].append( dof_pos)
 
                     if self._save_load_cell_data:
-                        if 0 in done_indices:
-                            # 转换 load cell 数据为 NumPy 数组
-                            load_cell_data_np = np.array(load_cell_data)
+                        load_cell_val = info["load_cell"].cpu().numpy()
+                        load_cell_data.append(load_cell_val)
+                    
+                    if render:
+                        self.env.render(mode = 'human')
+                        time.sleep(self.render_sleep)
 
-                            # 提取前三个维度 (Fx, Fy, Fz)
-                            forces = load_cell_data_np[:, :3]
-                            # 提取后三个维度 (Mx, My, Mz)
-                            torques = load_cell_data_np[:, 3:]
+                    all_done_indices = done.nonzero(as_tuple=False)
+                    done_indices = all_done_indices[::self.num_agents]
+                    done_count = len(done_indices)
+                    games_played += done_count
+                    if 0 in done_indices:
+                        episode_data['done'].append(1)
+                    else:
+                        episode_data['done'].append(0)
 
-                            # 生成时间轴
-                            time_steps = np.arange(len(load_cell_data_np))
+                    if done_count > 0:
+                        if self._save_data:
+                            if 0 in done_indices: # 第一个环境结束
+                                print('Env-0 end ')
+                                print('Env-0 average velocity (x):',np.mean(episode_velocity))
+                                episode_velocity = []
+                                actions_env0.append(episode_actions)
+                                episode_count_env0 += 1
+                                games_played += 1
 
-                            period_z_data = forces[:, 2]  # 取前 estimated_period 长度的数据
+                                # 只保存当前 episode 的数据
+                                data_to_save = {
+                                    f'episode_root_pos': episode_data['root_pos'],
+                                    f'episode_srl_end_pos': episode_data['srl_end_pos'],
+                                    f'episode_key_body_pos': episode_data['key_body_pos'],
+                                    f'episode_dof_forces': episode_data['dof_forces'],
+                                    f'episode_obs': episode_data['obs'],
+                                    f'episode_dones': episode_data['done'],
+                                }
 
-                            # 计算一个周期内的均值、方差、积分
-                            mean_fz = np.mean(period_z_data)  # 均值
-                            var_fz = np.var(period_z_data)    # 方差
-                            integral_fz = np.trapz(period_z_data, dx=1) / len(load_cell_data_np) # 梯形积分，dx=1 代表等间距采样
+                                print(f"Episode {episode_count_env0} Data saved.")
+                                if episode_count_env0 == 3:
+                                    sio.savemat('run_data/GA314_best_env0_episode_data.mat', data_to_save)
+                                    print("已保存env0的前三个episode的数据到env0_episode_data.mat")
 
-                            # **打印结果**
-                            print(f"Fz 交互力的单周期均值: {mean_fz:.4f}")
-                            print(f"Fz 交互力的单周期方差: {var_fz:.4f}")
-                            print(f"Fz 交互力的单周期积分: {integral_fz:.4f}")
+                                # 当第一个环境完成两个episode时，绘制动作曲线
+                                # if episode_count_env0 == 1:
+                                #     self.plot_actions(actions_env0)
+                                # if episode_count_env0 == 3:
+                                #     self.action0_ave(actions_env0)
 
-                            # 绘制 Fx, Fy, Fz 曲线
-                            plt.figure(figsize=(10, 5))
-                            plt.plot(time_steps, forces[:, 0], label='Fx', linestyle='-',  )
-                            plt.plot(time_steps, forces[:, 1], label='Fy', linestyle='-',  )
-                            plt.plot(time_steps, forces[:, 2], label='Fz', linestyle='-',  )
-                            plt.xlabel('Time Step')
-                            plt.ylabel('Force (N)')
-                            plt.title('Load Cell Forces (Fx, Fy, Fz)')
-                            plt.legend()
-                            plt.grid()
-                            plt.show()
+                        if self._save_load_cell_data:
+                            if 0 in done_indices:
+                                # 转换 load cell 数据为 NumPy 数组
+                                load_cell_data_np = np.array(load_cell_data)
 
-                            # 绘制 Mx, My, Mz 曲线
-                            plt.figure(figsize=(10, 5))
-                            plt.plot(time_steps, torques[:, 0], label='Mx', linestyle='-', )
-                            plt.plot(time_steps, torques[:, 1], label='My', linestyle='-', )
-                            plt.plot(time_steps, torques[:, 2], label='Mz', linestyle='-', )
-                            plt.xlabel('Time Step')
-                            plt.ylabel('Torque (Nm)')
-                            plt.title('Load Cell Torques (Mx, My, Mz)')
-                            plt.legend()
-                            plt.grid()
-                            plt.show()
-                            load_cell_data = []
+                                # 提取前三个维度 (Fx, Fy, Fz)
+                                forces = load_cell_data_np[:, :3]
+                                # 提取后三个维度 (Mx, My, Mz)
+                                torques = load_cell_data_np[:, 3:]
 
-                    if self.is_rnn:
-                        for s in self.states:
-                            s[:,all_done_indices,:] = s[:,all_done_indices,:] * 0.0
+                                # 生成时间轴
+                                time_steps = np.arange(len(load_cell_data_np))
 
-                    cur_rewards = cr[done_indices].sum().item()
-                    cur_steps = steps[done_indices].sum().item()
+                                period_z_data = forces[:, 2]  # 取前 estimated_period 长度的数据
 
-                    cr = cr * (1.0 - done.float())
-                    steps = steps * (1.0 - done.float())
-                    sum_rewards += cur_rewards
-                    sum_steps += cur_steps
+                                # 计算一个周期内的均值、方差、积分
+                                mean_fz = np.mean(period_z_data)  # 均值
+                                var_fz = np.var(period_z_data)    # 方差
+                                integral_fz = np.trapz(period_z_data, dx=1) / len(load_cell_data_np) # 梯形积分，dx=1 代表等间距采样
 
-                    game_res = 0.0
-                    if self.print_stats:
-                        if print_game_res:
-                            print('reward:', cur_rewards/done_count, 'steps:', cur_steps/done_count, 'w:', game_res)
-                        else:
-                            print('reward:', cur_rewards/done_count, 'steps:', cur_steps/done_count)
+                                # **打印结果**
+                                print(f"Fz 交互力的单周期均值: {mean_fz:.4f}")
+                                print(f"Fz 交互力的单周期方差: {var_fz:.4f}")
+                                print(f"Fz 交互力的单周期积分: {integral_fz:.4f}")
 
-                    sum_game_res += game_res
-                    if batch_size//self.num_agents == 1 or games_played >= n_games:
-                        break
+                                # 绘制 Fx, Fy, Fz 曲线
+                                plt.figure(figsize=(10, 5))
+                                plt.plot(time_steps, forces[:, 0], label='Fx', linestyle='-',  )
+                                plt.plot(time_steps, forces[:, 1], label='Fy', linestyle='-',  )
+                                plt.plot(time_steps, forces[:, 2], label='Fz', linestyle='-',  )
+                                plt.xlabel('Time Step')
+                                plt.ylabel('Force (N)')
+                                plt.title('Load Cell Forces (Fx, Fy, Fz)')
+                                plt.legend()
+                                plt.grid()
+                                plt.show()
+
+                                # 绘制 Mx, My, Mz 曲线
+                                plt.figure(figsize=(10, 5))
+                                plt.plot(time_steps, torques[:, 0], label='Mx', linestyle='-', )
+                                plt.plot(time_steps, torques[:, 1], label='My', linestyle='-', )
+                                plt.plot(time_steps, torques[:, 2], label='Mz', linestyle='-', )
+                                plt.xlabel('Time Step')
+                                plt.ylabel('Torque (Nm)')
+                                plt.title('Load Cell Torques (Mx, My, Mz)')
+                                plt.legend()
+                                plt.grid()
+                                plt.show()
+                                load_cell_data = []
+
+                        if self.is_rnn:
+                            for s in self.states:
+                                s[:,all_done_indices,:] = s[:,all_done_indices,:] * 0.0
+
+                        cur_rewards = cr[done_indices].sum().item()
+                        cur_steps = steps[done_indices].sum().item()
+
+                        cr = cr * (1.0 - done.float())
+                        steps = steps * (1.0 - done.float())
+                        sum_rewards += cur_rewards
+                        sum_steps += cur_steps
+
+                        game_res = 0.0
+                        if self.print_stats:
+                            if print_game_res:
+                                print('reward:', cur_rewards/done_count, 'steps:', cur_steps/done_count, 'w:', game_res)
+                            else:
+                                print('reward:', cur_rewards/done_count, 'steps:', cur_steps/done_count)
+
+                        sum_game_res += game_res
+                        if batch_size//self.num_agents == 1 or games_played >= n_games:
+                            break
 
         print(sum_rewards)
         if print_game_res:
