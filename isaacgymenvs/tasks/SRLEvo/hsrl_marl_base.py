@@ -89,6 +89,7 @@ class HumanoidAMPSRLmarlBase(VecTask):
         self._srl_torque_reward_w = self.cfg["env"]["srl_torque_reward_w"]
         self._srl_load_cell_w = self.cfg["env"]["srl_load_cell_w"]
         self._srl_root_force_reward_w = self.cfg["env"]["srl_root_force_reward_w"]
+        self._srl_feet_slip_w = self.cfg["env"]["srl_feet_slip_w"]
         self._srl_endpos_obs = self.cfg["env"]["srl_endpos_obs"]
         self._target_v_task = self.cfg["env"]["target_v_task"]
         self._autogen_model = self.cfg["env"].get("autogen_model", False)
@@ -134,7 +135,7 @@ class HumanoidAMPSRLmarlBase(VecTask):
         rigid_body_state = self.gym.acquire_rigid_body_state_tensor(self.sim) #  State for each rigid body contains position([0:3]), rotation([3:7]), linear velocity([7:10]), and angular velocity([10:13])
         contact_force_tensor = self.gym.acquire_net_contact_force_tensor(self.sim)
 
-        sensors_per_env = 2
+        sensors_per_env = 4
         if self._load_cell_activate:
             sensors_per_env += 1
         self.vec_sensor_tensor = gymtorch.wrap_tensor(sensor_tensor).view(self.num_envs, sensors_per_env, 6)
@@ -307,6 +308,8 @@ class HumanoidAMPSRLmarlBase(VecTask):
         # create force sensors at the feet
         right_foot_idx = self.gym.find_asset_rigid_body_index(humanoid_asset, "right_foot")
         left_foot_idx = self.gym.find_asset_rigid_body_index(humanoid_asset, "left_foot")
+        right_srl_end_idx = self.gym.find_asset_rigid_body_index(humanoid_asset, "SRL_right_end")
+        left_srl_end_idx  = self.gym.find_asset_rigid_body_index(humanoid_asset, "SRL_left_end")
         sensor_pose = gymapi.Transform()
 
         self.right_foot_ssidx = self.gym.create_asset_force_sensor(humanoid_asset, right_foot_idx, sensor_pose)
@@ -321,6 +324,13 @@ class HumanoidAMPSRLmarlBase(VecTask):
             load_cell_idx = self.gym.find_asset_rigid_body_index(humanoid_asset, "SRL")
             self.load_cell_ssidx = self.gym.create_asset_force_sensor(humanoid_asset, load_cell_idx, sensor_pose, sensor_props)
         
+        srl_end_sensor_props = gymapi.ForceSensorProperties()
+        srl_end_sensor_props.enable_forward_dynamics_forces = True
+        srl_end_sensor_props.enable_constraint_solver_forces = True
+        srl_end_sensor_props.use_world_frame = True
+        self.right_srl_end_ssidx = self.gym.create_asset_force_sensor(humanoid_asset, right_srl_end_idx, sensor_pose, srl_end_sensor_props)
+        self.left_srl_end_ssidx = self.gym.create_asset_force_sensor(humanoid_asset, left_srl_end_idx, sensor_pose, srl_end_sensor_props)
+
         self.max_motor_effort = max(motor_efforts)
         self.motor_efforts = to_torch(motor_efforts, device=self.device)
 
@@ -381,7 +391,7 @@ class HumanoidAMPSRLmarlBase(VecTask):
         self._srl_root_body_ids = self._build_srl_root_body_ids_tensor(env_ptr, handle)
         self._contact_body_ids = self._build_contact_body_ids_tensor(env_ptr, handle)
         
-        self._srl_endpos_ids = self._build_srl_endpos_body_ids_tensor(env_ptr, handle)
+        self._srl_end_ids = self._build_srl_end_body_ids_tensor(env_ptr, handle)
 
         if (self._pd_control):
             self._build_pd_action_offset_scale()
@@ -447,6 +457,9 @@ class HumanoidAMPSRLmarlBase(VecTask):
         upper_body_pos = self._rigid_body_pos[:, self._upper_body_ids, :]
         srl_root_body_pos = self._rigid_body_pos[:, self._srl_root_body_ids, :]
         load_cell_sensor = self.vec_sensor_tensor[:,self.load_cell_ssidx,:]
+        srl_end_body_pos = self._rigid_body_pos[:, self._srl_end_ids, :]
+        srl_end_body_vel = self._rigid_body_vel[:, self._srl_end_ids, :]
+        srl_feet_slip = compute_srl_feet_slip(srl_end_body_pos, srl_end_body_vel)
         self.rew_buf[:], self.rew_v_pen_buf[:], self.rew_joint_cost_buf[:], self.rew_upper_buf[:] = compute_humanoid_reward(self.obs_buf, 
                                                                                                      self.dof_force_tensor, 
                                                                                                      self._contact_forces,
@@ -456,9 +469,11 @@ class HumanoidAMPSRLmarlBase(VecTask):
                                                                                                      self._upper_reward_w,
                                                                                                      self._srl_joint_ids,
                                                                                                      load_cell_sensor,
+                                                                                                     srl_feet_slip,
                                                                                                      target_v_task = self._target_v_task,
                                                                                                      srl_torque_w  = self._srl_torque_reward_w, 
-                                                                                                     srl_load_cell_w = self._srl_load_cell_w)
+                                                                                                     srl_load_cell_w = self._srl_load_cell_w,
+                                                                                                     srl_feet_slip_w = self._srl_feet_slip_w)
         self.srl_rew_buf[:] = compute_srl_reward(self.obs_buf, self.dof_force_tensor, actions)
         return
 
@@ -499,7 +514,7 @@ class HumanoidAMPSRLmarlBase(VecTask):
             key_body_pos = self._rigid_body_pos[:, self._key_body_ids, :]
             load_cell_sensor = self.vec_sensor_tensor[:,self.load_cell_ssidx,:]
             if self._srl_endpos_obs: # Add cartisian pos of SRL-end to OBS
-                srl_end_body_pos = self._rigid_body_pos[:,self._srl_endpos_ids, :]
+                srl_end_body_pos = self._rigid_body_pos[:,self._srl_end_ids, :]
                 key_body_pos = torch.cat((key_body_pos, srl_end_body_pos), dim=1)
             target_v = self.get_task_target_v() # Target speed
             dof_force_tensor = self.dof_force_tensor
@@ -510,7 +525,7 @@ class HumanoidAMPSRLmarlBase(VecTask):
             key_body_pos = self._rigid_body_pos[env_ids][:, self._key_body_ids, :]
             load_cell_sensor = self.vec_sensor_tensor[env_ids,self.load_cell_ssidx,:]
             if self._srl_endpos_obs:
-                srl_end_body_pos = self._rigid_body_pos[env_ids][:,self._srl_endpos_ids, :]
+                srl_end_body_pos = self._rigid_body_pos[env_ids][:,self._srl_end_ids, :]
                 key_body_pos = torch.cat((key_body_pos, srl_end_body_pos), dim=1)
             target_v = self.get_task_target_v(env_ids) # Target speed
             dof_force_tensor = self.dof_force_tensor[env_ids]
@@ -591,12 +606,15 @@ class HumanoidAMPSRLmarlBase(VecTask):
         self.extras["srl_torque_cost"] = srl_torque_cost.to(self.rl_device)
         # plotting
         self.extras["root_pos"] = self._root_states[0, 0:3].to(self.rl_device)
-        srl_end_body_pos = self._rigid_body_pos[0,self._srl_endpos_ids, :]
+        srl_end_body_pos = self._rigid_body_pos[0, self._srl_end_ids, :]
+        srl_end_body_vel = self._rigid_body_vel[0, self._srl_end_ids, :]
         self.extras['srl_end_pos'] = srl_end_body_pos
+        self.extras['srl_end_vel'] = srl_end_body_vel
         key_body_pos = self._rigid_body_pos[0, self._key_body_ids, :]
         self.extras['key_body_pos'] = key_body_pos
         self.extras['dof_pos'] = self._dof_pos[0].to(self.rl_device)
         self.extras['load_cell'] = self.vec_sensor_tensor[0,self.load_cell_ssidx,:].to(self.rl_device)
+        self.extras['right_srl_end_sensor'] = self.vec_sensor_tensor[0,self.right_srl_end_ssidx,:].to(self.rl_device)
 
         # debug viz
         if self.viewer and self.debug_viz:
@@ -650,7 +668,7 @@ class HumanoidAMPSRLmarlBase(VecTask):
         body_ids = to_torch(body_ids, device=self.device, dtype=torch.long)
         return body_ids
 
-    def _build_srl_endpos_body_ids_tensor(self, env_ptr, actor_handle):
+    def _build_srl_end_body_ids_tensor(self, env_ptr, actor_handle):
         body_ids = []
         if self._autogen_model:
             srl_end_body_names = ["SRL_right_end","SRL_left_end"] 
@@ -955,16 +973,19 @@ def compute_humanoid_reward(obs_buf,
                             upper_reward_w, 
                             srl_joint_ids,
                             srl_load_cell_sensor,
+                            srl_feet_slip,
                             target_v_task = False,
                             srl_torque_w = 0.0,
-                            srl_load_cell_w  = 0.0 ):
-    # type: (Tensor, Tensor, Tensor, Tensor, int, Tensor, int, Tensor, Tensor, bool, float, float ) -> Tuple[Tensor, Tensor, Tensor, Tensor]
+                            srl_load_cell_w  = 0.0 ,
+                            srl_feet_slip_w = 0.0):
+    # type: (Tensor, Tensor, Tensor, Tensor, int, Tensor, int, Tensor, Tensor, Tensor, bool, float, float , float ) -> Tuple[Tensor, Tensor, Tensor, Tensor]
     
     # TODO: 目标速度跟随
     velocity_threshold = 1.4
     if not target_v_task:  # 速度惩罚
         velocity  = obs_buf[:,7]  # vx
-        velocity_penalty = - torch.where(velocity < velocity_threshold, (velocity_threshold - velocity)**2, torch.zeros_like(velocity))
+        vy  = obs_buf[:,8]  # vy
+        velocity_penalty = - 20 * (vy**2) - torch.where(velocity < velocity_threshold, (velocity_threshold - velocity)**2, torch.zeros_like(velocity))
     else:                  # 运动方向
         # velocity_x  = obs_buf[:,7]  # vx
         # velocity_y  = obs_buf[:,8]  # vy
@@ -978,10 +999,7 @@ def compute_humanoid_reward(obs_buf,
         d_penalty = -(-1+torch.sum(norm_direction * target_direction, dim=1))**2
 
         velocity_penalty = d_penalty
-        # mask = d_penalty < -0.2    # 创建一个布尔掩码，用于标记 d_penalty 小于 0.2 的情况
-        # velocity_penalty = torch.zeros_like(d_penalty)
-        # velocity_penalty[mask] = d_penalty[mask]
-        # velocity_penalty[~mask] = 0.5 * v_penalty[~mask] + 0.5 * d_penalty[~mask]
+
     
     
     # v1.5.12 比例惩罚，humanoid力矩绝对值超过100
@@ -1023,13 +1041,17 @@ def compute_humanoid_reward(obs_buf,
     # z_penalty =  torch.log(1.0 + (scaled_z - 100) / 100.0) / 3.0  # 对数
     srl_load_cell_reward = -srl_load_cell_w * (z_penalty + y_penalty + x_penalty)
 
+    # 末端滑动惩罚 feet slip
+    srl_feet_slip_reward = - srl_feet_slip_w * srl_feet_slip.squeeze(1)
+
+
     # scaled_x = torch.clamp(load_cell_x ,min=0)
     # x_penalty = scaled_x / 1000.0  # ~1 if x=1000
     # load_cell_penalty =  z_penalty    
     # srl_load_cell_reward = -load_cell_penalty * srl_load_cell_w       
 
     # reward = -velocity_penalty + torque_reward
-    reward = velocity_penalty + torque_reward + upper_reward + srl_torque_reward + srl_load_cell_reward
+    reward = velocity_penalty + torque_reward + upper_reward + srl_torque_reward + srl_load_cell_reward + srl_feet_slip_reward
     
     # return reward, velocity_penalty, torque_reward, upper_reward
     return reward, velocity_penalty, srl_load_cell_reward, upper_reward
@@ -1078,3 +1100,25 @@ def compute_humanoid_reset(reset_buf, progress_buf, contact_buf, contact_body_id
     reset = torch.where(progress_buf >= max_episode_length - 1, torch.ones_like(reset_buf), terminated)
 
     return reset, terminated
+
+@torch.jit.script
+def compute_srl_feet_slip(srl_end_pos, srl_end_vel):
+    # type: (Tensor, Tensor ) -> Tensor
+
+    # srl_end_pos: [num_envs, 2, 3]
+    # srl_end_vel: [num_envs, 2, 3]
+    num_envs = srl_end_pos.size(0)
+
+    # 判断是否接触地面（z < 0.9）
+    foot_contact = srl_end_pos[..., 2] < 0.095  # [num_envs, 2]，bool tensor
+
+    # 计算xy平面速度的合速度
+    foot_vel_mag = torch.sqrt(srl_end_vel[..., 0] ** 2 + srl_end_vel[..., 1] ** 2)  # [num_envs, 2]
+
+    # 判断是否滑动（速度 > 0.05 且接触地面）
+    foot_slip = (foot_contact & (foot_vel_mag > 0.05))  # [num_envs, 2]
+
+    # 若任一脚滑动，则该env为滑动状态
+    slip_flag = foot_slip.any(dim=1).float().unsqueeze(-1)  # [num_envs, 1]
+
+    return slip_flag

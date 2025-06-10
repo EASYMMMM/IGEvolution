@@ -48,6 +48,7 @@ env:
   srl_torque_reward_w: 0.0005 # 外肢体力矩惩罚 torque cost 
   srl_load_cell_w: 0.00      # 力矩传感器惩罚 
   srl_root_force_reward_w: 0 # 外肢体根部受力惩罚
+  srl_feet_slip_w: 0    # 末端滑动惩罚
   target_v_task: False  # 目标速度跟随任务
   autogen_model: True  # 模型自动生成
   load_cell: True      # 背板处受力传感器

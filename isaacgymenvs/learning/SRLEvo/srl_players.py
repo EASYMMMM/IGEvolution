@@ -41,6 +41,7 @@ import isaacgymenvs.learning.common_player as common_player
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.io as sio
+from scipy.signal import butter, filtfilt
 
 def my_safe_load(filename, **kwargs):
     return torch_ext.safe_filesystem_op(torch.load, filename, **kwargs)
@@ -234,6 +235,7 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
             episode_data = {
                 'root_pos': [],
                 'srl_end_pos': [],
+                'srl_end_vel': [],
                 'key_body_pos': [],
                 'dof_forces':[],
                 'obs':[],
@@ -290,17 +292,21 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                     # 记录第一个智能体的肢体位置数据
                     root_pos = info["root_pos"].cpu().numpy()
                     srl_end_pos = info["srl_end_pos"].cpu().numpy()
+                    srl_end_vel = info["srl_end_vel"].cpu().numpy()
                     key_body_pos = info["key_body_pos"].cpu().numpy()
                     dof_pos = info["dof_pos"].cpu().numpy()
                     # 将这些数据分别存储在当前 episode 的对应列表中
                     episode_data['root_pos'].append(root_pos)
                     episode_data['srl_end_pos'].append(srl_end_pos)
+                    episode_data['srl_end_vel'].append(srl_end_vel)
                     episode_data['key_body_pos'].append(key_body_pos)
                     episode_data['dof_forces'].append(dof_forces[0].cpu().numpy())
                     episode_data['obs'].append( dof_pos)
 
                     if self._save_load_cell_data:
-                        load_cell_val = info["load_cell"].cpu().numpy()
+                        # MLY: 绘图时选择交互位置六轴力传感器或者足部数据
+                        # load_cell_val = info["load_cell"].cpu().numpy()
+                        load_cell_val = info["right_srl_end_sensor"].cpu().numpy()
                         load_cell_data.append(load_cell_val)
                     
                     if render:
@@ -395,6 +401,54 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                                 plt.legend()
                                 plt.grid()
                                 plt.show()
+
+                                # 绘制 外肢体末端 pos 曲线
+                                srl_right_end_pos_np = np.array(episode_data['srl_end_pos'])
+                                srl_right_end_pos = srl_right_end_pos_np[:,0,:]
+                                plt.figure(figsize=(10, 5))
+                                # plt.plot(time_steps, srl_right_end_pos[:,0], label='x', linestyle='-',  )
+                                # plt.plot(time_steps, srl_right_end_pos[:,1], label='y', linestyle='-',  )
+                                plt.plot(time_steps, srl_right_end_pos[:,2], label='z', linestyle='-',  )
+                                plt.xlabel('Time Step')
+                                plt.ylabel('Displace')
+                                plt.title('SRL right end postion (x, y, z)')
+                                plt.legend()
+                                plt.grid()
+                                plt.show()
+
+                                # 差分计算速度，使用 np.diff 并补一个零使长度一致
+                                vel_xyz = np.diff(srl_right_end_pos, axis=0)
+                                vel_xyz = np.vstack([vel_xyz, np.zeros((1, 3))])  # 末尾补零保持维度一致
+                                vx, vy, vz = vel_xyz[:, 0], vel_xyz[:, 1], vel_xyz[:, 2]
+
+                                # 绘图：右末端 x/y/z 方向速度随时间变化
+                                plt.figure(figsize=(10, 4))
+                                plt.plot(time_steps, vx, label='Vx')
+                                plt.plot(time_steps, vy, label='Vy')
+                                plt.plot(time_steps, vz, label='Vz')
+                                plt.xlabel('Time Step')
+                                plt.ylabel('Diff Velocity (m/s)')
+                                plt.title('Right SRL End Velocity Over Time (via finite difference)')
+                                plt.legend()
+                                plt.grid(True)
+                                plt.tight_layout()
+                                plt.show()
+
+                                # 绘制 外肢体末端 vel 曲线
+                                srl_right_end_vel_np = np.array(episode_data['srl_end_vel'])
+                                srl_right_end_vel = srl_right_end_vel_np[:,0,:]
+                                # srl_right_end_vel = lowpass_filter(srl_right_end_vel, cutoff=12, fs=60.0, order=4)
+                                plt.figure(figsize=(10, 5))
+                                plt.plot(time_steps, srl_right_end_vel[:,0], label='x', linestyle='-',  )
+                                plt.plot(time_steps, srl_right_end_vel[:,1], label='y', linestyle='-',  )
+                                plt.plot(time_steps, srl_right_end_vel[:,2], label='z', linestyle='-',  )
+                                plt.xlabel('Time Step')
+                                plt.ylabel('Velocity')
+                                plt.title('SRL right end velocity (x, y, z)')
+                                plt.legend()
+                                plt.grid()
+                                plt.show()
+
                                 load_cell_data = []
 
                         if self.is_rnn:
@@ -532,3 +586,11 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
             disc_r = -torch.log(torch.maximum(1 - prob, torch.tensor(0.0001, device=self.device)))
             disc_r *= self._disc_reward_scale
         return disc_r
+
+
+ 
+def lowpass_filter(data, cutoff=0.1, fs=1.0, order=4):
+    nyq = 0.5 * fs
+    normal_cutoff = cutoff / nyq
+    b, a = butter(order, normal_cutoff, btype='low', analog=False)
+    return filtfilt(b, a, data, axis=0)
