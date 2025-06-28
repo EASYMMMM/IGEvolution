@@ -792,7 +792,7 @@ def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, l
 
     local_root_vel = my_quat_rotate(heading_rot, root_vel) # 局部root速度
     local_root_ang_vel = my_quat_rotate(heading_rot, root_ang_vel) # 局部根部角速度
-
+ 
     root_pos_expand = root_pos.unsqueeze(-2)
     local_key_body_pos = key_body_pos - root_pos_expand
     

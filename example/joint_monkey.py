@@ -34,6 +34,7 @@ class AssetDesc:
 
 
 asset_descriptors = [
+    AssetDesc("mjcf/srl_bot/srl_bot.xml", False),
     AssetDesc("mjcf/humanoid_srl_v3/hsrl_mode1_v3_2_lightweight.xml", False),
     AssetDesc("mjcf/nv_ant_test.xml", False),
     AssetDesc("mjcf/humanoid_srl/humanoid_srl_mode2.xml", False),
@@ -247,7 +248,7 @@ gym.refresh_dof_force_tensor(sim)
 while not gym.query_viewer_has_closed(viewer):
     
     # 检查某个特定关节
-    current_dof = 0
+    # current_dof = 0
 
     # step the physics
     gym.simulate(sim)

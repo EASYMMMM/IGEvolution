@@ -589,6 +589,157 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
 
 
  
+class SRL_Bot_PlayerContinuous(common_player.CommonPlayer):
+    def __init__(self,params):
+        super().__init__(params)
+        self.obs_log = []
+
+    def run(self):
+        n_games = self.games_num
+        render = self.render_env
+        n_game_life = self.n_game_life
+        is_determenistic = self.is_deterministic
+        sum_rewards = 0
+        sum_steps = 0
+        sum_game_res = 0
+        n_games = n_games * n_game_life
+        games_played = 0
+        has_masks = False
+        has_masks_func = getattr(self.env, "has_action_mask", None) is not None
+
+        op_agent = getattr(self.env, "create_agent", None)
+        if op_agent:
+            agent_inited = True
+
+        if has_masks_func:
+            has_masks = self.env.has_action_mask()
+
+        need_init_rnn = self.is_rnn
+        for _ in range(n_games):
+            if games_played >= n_games:
+                break
+
+            obs_dict = self.env_reset(self.env)
+            batch_size = 1
+            batch_size = self.get_batch_size(obs_dict['obs'], batch_size)
+
+            if need_init_rnn:
+                self.init_rnn()
+                need_init_rnn = False
+
+            cr = torch.zeros(batch_size, dtype=torch.float32)
+            steps = torch.zeros(batch_size, dtype=torch.float32)
+
+            print_game_res = False
+
+            for n in range(self.max_steps):
+                obs_dict, done_env_ids = self._env_reset_done()
+
+                if has_masks:
+                    masks = self.env.get_action_mask()
+                    action = self.get_masked_action(obs_dict, masks, is_determenistic)
+                else:
+                    action = self.get_action(obs_dict, is_determenistic)
+                obs_dict, r, done, info =  self.env_step(self.env, action)
+
+                obs = obs_dict['obs']  # shape: [num_envs, obs_dim]
+                if isinstance(obs, torch.Tensor):
+                    obs_np = obs.detach().cpu().numpy()[0, :]  # 取第一个环境
+                else:
+                    obs_np = np.array(obs[0, :])
+                self.obs_log.append(obs_np)
+
+                cr += r
+                steps += 1
+  
+                self._post_step(info)
+
+                if render:
+                    self.env.render(mode = 'human')
+                    time.sleep(self.render_sleep)
+
+                all_done_indices = done.nonzero(as_tuple=False)
+                done_indices = all_done_indices[::self.num_agents]
+                done_count = len(done_indices)
+                games_played += done_count
+
+                if done_count > 0:
+                    if 0 in done_indices:
+                        # 转为 numpy 数组，shape: [T, D]
+                        obs_array = np.stack(self.obs_log, axis=0)
+                        self.obs_log.clear()
+
+                        num_dims = obs_array.shape[1]
+                        mid = num_dims // 2
+
+                        # 前半维度
+                        fig1, axs1 = plt.subplots(mid, 1, figsize=(10, mid * 1.5), sharex=True)
+                        if mid == 1:
+                            axs1 = [axs1]
+
+                        for i in range(mid):
+                            axs1[i].plot(obs_array[:, i])
+                            axs1[i].set_ylabel(f"D{i}")
+                            axs1[i].grid(True)
+                        axs1[-1].set_xlabel("Step")
+                        plt.suptitle(f"Episode {games_played} Observation (Part 1)")
+                        plt.tight_layout()
+                        plt.show()
+
+                        # 后半维度
+                        fig2, axs2 = plt.subplots(num_dims - mid, 1, figsize=(10, (num_dims - mid) * 1.5), sharex=True)
+                        if (num_dims - mid) == 1:
+                            axs2 = [axs2]
+
+                        for i in range(mid, num_dims):
+                            axs2[i - mid].plot(obs_array[:, i])
+                            axs2[i - mid].set_ylabel(f"D{i}")
+                            axs2[i - mid].grid(True)
+                        axs2[-1].set_xlabel("Step")
+                        plt.suptitle(f"Episode {games_played} Observation (Part 2)")
+                        plt.tight_layout()
+                        plt.show()
+                        self.obs_log = []
+
+                    if self.is_rnn:
+                        for s in self.states:
+                            s[:,all_done_indices,:] = s[:,all_done_indices,:] * 0.0
+
+                    cur_rewards = cr[done_indices].sum().item()
+                    cur_steps = steps[done_indices].sum().item()
+
+                    cr = cr * (1.0 - done.float())
+                    steps = steps * (1.0 - done.float())
+                    sum_rewards += cur_rewards
+                    sum_steps += cur_steps
+
+                    game_res = 0.0
+                    if isinstance(info, dict):
+                        if 'battle_won' in info:
+                            print_game_res = True
+                            game_res = info.get('battle_won', 0.5)
+                        if 'scores' in info:
+                            print_game_res = True
+                            game_res = info.get('scores', 0.5)
+                    if self.print_stats:
+                        if print_game_res:
+                            print('reward:', cur_rewards/done_count, 'steps:', cur_steps/done_count, 'w:', game_res)
+                        else:
+                            print('reward:', cur_rewards/done_count, 'steps:', cur_steps/done_count)
+
+                    sum_game_res += game_res
+                    if batch_size//self.num_agents == 1 or games_played >= n_games:
+                        break
+
+        print(sum_rewards)
+        if print_game_res:
+            print('av reward:', sum_rewards / games_played * n_game_life, 'av steps:', sum_steps / games_played * n_game_life, 'winrate:', sum_game_res / games_played * n_game_life)
+        else:
+            print('av reward:', sum_rewards / games_played * n_game_life, 'av steps:', sum_steps / games_played * n_game_life)
+
+        return
+
+
 def lowpass_filter(data, cutoff=0.1, fs=1.0, order=4):
     nyq = 0.5 * fs
     normal_cutoff = cutoff / nyq

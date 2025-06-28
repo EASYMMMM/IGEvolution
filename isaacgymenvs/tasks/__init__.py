@@ -62,6 +62,8 @@ from .SRLEvo.humanoid_amp_srl_v2 import HumanoidAMPSRLGym_v2
 from .SRLEvo.hsrl_marl import HumanoidAMPSRLGym_marl
 from .SRLEvo.humanoid_amp_s1 import HumanoidAMP_s1
 
+from .SRLEvo.srl_bot import SRL_bot
+
 def resolve_allegro_kuka(cfg, *args, **kwargs):
     subtask_name: str = cfg["env"]["subtask"]
     subtask_map = dict(
@@ -121,5 +123,6 @@ isaacgym_task_map = {
     "HumanoidAMPSRLGym_v2":HumanoidAMPSRLGym_v2,
     "HumanoidAMPSRLGym_marl":HumanoidAMPSRLGym_marl,
     "HumanoidAMPSRLGym_s1":HumanoidAMP_s1,
+    "SRLBot":SRL_bot,
     # "HumanoidSRLGym": HumanoidAMPSRLTest,
 }
