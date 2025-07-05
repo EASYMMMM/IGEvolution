@@ -669,7 +669,7 @@ class SRL_Bot_PlayerContinuous(common_player.CommonPlayer):
                         obs_array = np.stack(self.obs_log, axis=0)
                         self.obs_log.clear()
 
-                        num_dims = obs_array.shape[1]
+                        num_dims = 31
                         mid = num_dims // 2
 
                         # 前半维度

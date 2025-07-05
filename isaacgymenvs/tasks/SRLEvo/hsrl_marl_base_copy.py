@@ -43,9 +43,8 @@ import torch
 
 from isaacgym import gymtorch
 from isaacgym import gymapi
-import math
 from isaacgymenvs.utils.torch_jit_utils import quat_mul, to_torch, get_axis_params, calc_heading_quat_inv, \
-     exp_map_to_quat, quat_to_tan_norm, my_quat_rotate, calc_heading_quat_inv, quat_rotate_inverse
+     exp_map_to_quat, quat_to_tan_norm, my_quat_rotate, calc_heading_quat_inv
 
 from ..base.vec_task import VecTask
 
@@ -98,27 +97,6 @@ class HumanoidAMPSRLmarlBase(VecTask):
         self._load_cell_activate = self.cfg["env"].get("load_cell",False)
         self._humanoid_load_cell_obs = self.cfg["env"].get("humanoid_load_cell_obs", False)
         self._srl_partial_obs = self.cfg["env"].get("srl_partial_obs", False)
-        self.srl_default_joint_angles = [0*np.pi,
-                                     0*np.pi, 
-                                     0.15*np.pi,
-                                     0.25*np.pi,
-                                     0*np.pi,
-                                     0.15*np.pi,
-                                     0.25*np.pi]
-        self.initial_dof_pos = torch.tensor(self.default_joint_angles, device=self.device).unsqueeze(0).repeat(self.num_envs, 1)
-        self.obs_scales={
-            "lin_vel" : 2.0,
-            "ang_vel" : 0.25,
-            "dof_pos" : 1.0,
-            "dof_vel" : 0.05,
-            "height_measurements" : 5.0 }
-        self.obs_scales_tensor = torch.tensor([
-        self.obs_scales["lin_vel"],
-        self.obs_scales["ang_vel"],
-        self.obs_scales["dof_pos"],
-        self.obs_scales["dof_vel"],
-        ], device=self.device)
-        self.targets = to_torch([1000, 0, 0], device=self.device).repeat((self.num_envs, 1))
         # --- SRL-Gym Defined End ---
 
         self.cfg["env"]["numObservations"] = self.get_obs_size()
@@ -132,7 +110,6 @@ class HumanoidAMPSRLmarlBase(VecTask):
         # --- srl defined ---
         # 28 为被动链接关节
         self._srl_joint_ids = to_torch([ 29, 30, 31, 32, 33, 34], device=self.device, dtype=torch.long)
-        self.gravity_vec = to_torch(get_axis_params(-1., self.up_axis_idx), device=self.device).repeat((self.num_envs, 1))
         # --- srl defined end ---
 
         # mirror matrix
@@ -199,7 +176,6 @@ class HumanoidAMPSRLmarlBase(VecTask):
         self._rigid_body_rot = self._rigid_body_state.view(self.num_envs, self.num_bodies, 13)[..., 3:7]
         self._rigid_body_vel = self._rigid_body_state.view(self.num_envs, self.num_bodies, 13)[..., 7:10]
         self._rigid_body_ang_vel = self._rigid_body_state.view(self.num_envs, self.num_bodies, 13)[..., 10:13]
-        
         self._contact_forces = gymtorch.wrap_tensor(contact_force_tensor).view(self.num_envs, self.num_bodies, 3)
         
         self._terminate_buf = torch.ones(self.num_envs, device=self.device, dtype=torch.long)
@@ -542,11 +518,6 @@ class HumanoidAMPSRLmarlBase(VecTask):
                 key_body_pos = torch.cat((key_body_pos, srl_end_body_pos), dim=1)
             target_v = self.get_task_target_v() # Target speed
             dof_force_tensor = self.dof_force_tensor
-            progress_buf = self.progress_buf
-            initial_dof_pos = self.initial_dof_pos
-            actions = self.actions
-            gravity_vec = self.gravity_vec 
-            targets = self.targets
         else:
             root_states = self._root_states[env_ids]
             dof_pos = self._dof_pos[env_ids]
@@ -558,19 +529,13 @@ class HumanoidAMPSRLmarlBase(VecTask):
                 key_body_pos = torch.cat((key_body_pos, srl_end_body_pos), dim=1)
             target_v = self.get_task_target_v(env_ids) # Target speed
             dof_force_tensor = self.dof_force_tensor[env_ids]
-            progress_buf = self.progress_buf[env_ids]
-            initial_dof_pos = self.initial_dof_pos[env_ids]
-            actions = self.actions[env_ids]
-            gravity_vec = self.gravity_vec[env_ids]
-            targets = self.targets[env_ids]
 
         humanoid_obs = compute_humanoid_observations(root_states, dof_pos, dof_vel,
                                             key_body_pos, self._local_root_obs,
                                             load_cell_sensor, self._humanoid_load_cell_obs)
-        srl_obs = compute_srl_observations(progress_buf, initial_dof_pos, root_states, dof_pos, dof_vel,
+        srl_obs = compute_srl_observations(root_states, dof_pos, dof_vel,
                                             key_body_pos, self._local_root_obs,
-                                            load_cell_sensor, dof_force_tensor, gravity_vec, actions, 
-                                            self.obs_scales_tensor, targets, self._srl_partial_obs)
+                                            load_cell_sensor, dof_force_tensor, self._srl_partial_obs)
         obs = torch.cat((humanoid_obs, srl_obs),dim=1)
         obs_mirrored = compute_srl_observations_mirrored(root_states, dof_pos, dof_vel,
                                             key_body_pos, self._local_root_obs, 
@@ -870,45 +835,29 @@ def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, l
     return obs
 
 
-# @torch.jit.script
-def compute_srl_observations(
-            progress_buf,
-            default_joint_pos,
-            root_states, 
-            dof_pos, 
-            dof_vel, 
-            key_body_pos, 
-            local_root_obs, 
-            load_cell, 
-            dof_force_tensor, 
-            gravity_vec ,
-            actions,
-            obs_scales,
-            targets,
-            srl_partial_obs):
-    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, bool, Tensor, Tensor,Tensor, Tensor, Tensor, Tensor, bool) -> Tensor
+@torch.jit.script
+def compute_srl_observations(root_states, dof_pos, dof_vel, key_body_pos, local_root_obs, load_cell, dof_force_tensor, srl_partial_obs):
+    # type: (Tensor, Tensor, Tensor, Tensor, bool, Tensor, Tensor, bool) -> Tensor
     root_pos = root_states[:, 0:3]
     root_rot = root_states[:, 3:7]
     root_vel = root_states[:, 7:10]
     root_ang_vel = root_states[:, 10:13]
 
     root_h = root_pos[:, 2:3] # root高度
-
     heading_rot = calc_heading_quat_inv(root_rot)
+
     if (local_root_obs):
         root_rot_obs = quat_mul(heading_rot, root_rot)
     else:
         root_rot_obs = root_rot
     root_rot_obs = quat_to_tan_norm(root_rot_obs) # root朝向
 
-    # 将线速度/角速度旋转到局部坐标
-    local_root_vel     = quat_rotate_inverse(root_rot, root_vel)
-    local_root_ang_vel = quat_rotate_inverse(root_rot, root_ang_vel)
-    projected_gravity  = quat_rotate_inverse(root_rot, gravity_vec)
+    local_root_vel = my_quat_rotate(heading_rot, root_vel) # 局部root速度
+    local_root_ang_vel = my_quat_rotate(heading_rot, root_ang_vel) # 局部根部角速度
 
-    #  humanoid key-body position
     root_pos_expand = root_pos.unsqueeze(-2)
     local_key_body_pos = key_body_pos - root_pos_expand
+    
     heading_rot_expand = heading_rot.unsqueeze(-2)
     heading_rot_expand = heading_rot_expand.repeat((1, local_key_body_pos.shape[1], 1))
     flat_end_pos = local_key_body_pos.view(local_key_body_pos.shape[0] * local_key_body_pos.shape[1], local_key_body_pos.shape[2])
@@ -924,78 +873,41 @@ def compute_srl_observations(
     dof_vel[:,28] = 0.00   # SRL连接处被动自由关节不考虑
 
     # Y轴free joint仅保留角度信息
-    srl_dof_obs = dof_pos[:, 28:] - default_joint_pos # 7D 仅保留srl关节位置
+    srl_dof_obs = dof_pos[:, 28:] # 7D 仅保留srl关节位置
     srl_dof_vel = dof_vel[:, 29:] # 6D 仅保留srl关节速度
     srl_dof_force = dof_force_tensor[:,29:]
 
-
-    # 计算 heading_proj 默认机器人面朝 x 轴 [1, 0, 0]
-    heading_vector = torch.tensor([1., 0., 0.], device=root_rot.device).repeat(root_rot.shape[0], 1)
-    facing_dir = - my_quat_rotate(root_rot, heading_vector)   #  MLY: 在定义SRL时，对ROOT进行了180度旋转，故此处取负
-    to_target = targets - root_pos
-    to_target[:, 2] = 0
-    to_target_dir = torch.nn.functional.normalize(to_target, dim=-1)
-    cos_theta = torch.sum(facing_dir[:, :2] * to_target_dir[:, :2], dim=-1, keepdim=True)  # [-1, 1]
-    cos_theta_clipped = torch.clamp(cos_theta, -1.0 + 1e-6, 1.0 - 1e-6)
-    angle_error = torch.acos(cos_theta_clipped)  # ∈ [0, π]
-    
-    # 假设周期为 T=60 步，则频率为 1/T，每一步是 2π/T 相位步长
-    phase_t = (2 * math.pi / 15.0) * (progress_buf-1).float()  # shape: [num_envs]
-    sin_phase = torch.sin(phase_t).unsqueeze(-1)
-    cos_phase = torch.cos(phase_t).unsqueeze(-1)
-    
-    obs = torch.cat((root_h,                         # 1
-                    local_root_vel * obs_scales[0], # 3
-                    local_root_ang_vel * obs_scales[1], # 3
-                    projected_gravity,                  # 3 
-                    srl_dof_obs * obs_scales[2],        # 6
-                    srl_dof_vel * obs_scales[3],        # 6
-                    actions , # actions 通常不用 scale      6
-                    angle_error,                       # 1       
-                    sin_phase,                      # 1
-                    cos_phase,                      # 1
-                ), dim=-1)
+    if srl_partial_obs:
+        # SRL使用部分可观测，移除Humanoid相关的信息
+        obs = torch.cat((root_h, root_rot_obs, local_root_vel, local_root_ang_vel, srl_dof_obs, srl_dof_vel, load_cell_force, srl_dof_force), dim=-1)
+    else: 
+        # root_h 1; root_rot_obs 6; local_root_vel 3 ; local_root_ang_vel 3 ; dof_obs 58; dof_vel 36 ; load_cell_force 6, flat_local_key_pos 12
+        obs = torch.cat((root_h, root_rot_obs, local_root_vel, local_root_ang_vel, dof_obs, dof_vel, load_cell_force, flat_local_key_pos, srl_dof_force), dim=-1)
     return obs
 
-# @torch.jit.script
-def compute_srl_observations_mirrored( 
-            progress_buf,
-            default_joint_pos,
-            root_states, 
-            dof_pos, 
-            dof_vel, 
-            key_body_pos, 
-            local_root_obs, 
-            load_cell, 
-            dof_force_tensor, 
-            gravity_vec ,
-            actions,
-            obs_scales,
-            targets,
-            srl_partial_obs):
-    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, bool, Tensor, Tensor,Tensor, Tensor, Tensor, Tensor, bool) -> Tensor
+@torch.jit.script
+def compute_srl_observations_mirrored(root_states, dof_pos, dof_vel, key_body_pos, local_root_obs , load_cell , mirror_mat, dof_force_tensor, srl_partial_obs):
+    # type: (Tensor, Tensor, Tensor, Tensor, bool, Tensor, Tensor, Tensor, bool) -> Tensor
     root_pos = root_states[:, 0:3]
     root_rot = root_states[:, 3:7]
     root_vel = root_states[:, 7:10]
     root_ang_vel = root_states[:, 10:13]
 
     root_h = root_pos[:, 2:3] # root高度
-
     heading_rot = calc_heading_quat_inv(root_rot)
+
     if (local_root_obs):
         root_rot_obs = quat_mul(heading_rot, root_rot)
     else:
         root_rot_obs = root_rot
     root_rot_obs = quat_to_tan_norm(root_rot_obs) # root朝向
 
-    # 将线速度/角速度旋转到局部坐标
-    local_root_vel     = quat_rotate_inverse(root_rot, root_vel)
-    local_root_ang_vel = quat_rotate_inverse(root_rot, root_ang_vel)
-    projected_gravity  = quat_rotate_inverse(root_rot, gravity_vec)
+    local_root_vel = my_quat_rotate(heading_rot, root_vel) # 局部root速度
+    local_root_ang_vel = my_quat_rotate(heading_rot, root_ang_vel) # 局部根部角速度
 
-    #  humanoid key-body position
     root_pos_expand = root_pos.unsqueeze(-2)
     local_key_body_pos = key_body_pos - root_pos_expand
+    
     heading_rot_expand = heading_rot.unsqueeze(-2)
     heading_rot_expand = heading_rot_expand.repeat((1, local_key_body_pos.shape[1], 1))
     flat_end_pos = local_key_body_pos.view(local_key_body_pos.shape[0] * local_key_body_pos.shape[1], local_key_body_pos.shape[2])
@@ -1004,34 +916,8 @@ def compute_srl_observations_mirrored(
     local_end_pos = my_quat_rotate(flat_heading_rot, flat_end_pos)
     flat_local_key_pos = local_end_pos.view(local_key_body_pos.shape[0], local_key_body_pos.shape[1] * local_key_body_pos.shape[2])
 
-    load_cell_force = - load_cell
-
-    dof_obs = dof_to_obs(dof_pos) # dof_pos 34
-    
+    # dof_obs = dof_to_obs(dof_pos) # dof_pos 36
     dof_vel[:,28] = 0.00   # SRL连接处被动自由关节不考虑
-
-    # Y轴free joint仅保留角度信息
-    srl_dof_obs = dof_pos[:, 28:] - default_joint_pos # 7D 仅保留srl关节位置
-    srl_dof_vel = dof_vel[:, 29:] # 6D 仅保留srl关节速度
-    srl_dof_force = dof_force_tensor[:,29:]
-
-
-    # 计算 heading_proj 默认机器人面朝 x 轴 [1, 0, 0]
-    heading_vector = torch.tensor([1., 0., 0.], device=root_rot.device).repeat(root_rot.shape[0], 1)
-    facing_dir = - my_quat_rotate(root_rot, heading_vector)   #  MLY: 在定义SRL时，对ROOT进行了180度旋转，故此处取负
-    to_target = targets - root_pos
-    to_target[:, 2] = 0
-    to_target_dir = torch.nn.functional.normalize(to_target, dim=-1)
-    cos_theta = torch.sum(facing_dir[:, :2] * to_target_dir[:, :2], dim=-1, keepdim=True)  # [-1, 1]
-    cos_theta_clipped = torch.clamp(cos_theta, -1.0 + 1e-6, 1.0 - 1e-6)
-    angle_error = torch.acos(cos_theta_clipped)  # ∈ [0, π]
-    
-    # 假设周期为 T=60 步，则频率为 1/T，每一步是 2π/T 相位步长
-    phase_t = (2 * math.pi / 15.0) * (progress_buf-1).float()  # shape: [num_envs]
-    sin_phase = torch.sin(phase_t).unsqueeze(-1)
-    cos_phase = torch.cos(phase_t).unsqueeze(-1)
-    
-
 
     # Mirror
     root_rot_obs[:,1] =  -root_rot_obs[:,1]  # 切向量
@@ -1066,17 +952,12 @@ def compute_srl_observations_mirrored(
     srl_dof_force = dof_force[:,29:]
     srl_dof_force = srl_dof_force[:, [3, 4, 5, 0, 1, 2]] # mirrored 
 
-    obs = torch.cat((root_h,                         # 1
-                    local_root_vel * obs_scales[0], # 3
-                    local_root_ang_vel * obs_scales[1], # 3
-                    projected_gravity,                  # 3 
-                    srl_dof_obs * obs_scales[2],        # 6
-                    srl_dof_vel * obs_scales[3],        # 6
-                    actions , # actions 通常不用 scale      6
-                    angle_error,                       # 1       
-                    sin_phase,                      # 1
-                    cos_phase,                      # 1
-                ), dim=-1)
+    if srl_partial_obs:
+        # SRL使用部分可观测，移除Humanoid相关的信息
+        obs = torch.cat((root_h, root_rot_obs, local_root_vel, local_root_ang_vel, srl_dof_obs, srl_dof_vel, load_cell_mirror, srl_dof_force), dim=-1)
+    else: 
+        # root_h 1; root_rot_obs 6; local_root_vel 3 ; local_root_ang_vel 3 ; dof_obs 58; dof_vel 36 ; load_cell_force 6, flat_local_key_pos 12
+        obs = torch.cat((root_h, root_rot_obs, local_root_vel, local_root_ang_vel, dof_obs, dof_vel, load_cell_mirror, flat_local_key_pos, srl_dof_force), dim=-1)
     return obs
 
 

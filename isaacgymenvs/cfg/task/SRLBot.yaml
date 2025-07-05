@@ -12,6 +12,7 @@ env:
   cameraFollow: True # if the camera follows humanoid or not
   controlFrequencyInv: 2 # 30 Hz
   clipActions: 1.0
+  frame_stack: 5
   
   pdControl: True
   powerScale: 1.0
@@ -32,9 +33,9 @@ env:
 
   # reward weights
   torques_cost_scale: 5e-6
-  dof_acc_cost_scale: 2e-7
+  dof_acc_cost_scale: 0.5
   dof_vel_cost_scale: 0
-  dof_pos_limits_cost_scale:  1.0
+  dof_pos_limits_cost_scale:  0.1
   no_fly_penalty_scale: 10.0
   heading_reward_scale: 2.0
   gait_similarity_penalty_scale: 1

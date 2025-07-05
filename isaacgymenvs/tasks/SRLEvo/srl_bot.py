@@ -30,6 +30,7 @@ import numpy as np
 import os
 import torch
 import math
+from collections import deque 
 
 from isaacgym import gymtorch
 from isaacgym import gymapi
@@ -78,7 +79,9 @@ class SRL_bot(VecTask):
         self.lateral_offset_scale = self.cfg["env"]["lateral_offset_scale"]
         self.upright_penalty_scale = self.cfg["env"]["upright_penalty_scale"]
 
-        self.cfg["env"]["numObservations"] = 31
+        self.frame_stack = self.cfg["env"]["frame_stack"]  # 帧堆叠数量
+
+        self.cfg["env"]["numObservations"] = 31 * self.frame_stack
         self.cfg["env"]["numActions"] = 6
         self.default_joint_angles = [0*np.pi, 
                                      0.15*np.pi,
@@ -88,7 +91,11 @@ class SRL_bot(VecTask):
                                      0.25*np.pi]
 
 
+       
         super().__init__(config=self.cfg, rl_device=rl_device, sim_device=sim_device, graphics_device_id=graphics_device_id, headless=headless, virtual_screen_capture=virtual_screen_capture, force_render=force_render)
+
+        self.obs_buffer = torch.zeros((self.num_envs, self.frame_stack, np.int32(self.num_obs/self.frame_stack)), device=self.device)
+        self.obs_mirrored_buffer = torch.zeros((self.num_envs, self.frame_stack, np.int32(self.num_obs/self.frame_stack)), device=self.device)
 
         if self.viewer != None:
             cam_pos = gymapi.Vec3(50.0, 25.0, 2.4)
@@ -125,6 +132,8 @@ class SRL_bot(VecTask):
         # self.initial_dof_pos = torch.where(self.dof_limits_lower > zero_tensor, self.dof_limits_lower,
         #                                    torch.where(self.dof_limits_upper < zero_tensor, self.dof_limits_upper, self.initial_dof_pos))
         # MLY: user define
+        self.actions = torch.zeros(
+            (self.num_envs, self.num_actions), device=self.device, dtype=torch.float)
         self.initial_dof_pos = torch.tensor(self.default_joint_angles, device=self.device).unsqueeze(0).repeat(self.num_envs, 1)
         self.initial_dof_vel = torch.zeros_like(self.dof_vel, device=self.device, dtype=torch.float)
 
@@ -177,7 +186,6 @@ class SRL_bot(VecTask):
         if self.viewer != None:
             self._init_camera()
             
-        # ----- user define end -----
 
     def create_sim(self):
         self.up_axis_idx = 2 # index of up axis: Y=1, Z=2
@@ -248,7 +256,7 @@ class SRL_bot(VecTask):
         self.num_joints = self.gym.get_asset_joint_count(humanoid_asset)
 
         start_pose = gymapi.Transform()
-        start_pose.p = gymapi.Vec3(*get_axis_params(0.89, self.up_axis_idx))
+        start_pose.p = gymapi.Vec3(*get_axis_params(0.91, self.up_axis_idx))
         start_pose.r = gymapi.Quat(0.0, 0.0, 0.0, 1.0)
 
         self.start_rotation = torch.tensor([start_pose.r.x, start_pose.r.y, start_pose.r.z, start_pose.r.w], device=self.device)
@@ -366,22 +374,75 @@ class SRL_bot(VecTask):
         
         )   
 
+    def compute_observations(self, env_ids=None):
+        obs, obs_mirrored, potentials, prev_potentials = self._compute_srl_obs(env_ids)
 
-    def compute_observations(self):
-        self.gym.refresh_dof_state_tensor(self.sim)
-        self.gym.refresh_actor_root_state_tensor(self.sim)
-        self.gym.refresh_force_sensor_tensor(self.sim)
-        self.gym.refresh_dof_force_tensor(self.sim)
-        self.gym.refresh_net_contact_force_tensor(self.sim)
-        self.gym.refresh_rigid_body_state_tensor(self.sim)
+        if (env_ids is None):
+            self.obs_buffer[:, 1:, :] = self.obs_buffer[:, :-1, :]  # 向后移动数据
+            self.obs_buffer[:, 0, :] = obs  # 将新的观测数据放到队列的开头
+            self.obs_buf[:] = self.obs_buffer.reshape(self.num_envs, -1)  # 展开为 (num_envs, frame_stack * num_obs)
 
-        self.obs_buf[:], self.potentials[:], self.prev_potentials[:], = compute_srl_bot_observations(self.progress_buf, self.initial_dof_pos, self.root_states, self.dof_pos, self.dof_vel,
-                                                       self.dof_force_tensor, self.gravity_vec, self.actions,
-                                                       self.obs_scales_tensor, self.targets, self.potentials, self.dt)
+            self.obs_mirrored_buffer[:, 1:, :] = self.obs_mirrored_buffer[:, :-1, :]  # 向后移动数据
+            self.obs_mirrored_buffer[:, 0, :] = obs_mirrored  # 将新的观测数据放到队列的开头
+            self.obs_mirrored_buf[:] = self.obs_mirrored_buffer.reshape(self.num_envs, -1)  # 展开为 (num_envs, frame_stack * num_obs)
 
-        self.obs_mirrored_buf[:] =  compute_srl_bot_observations_mirrored(self.progress_buf, self.mirror_mat_srl_dof, self.initial_dof_pos, self.root_states, self.dof_pos, self.dof_vel,
-                                                       self.dof_force_tensor, self.gravity_vec, self.actions,
-                                                       self.obs_scales_tensor, self.targets, self.potentials, self.dt)
+            self.potentials[:] = potentials
+            self.prev_potentials[:] = prev_potentials
+        else:
+            # 对指定环境进行更新
+            self.obs_buffer[env_ids, 1:, :] = self.obs_buffer[env_ids, :-1, :]
+            self.obs_buffer[env_ids, 0, :] = obs
+            self.obs_buf[env_ids] = self.obs_buffer[env_ids].reshape(len(env_ids), -1)
+
+            self.obs_mirrored_buffer[env_ids, 1:, :] = self.obs_mirrored_buffer[env_ids, :-1, :]  # 向后移动数据
+            self.obs_mirrored_buffer[env_ids, 0, :] = obs_mirrored  # 将新的观测数据放到队列的开头
+            self.obs_mirrored_buf[env_ids] = self.obs_mirrored_buffer[env_ids].reshape(self.num_envs, -1)  # 展开为 (num_envs, frame_stack * num_obs)
+
+            self.potentials[env_ids] = potentials
+            self.prev_potentials[env_ids] = prev_potentials
+
+        # self.obs_buf[:], self.potentials[:], self.prev_potentials[:], = compute_srl_bot_observations(self.progress_buf, self.initial_dof_pos, self.root_states, self.dof_pos, self.dof_vel,
+        #                                                self.dof_force_tensor, self.gravity_vec, self.actions,
+        #                                                self.obs_scales_tensor, self.targets, self.potentials, self.dt)
+
+        # self.obs_mirrored_buf[:] =  compute_srl_bot_observations_mirrored(self.progress_buf, self.mirror_mat_srl_dof, self.initial_dof_pos, self.root_states, self.dof_pos, self.dof_vel,
+        #                                                self.dof_force_tensor, self.gravity_vec, self.actions,
+        #                                                self.obs_scales_tensor, self.targets, self.potentials, self.dt)
+    
+    def _compute_srl_obs(self, env_ids=None):
+        if (env_ids is None):
+            root_states = self.root_states
+            dof_pos = self.dof_pos
+            dof_vel = self.dof_vel
+            dof_force_tensor = self.dof_force_tensor
+            progress_buf = self.progress_buf
+            initial_dof_pos = self.initial_dof_pos 
+            gravity_vec = self.gravity_vec
+            actions = self.actions
+            targets = self.targets
+            potentials = self.potentials
+        else:
+            root_states = self.root_states[env_ids]
+            dof_pos = self.dof_pos[env_ids]
+            dof_vel = self.dof_vel[env_ids]
+            dof_force_tensor = self.dof_force_tensor[env_ids]
+            progress_buf = self.progress_buf[env_ids]
+            initial_dof_pos = self.initial_dof_pos[env_ids]
+            gravity_vec = self.gravity_vec[env_ids]
+            actions = self.actions[env_ids]
+            targets = self.targets[env_ids]
+            potentials = self.potentials[env_ids]
+           
+        obs, potentials, prev_potentials, = compute_srl_bot_observations(progress_buf, initial_dof_pos, root_states, dof_pos, dof_vel,
+                                                       dof_force_tensor, gravity_vec, actions,
+                                                       self.obs_scales_tensor, targets, potentials, self.dt)
+
+        obs_mirrored  =  compute_srl_bot_observations_mirrored(progress_buf, self.mirror_mat_srl_dof, initial_dof_pos, root_states, dof_pos, dof_vel,
+                                                       dof_force_tensor, gravity_vec, actions,
+                                                       self.obs_scales_tensor, targets, potentials, self.dt)          
+ 
+        return obs, obs_mirrored, potentials, prev_potentials
+    
     def reset_done(self):
         _, done_env_ids = super().reset_done()
         # 添加镜像OBS
@@ -393,10 +454,14 @@ class SRL_bot(VecTask):
         if self.randomize:
             self.apply_randomizations(self.randomization_params)
 
-        positions = torch_rand_float(-0.002, 0.002, (len(env_ids), self.num_dof), device=self.device)
+ 
+        position_noise = torch.zeros((len(env_ids), self.num_dof), device=self.device)
+        positions = torch_rand_float(-0.2, 0.2, (len(env_ids), 1), device=self.device)
+        position_noise[:,1] = positions.squeeze(-1)
+        position_noise[:,4] = - positions.squeeze(-1)
         velocities = torch_rand_float(-0.1, 0.1, (len(env_ids), self.num_dof), device=self.device)
 
-        self.dof_pos[env_ids] = tensor_clamp(self.initial_dof_pos[env_ids] + positions, self.dof_limits_lower, self.dof_limits_upper)
+        self.dof_pos[env_ids] = tensor_clamp(self.initial_dof_pos[env_ids] + position_noise, self.dof_limits_lower, self.dof_limits_upper)
         self.dof_vel[env_ids] = velocities
 
         env_ids_int32 = env_ids.to(dtype=torch.int32)
@@ -417,6 +482,11 @@ class SRL_bot(VecTask):
         self.reset_buf[env_ids] = 0
         self._terminate_buf[env_ids] = 0
 
+        for env_id in env_ids:
+            self.obs_buffer[env_id] = 0
+
+        self._refresh_sim_tensors()
+
     def pre_physics_step(self, actions):
         self.actions = actions.to(self.device).clone()
         if (self._pd_control):
@@ -432,17 +502,19 @@ class SRL_bot(VecTask):
         self.progress_buf += 1
         self.randomize_buf += 1
 
-        # mirrored info
-        self.extras["obs_mirrored"] = self.obs_mirrored_buf.to(self.rl_device)  # 镜像观测
-        self.obs_dict["obs_mirrored"] = torch.clamp(self.obs_mirrored_buf, -self.clip_obs, self.clip_obs).to(self.rl_device)
-
+    
         self.extras["terminate"] = self._terminate_buf
         env_ids = self.reset_buf.nonzero(as_tuple=False).flatten()
         if len(env_ids) > 0:
             self.reset_idx(env_ids)
 
+        self._refresh_sim_tensors()
         self.compute_observations()
         self.compute_reward(self.actions)
+
+        # mirrored info
+        self.extras["obs_mirrored"] = self.obs_mirrored_buf.to(self.rl_device)  # 镜像观测
+        self.obs_dict["obs_mirrored"] = torch.clamp(self.obs_mirrored_buf, -self.clip_obs, self.clip_obs).to(self.rl_device)
 
         # debug viz
         if self.viewer and self.debug_viz:
@@ -465,6 +537,16 @@ class SRL_bot(VecTask):
 
             self.gym.add_lines(self.viewer, None, self.num_envs * 2, points, colors)
 
+    def _refresh_sim_tensors(self):
+        self.gym.refresh_dof_state_tensor(self.sim)
+        self.gym.refresh_actor_root_state_tensor(self.sim)
+        self.gym.refresh_rigid_body_state_tensor(self.sim)
+
+        self.gym.refresh_force_sensor_tensor(self.sim)
+        self.gym.refresh_dof_force_tensor(self.sim)
+        self.gym.refresh_net_contact_force_tensor(self.sim)
+        return
+    
     def _action_to_pd_targets(self, action):
         pd_tar = self._pd_action_offset + self._pd_action_scale * action
         return pd_tar
@@ -568,7 +650,6 @@ class SRL_bot(VecTask):
 ###=========================jit functions=========================###
 #####################################################################
 
-
 # @torch.jit.script
 def compute_srl_reward(
     obs_buf,
@@ -612,7 +693,7 @@ def compute_srl_reward(
     progress_reward = potentials - prev_potentials
 
     # --- Torques cost ---
-    torques_cost = torch.sum(actions ** 2, dim=-1)
+    torques_cost = 0 * torch.sum(actions ** 2, dim=-1)
 
     # --- DOF velocity cost ---
     # Assuming dof_vel encoded in obs_buf at index 36:36+num_dof
@@ -621,9 +702,11 @@ def compute_srl_reward(
     dof_vel_cost = torch.sum(dof_vel ** 2, dim=-1)
 
     # --- DOF acceleration cost ---
-    # Simple estimation by diffing DOF velocity between steps (needs to be implemented in obs_buf)
-    # Here just putting placeholder to show where to plug it:
-    dof_acc_cost = torch.zeros_like(dof_vel_cost)  # Optional: If you compute dof_acc, replace here
+    dof_vel_prev = obs_buf[:, 15+31:15+31+actions.shape[1]]  # 前一帧速度
+    dof_acc = dof_vel - dof_vel_prev  # 关节加速度
+    dof_acc_magnitude_sq = torch.sum(dof_acc ** 2, dim=-1)
+    # 奖励公式：r = exp(-a * ||u - v||^2)
+    dof_acc_reward = torch.exp(- 2 * dof_acc_magnitude_sq)
 
     # --- DOF pos limits cost ---
     dof_pos = obs_buf[:, 9:9+actions.shape[1]]
@@ -661,10 +744,14 @@ def compute_srl_reward(
     # --- Heading Penalty ---
     angle_error = obs_buf[:, 28]  # 如果你把它放在最后一位
     heading_reward = heading_reward_scale * ((math.pi - angle_error) / math.pi)  # 映射为 [0,1]，越接近对齐越高
- 
+    target_ang_vel = obs_buf[:, 28]  # 目标角速度跟随  与观测中的目标角速度搭配
+    local_root_ang_vel_yaw = obs_buf[:,6]
+    tracking_sigma = 0.25
+    ang_vel_error = torch.square(target_ang_vel - local_root_ang_vel_yaw)
+    ang_vel_reward = heading_reward_scale * torch.exp(-ang_vel_error/tracking_sigma)
 
     # --- Foot Phase ---
-    phase_t = (2 * math.pi / 15.0) * progress_buf.float()
+    phase_t = (2 * math.pi / 18.0) * progress_buf.float()
     phase_left = phase_t
     phase_right = (phase_t + math.pi) % (2 * math.pi)
     expect_stancing_left  = (torch.sin(phase_left) > 0.7).float()  # stance phase left
@@ -684,7 +771,7 @@ def compute_srl_reward(
     # --- Total reward ---
     total_reward = progress_reward + alive_reward + tracking_ang_vel_reward \
         - torques_cost_scale * torques_cost \
-        - dof_acc_cost_scale * dof_acc_cost \
+        + dof_acc_cost_scale * dof_acc_reward \
         - dof_vel_cost_scale * dof_vel_cost \
         - dof_pos_limits_cost_scale * dof_pos_limits_cost \
         - contact_force_cost \
@@ -753,8 +840,7 @@ def compute_srl_bot_observations(
     prev_potentials_new = potentials.clone()
     potentials = -torch.norm(to_target, p=2, dim=-1) / dt
 
-    # 计算 heading_proj
-    # 默认机器人面朝 x 轴 [1, 0, 0]
+    # 计算 heading_proj 默认机器人面朝 x 轴 [1, 0, 0]
     heading_vector = torch.tensor([1., 0., 0.], device=root_rot.device).repeat(root_rot.shape[0], 1)
     facing_dir = - my_quat_rotate(root_rot, heading_vector)   #  MLY: 在定义SRL时，对ROOT进行了180度旋转，故此处取负
     to_target = targets - root_pos
@@ -764,6 +850,8 @@ def compute_srl_bot_observations(
     cos_theta_clipped = torch.clamp(cos_theta, -1.0 + 1e-6, 1.0 - 1e-6)
     angle_error = torch.acos(cos_theta_clipped)  # ∈ [0, π]
 
+    #  target ang vel
+    target_ang_vel = angle_error * 0
 
     # 假设周期为 T=60 步，则频率为 1/T，每一步是 2π/T 相位步长
     phase_t = (2 * math.pi / 15.0) * (progress_buf-1).float()  # shape: [num_envs]
@@ -780,7 +868,6 @@ def compute_srl_bot_observations(
                      angle_error,                       # 1       
                      sin_phase,                      # 1
                      cos_phase,                      # 1
-                     
                     ), dim=-1)
     return obs , potentials, prev_potentials_new
 
@@ -832,11 +919,10 @@ def compute_srl_bot_observations_mirrored(
     to_target[:, 2] = 0
 
     # potentials
-    prev_potentials_new = potentials.clone()
-    potentials = -torch.norm(to_target, p=2, dim=-1) / dt
+    # prev_potentials_new = potentials.clone()
+    # potentials = -torch.norm(to_target, p=2, dim=-1) / dt
 
-    # 计算 heading_proj
-    # 默认机器人面朝 x 轴 [1, 0, 0]
+    # 计算 heading_proj  默认机器人面朝 x 轴 [1, 0, 0]
     heading_vector = torch.tensor([1., 0., 0.], device=root_rot.device).repeat(root_rot.shape[0], 1)
     facing_dir = - my_quat_rotate(root_rot, heading_vector)   #  MLY: 在定义SRL时，对ROOT进行了180度旋转，故此处取负
     to_target = targets - root_pos
@@ -845,6 +931,9 @@ def compute_srl_bot_observations_mirrored(
     cos_theta = torch.sum(facing_dir[:, :2] * to_target_dir[:, :2], dim=-1, keepdim=True)  # [-1, 1]
     cos_theta_clipped = torch.clamp(cos_theta, -1.0 + 1e-6, 1.0 - 1e-6)
     angle_error = torch.acos(cos_theta_clipped)  # ∈ [0, π]
+
+    # target ang vel
+    target_ang_vel = angle_error * 0
 
     # Mirrored
     local_root_vel[:,1] = -local_root_vel[:,1] # y方向速度
