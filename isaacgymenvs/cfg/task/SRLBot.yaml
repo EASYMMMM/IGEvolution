@@ -39,8 +39,8 @@ env:
   no_fly_penalty_scale: 10.0
   heading_reward_scale: 2.0
   gait_similarity_penalty_scale: 1
-  lateral_offset_scale: 2.0
   upright_penalty_scale: 10.0
+  tracking_ang_vel_reward_scale: 0
 
   asset:
     assetFileName: "mjcf/srl_bot/srl_bot.xml"

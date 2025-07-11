@@ -74,9 +74,9 @@ class SRL_bot(VecTask):
         self.dof_vel_cost_scale = self.cfg["env"]["dof_vel_cost_scale"]
         self.dof_pos_limits_cost_scale = self.cfg["env"]["dof_pos_limits_cost_scale"]
         self.no_fly_penalty_scale = self.cfg["env"]["no_fly_penalty_scale"]
+        self.tracking_ang_vel_reward_scale = self.cfg["env"]["tracking_ang_vel_reward_scale"]
         self.heading_reward_scale = self.cfg["env"]["heading_reward_scale"]
         self.gait_similarity_penalty_scale = self.cfg["env"]["gait_similarity_penalty_scale"]
-        self.lateral_offset_scale = self.cfg["env"]["lateral_offset_scale"]
         self.upright_penalty_scale = self.cfg["env"]["upright_penalty_scale"]
 
         self.frame_stack = self.cfg["env"]["frame_stack"]  # 帧堆叠数量
@@ -484,6 +484,7 @@ class SRL_bot(VecTask):
 
         for env_id in env_ids:
             self.obs_buffer[env_id] = 0
+            self.obs_mirrored_buffer[env_id] = 0
 
         self._refresh_sim_tensors()
 
@@ -650,7 +651,7 @@ class SRL_bot(VecTask):
 ###=========================jit functions=========================###
 #####################################################################
 
-# @torch.jit.script
+@torch.jit.script
 def compute_srl_reward(
     obs_buf,
     reset_buf,
@@ -672,10 +673,9 @@ def compute_srl_reward(
     no_fly_penalty_scale: float = 0,
     heading_reward_scale: float = 0,
     gait_similarity_penalty_scale: float = 0,
-    lateral_offset_scale: float = 0,
     upright_penalty_scale: float = 0,
 ):
-    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, float, float, float, float, float, float, float, float, float, float, float, float, float) -> Tuple[Tensor, Tensor, Tensor]
+    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, float, float, float, float, float, float, float, float, float, float, float, float) -> Tuple[Tensor, Tensor, Tensor]
 
     # obs = root_h,                             # 1
     #       local_root_vel * obs_scales[0],     # 3
@@ -713,10 +713,18 @@ def compute_srl_reward(
     scaled_cost = dof_pos_limits_cost_scale * (torch.abs(dof_pos) - 0.98) / 0.02
     dof_pos_limits_cost = torch.sum((torch.abs(dof_pos) > 0.98) * scaled_cost, dim=-1)
 
-    # --- Uprightness Penalty ---
+    # # --- Uprightness Penalty ---
     up_proj = obs_buf[:, 9]  # project gravity, Z-axis
     upright_penalty = (up_proj + 1.0).clamp(min=0.0) * upright_penalty_scale   # 可调系数
 
+    # --- Pelvis angular rate ---
+    root_ang_vel = obs_buf[:, 4:7]
+    root_target_ang_vel = torch.zeros((root_ang_vel.shape[0], 3), device=root_ang_vel.device)
+    target_ang_vel_z = torch.full((root_ang_vel.shape[0],), 0, device=root_ang_vel.device)
+    root_target_ang_vel[:, 2] = target_ang_vel_z  # 目标只在 z 轴方向非零
+    ang_vel_error_vec = root_ang_vel - root_target_ang_vel
+    ang_vel_tracking_reward = tracking_ang_vel_reward_scale * torch.exp(-1.5 * torch.norm(ang_vel_error_vec, dim=-1))  # α = 1.5
+   
     # --- No fly --- 
     contact_threshold = 0.095  
     left_foot_height = srl_end_body_pos[:, 0, 2]  # 获取左脚的位置 
@@ -726,10 +734,6 @@ def compute_srl_reward(
     # 如果两只脚同时离地，给予惩罚
     no_fly_penalty = torch.where(no_feet_on_ground, torch.ones_like(no_feet_on_ground) * no_fly_penalty_scale, torch.zeros_like(no_feet_on_ground))
     
-    # --- Lateral offset cost ---
-    lateral_offset = torch.abs(to_target[:, 1])  # y轴偏差
-    lateral_penalty = lateral_offset * lateral_offset_scale
-
 
     # --- Contact force cost ---
     # Assuming contact force encoded in obs_buf at some index e.g. 36+num_dof+num_dof: adjust as needed
@@ -737,9 +741,6 @@ def compute_srl_reward(
     contact_force_magnitude = torch.norm(contact_force, dim=-1)
     contact_force_cost = contact_force_cost_scale * contact_force_magnitude
 
-    # --- Tracking ang vel reward ---
-    # Assuming obs_buf[:, 14] stores tracking_ang_vel error term (target yaw rate vs measured yaw rate)
-    tracking_ang_vel_reward = tracking_ang_vel_reward_scale * torch.exp(-torch.square(obs_buf[:, 14]))
 
     # --- Heading Penalty ---
     angle_error = obs_buf[:, 28]  # 如果你把它放在最后一位
@@ -751,7 +752,7 @@ def compute_srl_reward(
     ang_vel_reward = heading_reward_scale * torch.exp(-ang_vel_error/tracking_sigma)
 
     # --- Foot Phase ---
-    phase_t = (2 * math.pi / 18.0) * progress_buf.float()
+    phase_t = (2 * math.pi / 12.0) * progress_buf.float()
     phase_left = phase_t
     phase_right = (phase_t + math.pi) % (2 * math.pi)
     expect_stancing_left  = (torch.sin(phase_left) > 0.7).float()  # stance phase left
@@ -769,7 +770,8 @@ def compute_srl_reward(
     gait_phase_penalty = gait_similarity_penalty_scale * (stance_miss_left + stance_miss_right + flying_miss_left + flying_miss_right)
 
     # --- Total reward ---
-    total_reward = progress_reward + alive_reward + tracking_ang_vel_reward \
+    total_reward = progress_reward + alive_reward  \
+        + ang_vel_tracking_reward \
         - torques_cost_scale * torques_cost \
         + dof_acc_cost_scale * dof_acc_reward \
         - dof_vel_cost_scale * dof_vel_cost \
@@ -777,7 +779,6 @@ def compute_srl_reward(
         - contact_force_cost \
         - no_fly_penalty \
         + heading_reward \
-        - lateral_penalty \
         - gait_phase_penalty \
         - upright_penalty
 
@@ -854,7 +855,7 @@ def compute_srl_bot_observations(
     target_ang_vel = angle_error * 0
 
     # 假设周期为 T=60 步，则频率为 1/T，每一步是 2π/T 相位步长
-    phase_t = (2 * math.pi / 15.0) * (progress_buf-1).float()  # shape: [num_envs]
+    phase_t = (2 * math.pi / 12.0) * (progress_buf-1).float()  # shape: [num_envs]
     sin_phase = torch.sin(phase_t).unsqueeze(-1)
     cos_phase = torch.cos(phase_t).unsqueeze(-1)
 
@@ -946,7 +947,7 @@ def compute_srl_bot_observations_mirrored(
     # heading_proj[:,1] = -heading_proj[:,1]
 
     # 假设周期为 T=60 步，则频率为 1/T，每一步是 2π/T 相位步长
-    phase_t = (2 * math.pi / 15.0) * (progress_buf-1).float()  # shape: [num_envs]
+    phase_t = (2 * math.pi / 12.0) * (progress_buf-1).float()  # shape: [num_envs]
     sin_phase = torch.sin(phase_t).unsqueeze(-1)
     cos_phase = torch.cos(phase_t).unsqueeze(-1)
 
@@ -963,43 +964,5 @@ def compute_srl_bot_observations_mirrored(
                     ), dim=-1)
     return obs  
 
-
-
-@torch.jit.script
-def compute_humanoid_observations(obs_buf, root_states, targets, potentials, inv_start_rot, dof_pos, dof_vel,
-                                  dof_force, dof_limits_lower, dof_limits_upper, dof_vel_scale,
-                                  sensor_force_torques, actions, dt, contact_force_scale, angular_velocity_scale,
-                                  basis_vec0, basis_vec1):
-    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, Tensor, Tensor, float, float, float, Tensor, Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]
-
-    torso_position = root_states[:, 0:3] 
-    torso_rotation = root_states[:, 3:7] 
-    velocity = root_states[:, 7:10] 
-    ang_velocity = root_states[:, 10:13] 
-
-    to_target = targets - torso_position
-    to_target[:, 2] = 0
-
-    prev_potentials_new = potentials.clone()
-    potentials = -torch.norm(to_target, p=2, dim=-1) / dt
-
-    torso_quat, up_proj, heading_proj, up_vec, heading_vec = compute_heading_and_up(
-        torso_rotation, inv_start_rot, to_target, basis_vec0, basis_vec1, 2)
-
-    vel_loc, angvel_loc, roll, pitch, yaw, angle_to_target = compute_rot(
-        torso_quat, velocity, ang_velocity, targets, torso_position)
-
-    roll = normalize_angle(roll).unsqueeze(-1)
-    yaw = normalize_angle(yaw).unsqueeze(-1)
-    angle_to_target = normalize_angle(angle_to_target).unsqueeze(-1)
-    dof_pos_scaled = unscale(dof_pos, dof_limits_lower, dof_limits_upper)
-
-    # obs_buf shapes: 1, 3, 3, 1, 1, 1, 1, 1, num_dofs (21), num_dofs (21), 6, num_acts (21)
-    obs = torch.cat((torso_position[:, 2].view(-1, 1), vel_loc, angvel_loc * angular_velocity_scale,
-                     yaw, roll, angle_to_target, up_proj.unsqueeze(-1), heading_proj.unsqueeze(-1),
-                     dof_pos_scaled, dof_vel * dof_vel_scale, dof_force * contact_force_scale,
-                     sensor_force_torques.view(-1, 12) * contact_force_scale, actions), dim=-1)
-
-    return obs, potentials, prev_potentials_new, up_vec, heading_vec
 
 
