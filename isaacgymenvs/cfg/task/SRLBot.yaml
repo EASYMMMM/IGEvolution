@@ -38,9 +38,11 @@ env:
   dof_pos_limits_cost_scale:  0.1
   no_fly_penalty_scale: 10.0
   heading_reward_scale: 2.0
+  pelvis_height_reward_scale: 3.0
   gait_similarity_penalty_scale: 1
-  upright_penalty_scale: 10.0
+  upright_penalty_scale: 0.0
   tracking_ang_vel_reward_scale: 0
+  vel_tracking_reward_scale: 3.0
 
   asset:
     assetFileName: "mjcf/srl_bot/srl_bot.xml"

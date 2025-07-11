@@ -76,7 +76,9 @@ class SRL_bot(VecTask):
         self.no_fly_penalty_scale = self.cfg["env"]["no_fly_penalty_scale"]
         self.tracking_ang_vel_reward_scale = self.cfg["env"]["tracking_ang_vel_reward_scale"]
         self.heading_reward_scale = self.cfg["env"]["heading_reward_scale"]
+        self.vel_tracking_reward_scale = self.cfg["env"]["vel_tracking_reward_scale"]
         self.gait_similarity_penalty_scale = self.cfg["env"]["gait_similarity_penalty_scale"]
+        self.pelvis_height_reward_scale = self.cfg["env"]["pelvis_height_reward_scale"]
         self.upright_penalty_scale = self.cfg["env"]["upright_penalty_scale"]
 
         self.frame_stack = self.cfg["env"]["frame_stack"]  # 帧堆叠数量
@@ -161,6 +163,8 @@ class SRL_bot(VecTask):
         self._rigid_body_vel = self._rigid_body_state.view(self.num_envs, self.num_bodies, 13)[..., 7:10]
         self._rigid_body_ang_vel = self._rigid_body_state.view(self.num_envs, self.num_bodies, 13)[..., 10:13]
 
+        self.srl_root_states = self._rigid_body_state.view(self.num_envs, self.num_bodies, 13)[:, self.srl_root_index ,  :]
+
         self.contact_forces = gymtorch.wrap_tensor(net_contact_forces).view(self.num_envs, -1, 3) # shape: num_envs, num_bodies, xyz axis
         self.gravity_vec = to_torch(get_axis_params(-1., self.up_axis_idx), device=self.device).repeat((self.num_envs, 1))
 
@@ -243,6 +247,7 @@ class SRL_bot(VecTask):
         # create force sensors at the feet
         right_srl_end_idx = self.gym.find_asset_rigid_body_index(humanoid_asset, "SRL_right_end")
         left_srl_end_idx = self.gym.find_asset_rigid_body_index(humanoid_asset, "SRL_left_end")
+        self.srl_root_index = self.gym.find_asset_rigid_body_index(humanoid_asset, "SRL_root", )
         sensor_pose = gymapi.Transform()
         self.right_foot_ssidx = self.gym.create_asset_force_sensor(humanoid_asset, right_srl_end_idx, sensor_pose)
         self.left_foot_ssidx = self.gym.create_asset_force_sensor(humanoid_asset, left_srl_end_idx, sensor_pose)
@@ -369,7 +374,9 @@ class SRL_bot(VecTask):
             dof_pos_limits_cost_scale = self.dof_pos_limits_cost_scale,
             no_fly_penalty_scale = self.no_fly_penalty_scale,
             heading_reward_scale = self.heading_reward_scale,
+            vel_tracking_reward_scale = self.vel_tracking_reward_scale,
             gait_similarity_penalty_scale = self.gait_similarity_penalty_scale,
+            pelvis_height_reward_scale = self.pelvis_height_reward_scale,
             upright_penalty_scale = self.upright_penalty_scale,
         
         )   
@@ -411,7 +418,8 @@ class SRL_bot(VecTask):
     
     def _compute_srl_obs(self, env_ids=None):
         if (env_ids is None):
-            root_states = self.root_states
+            root_states = self.srl_root_states
+            root_states[:,3:7] = self.root_states[:,3:7]
             dof_pos = self.dof_pos
             dof_vel = self.dof_vel
             dof_force_tensor = self.dof_force_tensor
@@ -422,7 +430,8 @@ class SRL_bot(VecTask):
             targets = self.targets
             potentials = self.potentials
         else:
-            root_states = self.root_states[env_ids]
+            root_states = self.srl_root_states[env_ids]
+            root_states[:,3:7] = self.root_states[env_ids,3:7]
             dof_pos = self.dof_pos[env_ids]
             dof_vel = self.dof_vel[env_ids]
             dof_force_tensor = self.dof_force_tensor[env_ids]
@@ -651,7 +660,7 @@ class SRL_bot(VecTask):
 ###=========================jit functions=========================###
 #####################################################################
 
-@torch.jit.script
+# @torch.jit.script
 def compute_srl_reward(
     obs_buf,
     reset_buf,
@@ -672,10 +681,12 @@ def compute_srl_reward(
     tracking_ang_vel_reward_scale: float = 0,
     no_fly_penalty_scale: float = 0,
     heading_reward_scale: float = 0,
+    vel_tracking_reward_scale: float = 0,
     gait_similarity_penalty_scale: float = 0,
+    pelvis_height_reward_scale: float = 0,
     upright_penalty_scale: float = 0,
 ):
-    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, float, float, float, float, float, float, float, float, float, float, float, float) -> Tuple[Tensor, Tensor, Tensor]
+    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, float, float, float, float, float, float, float, float, float, float, float, float, float) -> Tuple[Tensor, Tensor, Tensor]
 
     # obs = root_h,                             # 1
     #       local_root_vel * obs_scales[0],     # 3
@@ -692,6 +703,14 @@ def compute_srl_reward(
     alive_reward = torch.ones_like(potentials) * 1.0
     progress_reward = potentials - prev_potentials
 
+    # --- Pelvis velocity ---
+    root_vel = - obs_buf[:, 1:3]  # 由于模型翻转，取反
+    root_target_vel = torch.zeros((root_vel.shape[0], 2), device=root_vel.device)
+    target_vel_z = torch.full((root_vel.shape[0],), 1.5, device=root_vel.device)
+    root_target_vel[:, 0] = target_vel_z  # TODO: x轴目标线速度
+    vel_error_vec = root_vel - root_target_vel
+    vel_tracking_reward =  vel_tracking_reward_scale *  torch.exp(-1.5 * torch.norm(vel_error_vec, dim=-1))  # α = 1.5
+
     # --- Torques cost ---
     torques_cost = 0 * torch.sum(actions ** 2, dim=-1)
 
@@ -705,7 +724,6 @@ def compute_srl_reward(
     dof_vel_prev = obs_buf[:, 15+31:15+31+actions.shape[1]]  # 前一帧速度
     dof_acc = dof_vel - dof_vel_prev  # 关节加速度
     dof_acc_magnitude_sq = torch.sum(dof_acc ** 2, dim=-1)
-    # 奖励公式：r = exp(-a * ||u - v||^2)
     dof_acc_reward = torch.exp(- 2 * dof_acc_magnitude_sq)
 
     # --- DOF pos limits cost ---
@@ -714,14 +732,20 @@ def compute_srl_reward(
     dof_pos_limits_cost = torch.sum((torch.abs(dof_pos) > 0.98) * scaled_cost, dim=-1)
 
     # # --- Uprightness Penalty ---
-    up_proj = obs_buf[:, 9]  # project gravity, Z-axis
-    upright_penalty = (up_proj + 1.0).clamp(min=0.0) * upright_penalty_scale   # 可调系数
+    # up_proj = obs_buf[:, 9]  # project gravity, Z-axis
+    # upright_penalty = (up_proj + 1.0).clamp(min=0.0) * upright_penalty_scale   # 可调系数
+
+    # --- Pelvis height ---
+    pelvis_height = obs_buf[:,1]
+    target_pelvis_height = torch.full((pelvis_height.shape[0],), 0.89, device=pelvis_height.device)
+    pelvis_height_error = pelvis_height - target_pelvis_height
+    pelvis_height_reward = pelvis_height_reward_scale * torch.exp(-1.5 * pelvis_height_error **2 ) 
 
     # --- Pelvis angular rate ---
     root_ang_vel = obs_buf[:, 4:7]
     root_target_ang_vel = torch.zeros((root_ang_vel.shape[0], 3), device=root_ang_vel.device)
     target_ang_vel_z = torch.full((root_ang_vel.shape[0],), 0, device=root_ang_vel.device)
-    root_target_ang_vel[:, 2] = target_ang_vel_z  # 目标只在 z 轴方向非零
+    root_target_ang_vel[:, 2] = target_ang_vel_z  # TODO: z轴目标角速度
     ang_vel_error_vec = root_ang_vel - root_target_ang_vel
     ang_vel_tracking_reward = tracking_ang_vel_reward_scale * torch.exp(-1.5 * torch.norm(ang_vel_error_vec, dim=-1))  # α = 1.5
    
@@ -770,7 +794,8 @@ def compute_srl_reward(
     gait_phase_penalty = gait_similarity_penalty_scale * (stance_miss_left + stance_miss_right + flying_miss_left + flying_miss_right)
 
     # --- Total reward ---
-    total_reward = progress_reward + alive_reward  \
+    total_reward = alive_reward  \
+        + progress_reward \
         + ang_vel_tracking_reward \
         - torques_cost_scale * torques_cost \
         + dof_acc_cost_scale * dof_acc_reward \
@@ -780,7 +805,7 @@ def compute_srl_reward(
         - no_fly_penalty \
         + heading_reward \
         - gait_phase_penalty \
-        - upright_penalty
+        # - upright_penalty
 
     # --- Handle termination ---
     total_reward = torch.where(obs_buf[:, 0] < termination_height, torch.ones_like(total_reward) * death_cost, total_reward)
@@ -793,7 +818,7 @@ def compute_srl_reward(
     return total_reward, reset, terminated
 
 
-@torch.jit.script
+# @torch.jit.script
 def compute_srl_bot_observations(
     progress_buf,
     default_joint_pos,
@@ -818,7 +843,7 @@ def compute_srl_bot_observations(
     # base 高度
     root_h = root_pos[:, 2:3]
 
-
+    euler = quat_to_euler_xyz(root_rot)
     # 将线速度/角速度旋转到局部坐标
     local_root_vel     = quat_rotate_inverse(root_rot, root_vel)
     local_root_ang_vel = quat_rotate_inverse(root_rot, root_ang_vel)
@@ -849,7 +874,7 @@ def compute_srl_bot_observations(
     to_target_dir = torch.nn.functional.normalize(to_target, dim=-1)
     cos_theta = torch.sum(facing_dir[:, :2] * to_target_dir[:, :2], dim=-1, keepdim=True)  # [-1, 1]
     cos_theta_clipped = torch.clamp(cos_theta, -1.0 + 1e-6, 1.0 - 1e-6)
-    angle_error = torch.acos(cos_theta_clipped)  # ∈ [0, π]
+    angle_error = 0 * torch.acos(cos_theta_clipped)  # ∈ [0, π]
 
     #  target ang vel
     target_ang_vel = angle_error * 0
@@ -931,7 +956,7 @@ def compute_srl_bot_observations_mirrored(
     to_target_dir = torch.nn.functional.normalize(to_target, dim=-1)
     cos_theta = torch.sum(facing_dir[:, :2] * to_target_dir[:, :2], dim=-1, keepdim=True)  # [-1, 1]
     cos_theta_clipped = torch.clamp(cos_theta, -1.0 + 1e-6, 1.0 - 1e-6)
-    angle_error = torch.acos(cos_theta_clipped)  # ∈ [0, π]
+    angle_error = 0 * torch.acos(cos_theta_clipped)  # ∈ [0, π]
 
     # target ang vel
     target_ang_vel = angle_error * 0
@@ -966,3 +991,21 @@ def compute_srl_bot_observations_mirrored(
 
 
 
+
+def quat_to_euler_xyz(q):
+    # Assumes q shape [N, 4], returns [N, 3]
+    # Returns euler angles in XYZ (roll, pitch, yaw)
+    qx, qy, qz, qw = q[:,0], q[:,1], q[:,2], q[:,3]
+    t0 = +2.0 * (qw * qx + qy * qz)
+    t1 = +1.0 - 2.0 * (qx * qx + qy * qy)
+    roll_x = torch.atan2(t0, t1)
+
+    t2 = +2.0 * (qw * qy - qz * qx)
+    t2 = torch.clamp(t2, -1.0, 1.0)
+    pitch_y = torch.asin(t2)
+
+    t3 = +2.0 * (qw * qz + qx * qy)
+    t4 = +1.0 - 2.0 * (qy * qy + qz * qz)
+    yaw_z = torch.atan2(t3, t4)
+
+    return torch.stack([yaw_z, pitch_y, roll_x], dim=-1)  # shape [N, 3]
