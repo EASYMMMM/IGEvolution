@@ -377,6 +377,7 @@ class SRL_bot(VecTask):
             no_fly_penalty_scale = self.no_fly_penalty_scale,
             heading_reward_scale = self.heading_reward_scale,
             vel_tracking_reward_scale = self.vel_tracking_reward_scale,
+            tracking_ang_vel_reward_scale = self.tracking_ang_vel_reward_scale,
             gait_similarity_penalty_scale = self.gait_similarity_penalty_scale,
             pelvis_height_reward_scale = self.pelvis_height_reward_scale,
             orientation_reward_scale = self.orientation_reward_scale,
@@ -768,10 +769,10 @@ def compute_srl_reward(
     orientation_reward = orientation_reward_scale * torch.exp(-20 * ori_error   ) 
 
     # --- Pelvis height ---
-    pelvis_height = obs_buf[:,1]
-    target_pelvis_height = torch.full((pelvis_height.shape[0],), 0.89, device=pelvis_height.device)
+    pelvis_height = obs_buf[:,0]
+    target_pelvis_height = torch.full((pelvis_height.shape[0],), 0.88, device=pelvis_height.device)
     pelvis_height_error = pelvis_height - target_pelvis_height
-    pelvis_height_reward = pelvis_height_reward_scale * torch.exp(-1.5 * pelvis_height_error **2 ) 
+    pelvis_height_reward = pelvis_height_reward_scale * torch.exp(-9 * (10* pelvis_height_error) **2 ) 
 
     # --- Pelvis angular rate ---
     root_ang_vel = obs_buf[:, 4:7]
@@ -779,7 +780,7 @@ def compute_srl_reward(
     target_ang_vel_z = torch.full((root_ang_vel.shape[0],), 0, device=root_ang_vel.device)
     root_target_ang_vel[:, 2] = target_ang_vel_z  # TODO: z轴目标角速度
     ang_vel_error_vec = root_ang_vel - root_target_ang_vel
-    ang_vel_tracking_reward = tracking_ang_vel_reward_scale * torch.exp(-1.5 * torch.norm(ang_vel_error_vec, dim=-1))  # α = 1.5
+    ang_vel_tracking_reward = tracking_ang_vel_reward_scale * torch.exp(-3 * torch.norm(ang_vel_error_vec, dim=-1))  # α = 1.5
    
     # --- No fly --- 
     contact_threshold = 0.095  
@@ -838,7 +839,8 @@ def compute_srl_reward(
         - no_fly_penalty \
         + heading_reward \
         - gait_phase_penalty \
-        + orientation_reward  
+        + orientation_reward  \
+        + pelvis_height_reward
 
     # --- Handle termination ---
     total_reward = torch.where(obs_buf[:, 0] < termination_height, torch.ones_like(total_reward) * death_cost, total_reward)
@@ -1000,8 +1002,8 @@ def compute_srl_bot_observations_mirrored(
     srl_dof_obs = torch.matmul(srl_dof_obs, mirror_mat) # Perform the matrix multiplication to get mirrored dof_pos
     srl_dof_vel = torch.matmul(srl_dof_vel, mirror_mat)
     actions = torch.matmul(actions, mirror_mat)
-    euler[:,0] = - euler[:,0]
-    euler[:,2] = - euler[:,2]
+    # euler[:,0] = - euler[:,0] # yaw
+    # euler[:,2] = - euler[:,2] # roll
 
     # heading_proj[:,1] = -heading_proj[:,1]
 

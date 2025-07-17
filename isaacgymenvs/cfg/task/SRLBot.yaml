@@ -7,7 +7,7 @@ physics_engine: ${..physics_engine}
 env: 
   numEnvs: ${resolve_default:4096,${...num_envs}}
   envSpacing: 5
-  episodeLength: 500
+  episodeLength: 1000
   enableDebugVis: False
   cameraFollow: True # if the camera follows humanoid or not
   controlFrequencyInv: 2 # 30 Hz
@@ -36,12 +36,12 @@ env:
   dof_acc_cost_scale: 0.5
   dof_vel_cost_scale: 0
   dof_pos_limits_cost_scale:  0.1
-  no_fly_penalty_scale: 10.0
-  heading_reward_scale: 2.0
-  pelvis_height_reward_scale: 3.0
+  no_fly_penalty_scale: 100.0
   gait_similarity_penalty_scale: 1
-  orientation_reward_scale: 1.0
-  tracking_ang_vel_reward_scale: 0
+  heading_reward_scale: 2.0
+  pelvis_height_reward_scale: 1.0
+  orientation_reward_scale: 2.0
+  tracking_ang_vel_reward_scale: 1
   vel_tracking_reward_scale: 4.0
 
   asset:
