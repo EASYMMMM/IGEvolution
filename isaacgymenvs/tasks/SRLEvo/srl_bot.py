@@ -37,8 +37,10 @@ from isaacgym import gymapi
 from isaacgymenvs.utils.torch_jit_utils import scale, unscale, quat_mul, quat_conjugate, quat_from_angle_axis, \
     to_torch, get_axis_params, torch_rand_float, tensor_clamp, compute_heading_and_up, compute_rot, normalize_angle, \
     quat_to_tan_norm, my_quat_rotate, calc_heading_quat_inv, quat_rotate_inverse
- 
 from isaacgymenvs.tasks.base.vec_task import VecTask
+
+
+
 SRL_END_BODY_NAMES = ["SRL_right_end","SRL_left_end"] 
 
 class SRL_bot(VecTask):
@@ -79,7 +81,7 @@ class SRL_bot(VecTask):
         self.vel_tracking_reward_scale = self.cfg["env"]["vel_tracking_reward_scale"]
         self.gait_similarity_penalty_scale = self.cfg["env"]["gait_similarity_penalty_scale"]
         self.pelvis_height_reward_scale = self.cfg["env"]["pelvis_height_reward_scale"]
-        self.upright_penalty_scale = self.cfg["env"]["upright_penalty_scale"]
+        self.orientation_reward_scale = self.cfg["env"]["orientation_reward_scale"]
 
         self.frame_stack = self.cfg["env"]["frame_stack"]  # 帧堆叠数量
 
@@ -175,8 +177,8 @@ class SRL_bot(VecTask):
             self.mirror_mat_srl_dof[i, int(abs(perm))] = np.sign(perm)
 
         self.obs_scales={
-            "lin_vel" : 2.0,
-            "ang_vel" : 0.25,
+            "lin_vel" : 1,
+            "ang_vel" : 1,
             "dof_pos" : 1.0,
             "dof_vel" : 0.05,
             "height_measurements" : 5.0 }
@@ -377,7 +379,7 @@ class SRL_bot(VecTask):
             vel_tracking_reward_scale = self.vel_tracking_reward_scale,
             gait_similarity_penalty_scale = self.gait_similarity_penalty_scale,
             pelvis_height_reward_scale = self.pelvis_height_reward_scale,
-            upright_penalty_scale = self.upright_penalty_scale,
+            orientation_reward_scale = self.orientation_reward_scale,
         
         )   
 
@@ -660,6 +662,30 @@ class SRL_bot(VecTask):
 ###=========================jit functions=========================###
 #####################################################################
 
+@torch.jit.script
+def quat_to_euler_xyz(q):
+     # type: (Tensor) ->  Tensor 
+    # Assumes q shape [N, 4], returns [N, 3] (yaw, pitch, roll)
+    qx = q[:, 0]
+    qy = q[:, 1]
+    qz = q[:, 2]
+    qw = q[:, 3]
+
+    t0 = 2.0 * (qw * qx + qy * qz)
+    t1 = 1.0 - 2.0 * (qx * qx + qy * qy)
+    roll_x = torch.atan2(t0, t1)
+
+    t2 = 2.0 * (qw * qy - qz * qx)
+    t2 = torch.clamp(t2, -1.0, 1.0)
+    pitch_y = torch.asin(t2)
+
+    t3 = 2.0 * (qw * qz + qx * qy)
+    t4 = 1.0 - 2.0 * (qy * qy + qz * qz)
+    yaw_z = torch.atan2(t3, t4)
+
+    return torch.stack((yaw_z, pitch_y, roll_x), dim=-1)
+
+
 # @torch.jit.script
 def compute_srl_reward(
     obs_buf,
@@ -684,9 +710,9 @@ def compute_srl_reward(
     vel_tracking_reward_scale: float = 0,
     gait_similarity_penalty_scale: float = 0,
     pelvis_height_reward_scale: float = 0,
-    upright_penalty_scale: float = 0,
+    orientation_reward_scale: float = 0,
 ):
-    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, float, float, float, float, float, float, float, float, float, float, float, float, float) -> Tuple[Tensor, Tensor, Tensor]
+    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, float, float, float, float, float, float, float, float, float, float, float, float, float, float) -> Tuple[Tensor, Tensor, Tensor]
 
     # obs = root_h,                             # 1
     #       local_root_vel * obs_scales[0],     # 3
@@ -704,12 +730,12 @@ def compute_srl_reward(
     progress_reward = potentials - prev_potentials
 
     # --- Pelvis velocity ---
-    root_vel = - obs_buf[:, 1:3]  # 由于模型翻转，取反
+    root_vel = obs_buf[:, 1:3] 
     root_target_vel = torch.zeros((root_vel.shape[0], 2), device=root_vel.device)
-    target_vel_z = torch.full((root_vel.shape[0],), 1.5, device=root_vel.device)
-    root_target_vel[:, 0] = target_vel_z  # TODO: x轴目标线速度
+    target_vel_x = torch.full((root_vel.shape[0],), 2.0, device=root_vel.device)
+    root_target_vel[:, 0] = target_vel_x  # TODO: x轴目标线速度
     vel_error_vec = root_vel - root_target_vel
-    vel_tracking_reward =  vel_tracking_reward_scale *  torch.exp(-1.5 * torch.norm(vel_error_vec, dim=-1))  # α = 1.5
+    vel_tracking_reward =  vel_tracking_reward_scale *  torch.exp(-3 * torch.norm(vel_error_vec, dim=-1))  # α = 1.5
 
     # --- Torques cost ---
     torques_cost = 0 * torch.sum(actions ** 2, dim=-1)
@@ -731,9 +757,15 @@ def compute_srl_reward(
     scaled_cost = dof_pos_limits_cost_scale * (torch.abs(dof_pos) - 0.98) / 0.02
     dof_pos_limits_cost = torch.sum((torch.abs(dof_pos) > 0.98) * scaled_cost, dim=-1)
 
-    # # --- Uprightness Penalty ---
-    # up_proj = obs_buf[:, 9]  # project gravity, Z-axis
-    # upright_penalty = (up_proj + 1.0).clamp(min=0.0) * upright_penalty_scale   # 可调系数
+    # --- Pelvis Orientation ---
+    euler = obs_buf[:,7:10]    
+    target_yaw = torch.full((euler.shape[0],), 0, device=euler.device)  # TODO: Target yaw
+    target_euler = torch.zeros_like(euler)
+    target_euler[:, 0] = target_yaw
+    angle_diff = ((euler - target_euler + math.pi) % (2 * math.pi)) - math.pi
+    cos_angle = torch.cos(angle_diff)
+    ori_error = 1 - torch.mean(cos_angle, dim=-1)
+    orientation_reward = orientation_reward_scale * torch.exp(-20 * ori_error   ) 
 
     # --- Pelvis height ---
     pelvis_height = obs_buf[:,1]
@@ -796,6 +828,7 @@ def compute_srl_reward(
     # --- Total reward ---
     total_reward = alive_reward  \
         + progress_reward \
+        + vel_tracking_reward \
         + ang_vel_tracking_reward \
         - torques_cost_scale * torques_cost \
         + dof_acc_cost_scale * dof_acc_reward \
@@ -805,7 +838,7 @@ def compute_srl_reward(
         - no_fly_penalty \
         + heading_reward \
         - gait_phase_penalty \
-        # - upright_penalty
+        + orientation_reward  
 
     # --- Handle termination ---
     total_reward = torch.where(obs_buf[:, 0] < termination_height, torch.ones_like(total_reward) * death_cost, total_reward)
@@ -818,7 +851,7 @@ def compute_srl_reward(
     return total_reward, reset, terminated
 
 
-# @torch.jit.script
+@torch.jit.script
 def compute_srl_bot_observations(
     progress_buf,
     default_joint_pos,
@@ -884,16 +917,16 @@ def compute_srl_bot_observations(
     sin_phase = torch.sin(phase_t).unsqueeze(-1)
     cos_phase = torch.cos(phase_t).unsqueeze(-1)
 
-    obs = torch.cat((root_h,                         # 1
-                     local_root_vel * obs_scales[0], # 3
-                     local_root_ang_vel * obs_scales[1], # 3
-                     projected_gravity,                  # 3 
-                     srl_dof_obs * obs_scales[2],        # 6
-                     srl_dof_vel * obs_scales[3],        # 6
-                     actions , # actions 通常不用 scale      6
-                     angle_error,                       # 1       
-                     sin_phase,                      # 1
-                     cos_phase,                      # 1
+    obs = torch.cat((root_h,                             # 1    0
+                     local_root_vel * obs_scales[0],     # 3    1:3
+                     local_root_ang_vel * obs_scales[1], # 3    4:6
+                     euler,                              # 3    7:9
+                     srl_dof_obs * obs_scales[2],        # 6    10:15
+                     srl_dof_vel * obs_scales[3],        # 6    16:21
+                     actions ,                           # 6    22:27
+                     angle_error,                        # 1    28    
+                     sin_phase,                          # 1    29
+                     cos_phase,                          # 1    30
                     ), dim=-1)
     return obs , potentials, prev_potentials_new
 
@@ -943,10 +976,8 @@ def compute_srl_bot_observations_mirrored(
     torso_position = root_states[:, 0:3]
     to_target = targets - torso_position
     to_target[:, 2] = 0
-
-    # potentials
-    # prev_potentials_new = potentials.clone()
-    # potentials = -torch.norm(to_target, p=2, dim=-1) / dt
+ 
+    euler = quat_to_euler_xyz(root_rot)
 
     # 计算 heading_proj  默认机器人面朝 x 轴 [1, 0, 0]
     heading_vector = torch.tensor([1., 0., 0.], device=root_rot.device).repeat(root_rot.shape[0], 1)
@@ -969,6 +1000,9 @@ def compute_srl_bot_observations_mirrored(
     srl_dof_obs = torch.matmul(srl_dof_obs, mirror_mat) # Perform the matrix multiplication to get mirrored dof_pos
     srl_dof_vel = torch.matmul(srl_dof_vel, mirror_mat)
     actions = torch.matmul(actions, mirror_mat)
+    euler[:,0] = - euler[:,0]
+    euler[:,2] = - euler[:,2]
+
     # heading_proj[:,1] = -heading_proj[:,1]
 
     # 假设周期为 T=60 步，则频率为 1/T，每一步是 2π/T 相位步长
@@ -979,33 +1013,13 @@ def compute_srl_bot_observations_mirrored(
     obs = torch.cat((root_h,                         # 1
                      local_root_vel * obs_scales[0], # 3
                      local_root_ang_vel * obs_scales[1], # 3
-                     projected_gravity,                  # 3 
+                     euler,                              # 3 
                      srl_dof_obs * obs_scales[2],        # 6
                      srl_dof_vel * obs_scales[3],        # 6
                      actions , # actions 通常不用 scale      6
                      angle_error,                       # 1       
-                     sin_phase,
-                     cos_phase,     
+                     cos_phase,    # TODO: mirrored
+                     sin_phase,     
                     ), dim=-1)
     return obs  
 
-
-
-
-def quat_to_euler_xyz(q):
-    # Assumes q shape [N, 4], returns [N, 3]
-    # Returns euler angles in XYZ (roll, pitch, yaw)
-    qx, qy, qz, qw = q[:,0], q[:,1], q[:,2], q[:,3]
-    t0 = +2.0 * (qw * qx + qy * qz)
-    t1 = +1.0 - 2.0 * (qx * qx + qy * qy)
-    roll_x = torch.atan2(t0, t1)
-
-    t2 = +2.0 * (qw * qy - qz * qx)
-    t2 = torch.clamp(t2, -1.0, 1.0)
-    pitch_y = torch.asin(t2)
-
-    t3 = +2.0 * (qw * qz + qx * qy)
-    t4 = +1.0 - 2.0 * (qy * qy + qz * qz)
-    yaw_z = torch.atan2(t3, t4)
-
-    return torch.stack([yaw_z, pitch_y, roll_x], dim=-1)  # shape [N, 3]

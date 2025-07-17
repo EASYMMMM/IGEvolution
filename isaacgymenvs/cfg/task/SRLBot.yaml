@@ -7,7 +7,7 @@ physics_engine: ${..physics_engine}
 env: 
   numEnvs: ${resolve_default:4096,${...num_envs}}
   envSpacing: 5
-  episodeLength: 300
+  episodeLength: 500
   enableDebugVis: False
   cameraFollow: True # if the camera follows humanoid or not
   controlFrequencyInv: 2 # 30 Hz
@@ -40,12 +40,12 @@ env:
   heading_reward_scale: 2.0
   pelvis_height_reward_scale: 3.0
   gait_similarity_penalty_scale: 1
-  upright_penalty_scale: 0.0
+  orientation_reward_scale: 1.0
   tracking_ang_vel_reward_scale: 0
-  vel_tracking_reward_scale: 3.0
+  vel_tracking_reward_scale: 4.0
 
   asset:
-    assetFileName: "mjcf/srl_bot/srl_bot.xml"
+    assetFileName: "mjcf/srl_bot/srl_bot_inversed.xml"
 
   plane:
     staticFriction: 1.0
