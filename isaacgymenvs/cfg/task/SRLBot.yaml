@@ -35,7 +35,6 @@ env:
   torques_cost_scale: 5e-6
   dof_acc_cost_scale: 0.5
   dof_vel_cost_scale: 0
-  dof_pos_limits_cost_scale:  0.1
   no_fly_penalty_scale: 100.0
   gait_similarity_penalty_scale: 1
   heading_reward_scale: 2.0
