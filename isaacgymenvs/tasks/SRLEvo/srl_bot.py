@@ -83,8 +83,8 @@ class SRL_bot(VecTask):
         self.orientation_reward_scale = self.cfg["env"]["orientation_reward_scale"]
 
         self.frame_stack = self.cfg["env"]["frame_stack"]  # 帧堆叠数量
-
-        self.cfg["env"]["numObservations"] = 31 * self.frame_stack
+        
+        self.cfg["env"]["numObservations"] = 30 * self.frame_stack + 3
         self.cfg["env"]["numActions"] = 6
         self.default_joint_angles = [0*np.pi, 
                                      0.15*np.pi,
@@ -374,11 +374,20 @@ class SRL_bot(VecTask):
         if (env_ids is None):
             self.obs_buffer[:, 1:, :] = self.obs_buffer[:, :-1, :]  # 向后移动数据
             self.obs_buffer[:, 0, :] = obs  # 将新的观测数据放到队列的开头
-            self.obs_buf[:] = self.obs_buffer.reshape(self.num_envs, -1)  # 展开为 (num_envs, frame_stack * num_obs)
 
             self.obs_mirrored_buffer[:, 1:, :] = self.obs_mirrored_buffer[:, :-1, :]  # 向后移动数据
             self.obs_mirrored_buffer[:, 0, :] = obs_mirrored  # 将新的观测数据放到队列的开头
-            self.obs_mirrored_buf[:] = self.obs_mirrored_buffer.reshape(self.num_envs, -1)  # 展开为 (num_envs, frame_stack * num_obs)
+            
+            # cat task command
+            base_obs = self.obs_buffer.reshape(self.num_envs, -1)
+            task_params = torch.stack((
+                self.target_vel_x,
+                self.target_ang_vel_z,
+                self.target_pelvis_height,
+            ), dim=-1)  # shape [num_envs, 3]
+            self.obs_buf[:] = torch.cat([base_obs, task_params], dim=-1)
+            base_obs_mirrored = self.obs_mirrored_buffer.reshape(self.num_envs, -1)
+            self.obs_mirrored_buf[:] = torch.cat([base_obs_mirrored, task_params], dim=-1)
 
             self.potentials[:] = potentials
             self.prev_potentials[:] = prev_potentials
@@ -386,11 +395,19 @@ class SRL_bot(VecTask):
             # 对指定环境进行更新
             self.obs_buffer[env_ids, 1:, :] = self.obs_buffer[env_ids, :-1, :]
             self.obs_buffer[env_ids, 0, :] = obs
-            self.obs_buf[env_ids] = self.obs_buffer[env_ids].reshape(len(env_ids), -1)
 
             self.obs_mirrored_buffer[env_ids, 1:, :] = self.obs_mirrored_buffer[env_ids, :-1, :]  # 向后移动数据
             self.obs_mirrored_buffer[env_ids, 0, :] = obs_mirrored  # 将新的观测数据放到队列的开头
-            self.obs_mirrored_buf[env_ids] = self.obs_mirrored_buffer[env_ids].reshape(self.num_envs, -1)  # 展开为 (num_envs, frame_stack * num_obs)
+            
+            base_obs = self.obs_buffer[env_ids].reshape(len(env_ids), -1)
+            task_params = torch.stack((
+                self.target_vel_x[env_ids],
+                self.target_ang_vel_z[env_ids],
+                self.target_pelvis_height[env_ids],
+            ), dim=-1)  # shape [len(env_ids), 3]  # TODO: Task Randomizination
+            self.obs_buf[env_ids] = torch.cat([base_obs, task_params], dim=-1)
+            base_obs_mirrored = self.obs_mirrored_buffer[env_ids].reshape(len(env_ids), -1)
+            self.obs_mirrored_buf[env_ids] = torch.cat([base_obs_mirrored, task_params], dim=-1)
 
             self.potentials[env_ids] = potentials
             self.prev_potentials[env_ids] = prev_potentials
@@ -526,6 +543,8 @@ class SRL_bot(VecTask):
         self.compute_observations()
         self.compute_reward(self.actions)
 
+        # self.set_task_target()
+        
         # mirrored info
         self.extras["obs_mirrored"] = self.obs_mirrored_buf.to(self.rl_device)  # 镜像观测
         self.obs_dict["obs_mirrored"] = torch.clamp(self.obs_mirrored_buf, -self.clip_obs, self.clip_obs).to(self.rl_device)
@@ -688,7 +707,7 @@ def quat_to_euler_xyz(q):
     return torch.stack((yaw_z, pitch_y, roll_x), dim=-1)
 
 
-# @torch.jit.script
+@torch.jit.script
 def compute_srl_reward(
     obs_buf,
     reset_buf,
@@ -721,21 +740,26 @@ def compute_srl_reward(
     #       projected_gravity,                  # 3 
     #       srl_dof_obs * obs_scales[2],        # 6
     #       srl_dof_vel * obs_scales[3],        # 6
-    #       actions ,                           # 6
-    #       angle_error,                        # 1       
+    #       actions ,                           # 6    
     #       sin_phase,                          # 1
     #       cos_phase,                          # 1
 
+    # --- Task Command ---
+    target_pelvis_height = obs_buf[:, -1] 
+    target_ang_vel_z = obs_buf[:, -2]
+    target_vel_x = obs_buf[:, -3]
+
     # --- Termination handling ---
-    alive_reward = torch.ones_like(potentials) * 2.0
-    progress_reward = potentials - prev_potentials
+    alive_reward_coef = torch.where(target_vel_x < 0.1, 2*torch.ones_like(target_vel_x), torch.ones_like(target_vel_x))
+    alive_reward = alive_reward_coef * torch.ones_like(potentials)
+    progress_reward_coef = torch.where(target_vel_x < 0.1, torch.zeros_like(target_vel_x), torch.ones_like(target_vel_x))
+    progress_reward = progress_reward_coef * (potentials - prev_potentials)
 
     # --- Pelvis velocity ---
     root_vel = obs_buf[:, 1:3] 
     root_target_vel = torch.zeros((root_vel.shape[0], 2), device=root_vel.device)
     # target_vel_x = torch.full((root_vel.shape[0],), 2.0, device=root_vel.device)
-    target_vel_x = torch.full((root_vel.shape[0],), 0, device=root_vel.device)
-    root_target_vel[:, 0] = target_vel_x  # TODO: x轴目标线速度
+    root_target_vel[:, 0] = target_vel_x   
     vel_error_vec = root_vel - root_target_vel
     vel_tracking_reward =  vel_tracking_reward_scale *  torch.exp(-3 * torch.norm(vel_error_vec, dim=-1))  # α = 1.5
 
@@ -743,8 +767,6 @@ def compute_srl_reward(
     torques_cost = 0 * torch.sum(actions ** 2, dim=-1)
 
     # --- DOF velocity cost ---
-    # Assuming dof_vel encoded in obs_buf at index 36:36+num_dof
-    # You may need to adjust slice according to your compute_observations()
     dof_vel = obs_buf[:, 15:15+actions.shape[1]]
     dof_vel_cost = torch.sum(dof_vel ** 2, dim=-1)
 
@@ -756,26 +778,25 @@ def compute_srl_reward(
 
 
     # --- Pelvis Orientation ---
-    euler = obs_buf[:,7:10]    
-    target_yaw = torch.full((euler.shape[0],), 0, device=euler.device)  # TODO: Target yaw
-    target_euler = torch.zeros_like(euler)
-    target_euler[:, 0] = target_yaw
-    angle_diff = ((euler - target_euler + math.pi) % (2 * math.pi)) - math.pi
+    euler_err = obs_buf[:,7:10] 
+    target_yaw = torch.full((euler_err.shape[0],), 0, device=euler_err.device)  
+    target_euler = torch.zeros_like(euler_err)
+    angle_diff = ((euler_err - target_euler + math.pi) % (2 * math.pi)) - math.pi
     cos_angle = torch.cos(angle_diff)
     ori_error = 1 - torch.mean(cos_angle, dim=-1)
     orientation_reward = orientation_reward_scale * torch.exp(-20 * ori_error   ) 
 
     # --- Pelvis height ---
     pelvis_height = obs_buf[:,0]
-    target_pelvis_height = torch.full((pelvis_height.shape[0],), 0.88, device=pelvis_height.device)
+    # target_pelvis_height = torch.full((pelvis_height.shape[0],), 0.88, device=pelvis_height.device)
     pelvis_height_error = pelvis_height - target_pelvis_height
-    pelvis_height_reward = pelvis_height_reward_scale * torch.exp(-9 * (10* pelvis_height_error) **2 ) 
+    pelvis_height_reward = pelvis_height_reward_scale * torch.exp(-10 * (10* pelvis_height_error) **2 ) 
 
     # --- Pelvis angular rate ---
     root_ang_vel = obs_buf[:, 4:7]
     root_target_ang_vel = torch.zeros((root_ang_vel.shape[0], 3), device=root_ang_vel.device)
-    target_ang_vel_z = torch.full((root_ang_vel.shape[0],), 0, device=root_ang_vel.device)
-    root_target_ang_vel[:, 2] = target_ang_vel_z  # TODO: z轴目标角速度
+    # target_ang_vel_z = torch.full((root_ang_vel.shape[0],), 0, device=root_ang_vel.device)
+    root_target_ang_vel[:, 2] = target_ang_vel_z   
     ang_vel_error_vec = root_ang_vel - root_target_ang_vel
     ang_vel_tracking_reward = tracking_ang_vel_reward_scale * torch.exp(-3 * torch.norm(ang_vel_error_vec, dim=-1))  # α = 1.5
    
@@ -783,8 +804,9 @@ def compute_srl_reward(
     contact_threshold = 0.095  
     left_foot_height = srl_end_body_pos[:, 0, 2]  # 获取左脚的位置 
     right_foot_height = srl_end_body_pos[:, 1, 2]  # 获取右脚的位置 
-    # 检查两只脚是否都离地
     no_feet_on_ground = (left_foot_height > contact_threshold) & (right_foot_height > contact_threshold)
+    no_fly_penalty_coef = torch.where(target_vel_x < 0.1, 10*torch.ones_like(target_vel_x), torch.ones_like(target_vel_x))
+    no_fly_penalty_scale = no_fly_penalty_scale * no_fly_penalty_coef
     # 如果两只脚同时离地，给予惩罚
     no_fly_penalty = torch.where(no_feet_on_ground, torch.ones_like(no_feet_on_ground) * no_fly_penalty_scale, torch.zeros_like(no_feet_on_ground))
     
@@ -795,15 +817,6 @@ def compute_srl_reward(
     contact_force_magnitude = torch.norm(contact_force, dim=-1)
     contact_force_cost = contact_force_cost_scale * contact_force_magnitude
 
-
-    # # --- Heading Penalty ---
-    # angle_error = obs_buf[:, 28]  # 如果你把它放在最后一位
-    # heading_reward = heading_reward_scale * ((math.pi - angle_error) / math.pi)  # 映射为 [0,1]，越接近对齐越高
-    # target_ang_vel = obs_buf[:, 28]  # 目标角速度跟随  与观测中的目标角速度搭配
-    # local_root_ang_vel_yaw = obs_buf[:,6]
-    # tracking_sigma = 0.25
-    # ang_vel_error = torch.square(target_ang_vel - local_root_ang_vel_yaw)
-    # ang_vel_reward = heading_reward_scale * torch.exp(-ang_vel_error/tracking_sigma)
 
     # --- Foot Phase ---
     phase_t = (2 * math.pi / 12.0) * progress_buf.float()
@@ -822,14 +835,12 @@ def compute_srl_reward(
     # 2. 期望摆动但发生接触 → 惩罚
     flying_miss_left  = expect_flying_left  * is_contact_left
     flying_miss_right = expect_flying_right * is_contact_right
-    # gait_phase_penalty = gait_similarity_penalty_scale * (stance_miss_left + stance_miss_right + flying_miss_left + flying_miss_right)
-    # standing
-    no_standing = is_contact_left * is_contact_right # 必须双脚接触
-    gait_phase_penalty = 0 * (4 * no_standing)
+    gait_phase_penalty = gait_similarity_penalty_scale * (stance_miss_left + stance_miss_right + flying_miss_left + flying_miss_right)
+
    
     # --- Total reward ---
     total_reward = alive_reward  \
-        + 0.0 * progress_reward \
+        + progress_reward \
         + vel_tracking_reward \
         + ang_vel_tracking_reward \
         - torques_cost_scale * torques_cost \
@@ -878,6 +889,9 @@ def compute_srl_bot_observations(
     root_h = root_pos[:, 2:3]
 
     euler = quat_to_euler_xyz(root_rot)
+    target_euler = torch.zeros_like(euler,device=euler.device)
+    euler_err = target_euler - euler
+
     # 将线速度/角速度旋转到局部坐标
     local_root_vel     = quat_rotate_inverse(root_rot, root_vel)
     local_root_ang_vel = quat_rotate_inverse(root_rot, root_ang_vel)
@@ -909,13 +923,12 @@ def compute_srl_bot_observations(
     obs = torch.cat((root_h,                             # 1    0
                      local_root_vel * obs_scales[0],     # 3    1:3
                      local_root_ang_vel * obs_scales[1], # 3    4:6
-                     euler,                              # 3    7:9
+                     euler_err,                          # 3    7:9
                      srl_dof_obs * obs_scales[2],        # 6    10:15
                      srl_dof_vel * obs_scales[3],        # 6    16:21
                      actions ,                           # 6    22:27
-                     0*sin_phase,
-                     0*sin_phase,                          # 1    28
-                     0*cos_phase,                          # 1    29
+                     sin_phase,                          # 1    28
+                     cos_phase,                          # 1    29
                     ), dim=-1)
     return obs , potentials, prev_potentials_new
 
@@ -967,6 +980,8 @@ def compute_srl_bot_observations_mirrored(
     to_target[:, 2] = 0
  
     euler = quat_to_euler_xyz(root_rot)
+    target_euler = torch.zeros_like(euler,device=euler.device)
+    euler_err = target_euler - euler
 
 
     # Mirrored
@@ -990,13 +1005,12 @@ def compute_srl_bot_observations_mirrored(
     obs = torch.cat((root_h,                         # 1
                      local_root_vel * obs_scales[0], # 3
                      local_root_ang_vel * obs_scales[1], # 3
-                     euler,                              # 3 
+                     euler_err,                              # 3 
                      srl_dof_obs * obs_scales[2],        # 6
                      srl_dof_vel * obs_scales[3],        # 6
-                     actions , # actions 通常不用 scale      6
-                     0*cos_phase,                       # 1       
-                     0*cos_phase,    # TODO: mirrored
-                     0*sin_phase,     
+                     actions ,
+                     cos_phase,    # TODO: mirrored
+                     sin_phase,     
                     ), dim=-1)
     return obs  
 
