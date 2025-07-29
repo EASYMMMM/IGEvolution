@@ -158,7 +158,7 @@ class SRL_bot(VecTask):
         # ----- user define -----
         self.target_ang_vel_z = torch.zeros(self.num_envs, device=self.device)
         self.target_pelvis_height = torch.full((self.num_envs,), 0.89, device=self.device)
-        self.target_vel_x = torch.full((self.num_envs,), 1.5, device=self.device)
+        self.target_vel_x = torch.full((self.num_envs,), 0.0, device=self.device)
 
         self._terminate_buf = torch.ones(self.num_envs, device=self.device, dtype=torch.long)
 
@@ -417,6 +417,7 @@ class SRL_bot(VecTask):
         if (env_ids is None):
             root_states = self.srl_root_states
             root_states[:,3:7] = self.root_states[:,3:7]
+            root_states[:,10:13] = self.root_states[:,10:13]
             dof_pos = self.dof_pos
             dof_vel = self.dof_vel
             dof_force_tensor = self.dof_force_tensor
@@ -429,6 +430,7 @@ class SRL_bot(VecTask):
         else:
             root_states = self.srl_root_states[env_ids]
             root_states[:,3:7] = self.root_states[env_ids,3:7]
+            root_states[:,10:13] = self.root_states[env_ids,10:13]
             dof_pos = self.dof_pos[env_ids]
             dof_vel = self.dof_vel[env_ids]
             dof_force_tensor = self.dof_force_tensor[env_ids]
@@ -450,28 +452,11 @@ class SRL_bot(VecTask):
         return obs, obs_mirrored, potentials, prev_potentials
     
 
-    def set_task_target(self, env_ids):
-        """
-        使用 torch 操作为指定 env_ids 设置目标：
-        - target_ang_vel_z: 从 [-0.5, 0.0, 0.5] 中随机选一个
-        - target_pelvis_height: 从 [0.75, 0.85, 0.95] 中随机选一个
-        - target_vel_x: 从 [0.8, 1.0, 1.2, 1.4, 1.5] 中随机选一个
-        """
-
-        # 候选集
-        ang_vel_choices = torch.tensor([-0.5, 0.0, 0.5], device=self.device)
-        height_choices = torch.tensor([0.75, 0.85, 0.95], device=self.device)
-        vel_x_choices = torch.tensor([0.8, 1.0, 1.2, 1.4, 1.5], device=self.device)
-
-        # 采样随机 index
-        ang_indices = torch.randint(0, len(ang_vel_choices), (len(env_ids),), device=self.device)
-        height_indices = torch.randint(0, len(height_choices), (len(env_ids),), device=self.device)
-        vel_indices = torch.randint(0, len(vel_x_choices), (len(env_ids),), device=self.device)
-
-        # 赋值
-        self.target_ang_vel_z[env_ids] = ang_vel_choices[ang_indices]
-        self.target_pelvis_height[env_ids] = height_choices[height_indices]
-        self.target_vel_x[env_ids] = vel_x_choices[vel_indices]
+    def set_task_target(self):
+        self.target_vel_x[:], self.target_pelvis_height[:], self.target_ang_vel_z[:] = set_task_target(self.target_vel_x,
+                                                                                                       self.target_pelvis_height,
+                                                                                                       self.target_ang_vel_z,
+                                                                                                       self.progress_buf)
 
     def reset_done(self):
         _, done_env_ids = super().reset_done()
@@ -543,7 +528,7 @@ class SRL_bot(VecTask):
         self.compute_observations()
         self.compute_reward(self.actions)
 
-        # self.set_task_target()
+        self.set_task_target()
         
         # mirrored info
         self.extras["obs_mirrored"] = self.obs_mirrored_buf.to(self.rl_device)  # 镜像观测
@@ -1013,4 +998,36 @@ def compute_srl_bot_observations_mirrored(
                      sin_phase,     
                     ), dim=-1)
     return obs  
+
+
+@torch.jit.script
+def set_task_target(
+    cur_target_vel_x,
+    cur_target_pelvis_height,
+    cur_target_ang_vel_z,
+    progress_buf,
+    max_episode_length=1000,
+)  :
+# type: (Tensor, Tensor, Tensor, Tensor, int) -> Tuple[Tensor, Tensor, Tensor]
+    target_vel_x = cur_target_vel_x.clone().float() 
+    target_pelvis_height = cur_target_pelvis_height.clone().float() 
+    target_ang_vel_z = cur_target_ang_vel_z.clone().float() 
+
+    # 候选集
+    unit_vel_x = torch.ones_like(target_vel_x,device=target_vel_x.device)
+    ang_vel_choices = torch.tensor([-0.5, 0.0, 0.5], device=cur_target_vel_x.device)
+    height_choices = torch.tensor([0.75, 0.85, 0.95], device=cur_target_vel_x.device)
+    vel_x_choices = torch.tensor([0.8, 1.0, 1.2, 1.4, 1.6], device=cur_target_vel_x.device)
+
+    # 采样随机 index
+    # ang_indices = torch.randint(0, len(ang_vel_choices), (len(env_ids),), device=self.device)
+    # height_indices = torch.randint(0, len(height_choices), (len(env_ids),), device=self.device)
+    # vel_indices = torch.randint(0, len(vel_x_choices), (len(env_ids),), device=self.device)
+    
+    for i in range(max_episode_length//100):
+        mask = progress_buf == 100 * i+1
+        vel_indices = torch.randint(0, len(vel_x_choices), (len(target_vel_x),), device=target_vel_x.device)
+        target_vel_x =  torch.where(mask, unit_vel_x*vel_x_choices[vel_indices], target_vel_x)
+
+    return target_vel_x, target_pelvis_height, target_ang_vel_z
 

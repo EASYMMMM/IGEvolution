@@ -669,7 +669,7 @@ class SRL_Bot_PlayerContinuous(common_player.CommonPlayer):
                         obs_array = np.stack(self.obs_log, axis=0)
                         self.obs_log.clear()
 
-                        num_dims = 31
+                        num_dims = 30
                         mid = num_dims // 2
 
                         # 前半维度
@@ -700,6 +700,27 @@ class SRL_Bot_PlayerContinuous(common_player.CommonPlayer):
                         plt.tight_layout()
                         plt.show()
                         self.obs_log = []
+
+                        # Target Tracking
+                        fig3, axs3 = plt.subplots(3, 1, figsize=(10, 3 * 2.5), sharex=True)
+                        axs3[0].plot(obs_array[:, 0], label='Actual Value')
+                        axs3[0].plot(obs_array[:, -1], label='Target Value', linestyle='--')
+                        axs3[0].set_ylabel('Pel H')
+                        axs3[0].legend()
+                        axs3[0].grid(True)
+                        axs3[1].plot(obs_array[:, 1], label='Actual Value')
+                        axs3[1].plot(obs_array[:, -3], label='Target Value', linestyle='--')
+                        axs3[1].set_ylabel('Vel X')
+                        axs3[1].legend()
+                        axs3[1].grid(True)
+                        axs3[2].plot(obs_array[:, 6], label='Actual Value')
+                        axs3[2].plot(obs_array[:, -2], label='Target Value', linestyle='--')
+                        axs3[2].set_ylabel('AngVel Z')
+                        axs3[2].legend()
+                        axs3[2].grid(True)
+                        plt.suptitle("Target Tracking")
+                        plt.tight_layout()
+                        plt.show()
 
                     if self.is_rnn:
                         for s in self.states:
