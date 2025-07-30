@@ -427,6 +427,7 @@ class SRL_bot(VecTask):
             actions = self.actions
             targets = self.targets
             potentials = self.potentials
+            target_vel_x = self.target_vel_x
         else:
             root_states = self.srl_root_states[env_ids]
             root_states[:,3:7] = self.root_states[env_ids,3:7]
@@ -440,14 +441,15 @@ class SRL_bot(VecTask):
             actions = self.actions[env_ids]
             targets = self.targets[env_ids]
             potentials = self.potentials[env_ids]
+            target_vel_x = self.target_vel_x[env_ids]
            
         obs, potentials, prev_potentials, = compute_srl_bot_observations(progress_buf, initial_dof_pos, root_states, dof_pos, dof_vel,
                                                        dof_force_tensor, gravity_vec, actions,
-                                                       self.obs_scales_tensor, targets, potentials, self.dt)
+                                                       self.obs_scales_tensor, targets, potentials, self.dt, target_vel_x)
 
         obs_mirrored  =  compute_srl_bot_observations_mirrored(progress_buf, self.mirror_mat_srl_dof, initial_dof_pos, root_states, dof_pos, dof_vel,
                                                        dof_force_tensor, gravity_vec, actions,
-                                                       self.obs_scales_tensor, targets, potentials, self.dt)          
+                                                       self.obs_scales_tensor, targets, potentials, self.dt, target_vel_x)          
  
         return obs, obs_mirrored, potentials, prev_potentials
     
@@ -735,7 +737,7 @@ def compute_srl_reward(
     target_vel_x = obs_buf[:, -3]
 
     # --- Termination handling ---
-    alive_reward_coef = torch.where(target_vel_x < 0.1, 2*torch.ones_like(target_vel_x), torch.ones_like(target_vel_x))
+    alive_reward_coef = torch.where(target_vel_x < 0.1, 4*torch.ones_like(target_vel_x), torch.ones_like(target_vel_x))
     alive_reward = alive_reward_coef * torch.ones_like(potentials)
     progress_reward_coef = torch.where(target_vel_x < 0.1, torch.zeros_like(target_vel_x), torch.ones_like(target_vel_x))
     progress_reward = progress_reward_coef * (potentials - prev_potentials)
@@ -790,7 +792,7 @@ def compute_srl_reward(
     left_foot_height = srl_end_body_pos[:, 0, 2]  # 获取左脚的位置 
     right_foot_height = srl_end_body_pos[:, 1, 2]  # 获取右脚的位置 
     no_feet_on_ground = (left_foot_height > contact_threshold) & (right_foot_height > contact_threshold)
-    no_fly_penalty_coef = torch.where(target_vel_x < 0.1, 10*torch.ones_like(target_vel_x), torch.ones_like(target_vel_x))
+    no_fly_penalty_coef = torch.where(target_vel_x < 0.1, 5*torch.ones_like(target_vel_x), torch.ones_like(target_vel_x))
     no_fly_penalty_scale = no_fly_penalty_scale * no_fly_penalty_coef
     # 如果两只脚同时离地，给予惩罚
     no_fly_penalty = torch.where(no_feet_on_ground, torch.ones_like(no_feet_on_ground) * no_fly_penalty_scale, torch.zeros_like(no_feet_on_ground))
@@ -821,7 +823,9 @@ def compute_srl_reward(
     flying_miss_left  = expect_flying_left  * is_contact_left
     flying_miss_right = expect_flying_right * is_contact_right
     gait_phase_penalty = gait_similarity_penalty_scale * (stance_miss_left + stance_miss_right + flying_miss_left + flying_miss_right)
-
+    # standing
+    gait_phase_penalty_coef = torch.where(target_vel_x < 0.1, torch.zeros_like(target_vel_x), torch.ones_like(target_vel_x))
+    gait_phase_penalty =  gait_phase_penalty*gait_phase_penalty_coef
    
     # --- Total reward ---
     total_reward = alive_reward  \
@@ -862,8 +866,9 @@ def compute_srl_bot_observations(
     targets,
     potentials,
     dt,
+    target_vel_x,
 )  :
-    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float) -> Tuple[Tensor, Tensor, Tensor]
+    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, Tensor) -> Tuple[Tensor, Tensor, Tensor]
     # root state 分解
     root_pos = root_states[:, 0:3]
     root_rot = root_states[:, 3:7]
@@ -905,6 +910,11 @@ def compute_srl_bot_observations(
     sin_phase = torch.sin(phase_t).unsqueeze(-1)
     cos_phase = torch.cos(phase_t).unsqueeze(-1)
 
+    # standing phase mask
+    standing_phase_mask = target_vel_x <= 0.1
+    sin_phase = torch.where(standing_phase_mask.unsqueeze(-1), sin_phase*0, sin_phase)
+    cos_phase = torch.where(standing_phase_mask.unsqueeze(-1), cos_phase*0, cos_phase)
+
     obs = torch.cat((root_h,                             # 1    0
                      local_root_vel * obs_scales[0],     # 3    1:3
                      local_root_ang_vel * obs_scales[1], # 3    4:6
@@ -934,8 +944,9 @@ def compute_srl_bot_observations_mirrored(
     targets,
     potentials,
     dt,
+    target_vel_x,
 )  :
-    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float) ->  Tensor 
+    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, Tensor) ->  Tensor 
     
     
     # root state 分解
@@ -987,6 +998,11 @@ def compute_srl_bot_observations_mirrored(
     sin_phase = torch.sin(phase_t).unsqueeze(-1)
     cos_phase = torch.cos(phase_t).unsqueeze(-1)
 
+    # standing phase mask
+    standing_phase_mask = target_vel_x <= 0.1
+    sin_phase = torch.where(standing_phase_mask.unsqueeze(-1), sin_phase*0, sin_phase)
+    cos_phase = torch.where(standing_phase_mask.unsqueeze(-1), cos_phase*0, cos_phase)
+
     obs = torch.cat((root_h,                         # 1
                      local_root_vel * obs_scales[0], # 3
                      local_root_ang_vel * obs_scales[1], # 3
@@ -1017,17 +1033,23 @@ def set_task_target(
     unit_vel_x = torch.ones_like(target_vel_x,device=target_vel_x.device)
     ang_vel_choices = torch.tensor([-0.5, 0.0, 0.5], device=cur_target_vel_x.device)
     height_choices = torch.tensor([0.75, 0.85, 0.95], device=cur_target_vel_x.device)
-    vel_x_choices = torch.tensor([0.8, 1.0, 1.2, 1.4, 1.6], device=cur_target_vel_x.device)
+    vel_x_choices = torch.tensor([0.0, 0.8, 1.0, 1.2, 1.4, 1.6], device=cur_target_vel_x.device)
 
-    # 采样随机 index
-    # ang_indices = torch.randint(0, len(ang_vel_choices), (len(env_ids),), device=self.device)
-    # height_indices = torch.randint(0, len(height_choices), (len(env_ids),), device=self.device)
-    # vel_indices = torch.randint(0, len(vel_x_choices), (len(env_ids),), device=self.device)
-    
+    # 单纯速度变化
+    vel_x_choices = torch.tensor([0.8, 1.0, 1.2, 1.4, 1.6], device=cur_target_vel_x.device)
     for i in range(max_episode_length//100):
         mask = progress_buf == 100 * i+1
         vel_indices = torch.randint(0, len(vel_x_choices), (len(target_vel_x),), device=target_vel_x.device)
         target_vel_x =  torch.where(mask, unit_vel_x*vel_x_choices[vel_indices], target_vel_x)
+
+    # 速度变化+站立交替进行
+    # for i in range(max_episode_length//100):
+    #     mask = progress_buf == 100 * i+1
+    #     vel_indices = torch.randint(0, len(vel_x_choices), (len(target_vel_x),), device=target_vel_x.device)
+    #     if i%2 == 1:
+    #         vel_indices = vel_indices * 0
+    #     target_vel_x =  torch.where(mask, unit_vel_x*vel_x_choices[vel_indices], target_vel_x)
+
 
     return target_vel_x, target_pelvis_height, target_ang_vel_z
 
