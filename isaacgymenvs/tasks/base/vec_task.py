@@ -489,7 +489,7 @@ class VecTask(Env):
                 delta = now - self.last_frame_time
                 if self.render_fps < 0:
                     # render at control frequency
-                    render_dt = self.dt * self.control_freq_inv  # render every control step
+                    render_dt = self.dt   # FIXME: original: self.dt*self.control_freq_inv, render every control step
                 else:
                     render_dt = 1.0 / self.render_fps
 

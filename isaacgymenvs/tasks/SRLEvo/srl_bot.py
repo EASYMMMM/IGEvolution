@@ -70,6 +70,7 @@ class SRL_bot(VecTask):
         self.plane_restitution = self.cfg["env"]["plane"]["restitution"]
 
         self.max_episode_length = self.cfg["env"]["episodeLength"]
+        self.gait_period = self.cfg["env"]["gait_period"]
 
         self.torques_cost_scale = self.cfg["env"]["torques_cost_scale"]
         self.dof_acc_cost_scale = self.cfg["env"]["dof_acc_cost_scale"]
@@ -99,6 +100,8 @@ class SRL_bot(VecTask):
 
         self.obs_buffer = torch.zeros((self.num_envs, self.frame_stack, np.int32(self.num_obs/self.frame_stack)), device=self.device)
         self.obs_mirrored_buffer = torch.zeros((self.num_envs, self.frame_stack, np.int32(self.num_obs/self.frame_stack)), device=self.device)
+        self.phase_buf = torch.zeros(
+            self.num_envs, device=self.device, dtype=torch.long)
 
         if self.viewer != None:
             cam_pos = gymapi.Vec3(50.0, 25.0, 2.4)
@@ -158,7 +161,7 @@ class SRL_bot(VecTask):
         # ----- user define -----
         self.target_ang_vel_z = torch.zeros(self.num_envs, device=self.device)
         self.target_pelvis_height = torch.full((self.num_envs,), 0.89, device=self.device)
-        self.target_vel_x = torch.full((self.num_envs,), 0.0, device=self.device)
+        self.target_vel_x = torch.full((self.num_envs,), 1.5, device=self.device)
 
         self._terminate_buf = torch.ones(self.num_envs, device=self.device, dtype=torch.long)
 
@@ -348,6 +351,7 @@ class SRL_bot(VecTask):
             self.reset_buf,
             to_target,
             self.progress_buf,
+            self.phase_buf,
             self.actions,
             srl_end_body_pos,
             self.potentials,
@@ -355,6 +359,7 @@ class SRL_bot(VecTask):
             self.termination_height,
             self.death_cost,
             self.max_episode_length,
+            self.gait_period,
             torques_cost_scale = self.torques_cost_scale,
             dof_acc_cost_scale = self.dof_acc_cost_scale,
             dof_vel_cost_scale = self.dof_vel_cost_scale,
@@ -422,6 +427,7 @@ class SRL_bot(VecTask):
             dof_vel = self.dof_vel
             dof_force_tensor = self.dof_force_tensor
             progress_buf = self.progress_buf
+            phase_buf = self.phase_buf
             initial_dof_pos = self.initial_dof_pos 
             gravity_vec = self.gravity_vec
             actions = self.actions
@@ -436,6 +442,7 @@ class SRL_bot(VecTask):
             dof_vel = self.dof_vel[env_ids]
             dof_force_tensor = self.dof_force_tensor[env_ids]
             progress_buf = self.progress_buf[env_ids]
+            phase_buf = self.phase_buf[env_ids]
             initial_dof_pos = self.initial_dof_pos[env_ids]
             gravity_vec = self.gravity_vec[env_ids]
             actions = self.actions[env_ids]
@@ -443,13 +450,13 @@ class SRL_bot(VecTask):
             potentials = self.potentials[env_ids]
             target_vel_x = self.target_vel_x[env_ids]
            
-        obs, potentials, prev_potentials, = compute_srl_bot_observations(progress_buf, initial_dof_pos, root_states, dof_pos, dof_vel,
+        obs, potentials, prev_potentials, = compute_srl_bot_observations(progress_buf, phase_buf, initial_dof_pos, root_states, dof_pos, dof_vel,
                                                        dof_force_tensor, gravity_vec, actions,
-                                                       self.obs_scales_tensor, targets, potentials, self.dt, target_vel_x)
+                                                       self.obs_scales_tensor, targets, potentials, self.dt, target_vel_x, self.gait_period)
 
-        obs_mirrored  =  compute_srl_bot_observations_mirrored(progress_buf, self.mirror_mat_srl_dof, initial_dof_pos, root_states, dof_pos, dof_vel,
+        obs_mirrored  =  compute_srl_bot_observations_mirrored(progress_buf, phase_buf, self.mirror_mat_srl_dof, initial_dof_pos, root_states, dof_pos, dof_vel,
                                                        dof_force_tensor, gravity_vec, actions,
-                                                       self.obs_scales_tensor, targets, potentials, self.dt, target_vel_x)          
+                                                       self.obs_scales_tensor, targets, potentials, self.dt, target_vel_x, self.gait_period)          
  
         return obs, obs_mirrored, potentials, prev_potentials
     
@@ -499,6 +506,8 @@ class SRL_bot(VecTask):
         self.reset_buf[env_ids] = 0
         self._terminate_buf[env_ids] = 0
 
+        self.phase_buf[env_ids] = torch.randint(0, 12, (len(env_ids),), device=self.device, dtype=torch.long)
+
         for env_id in env_ids:
             self.obs_buffer[env_id] = 0
             self.obs_mirrored_buffer[env_id] = 0
@@ -519,6 +528,7 @@ class SRL_bot(VecTask):
     def post_physics_step(self):
         self.progress_buf += 1
         self.randomize_buf += 1
+        self.phase_buf += 1
 
     
         self.extras["terminate"] = self._terminate_buf
@@ -530,7 +540,7 @@ class SRL_bot(VecTask):
         self.compute_observations()
         self.compute_reward(self.actions)
 
-        self.set_task_target()
+        # self.set_task_target()
         
         # mirrored info
         self.extras["obs_mirrored"] = self.obs_mirrored_buf.to(self.rl_device)  # 镜像观测
@@ -642,8 +652,11 @@ class SRL_bot(VecTask):
         - self.feet_air_time: 当前 air time 累积（每个脚一个）
         - self.last_contacts: 上一帧是否接触地面（每个脚一个）
         """
-        contact_z = self.contact_forces[:, self.feet_indices, 2]  # shape: [num_envs, num_feet]
-        contact_now = contact_z > 1.0  # 当前帧是否接触地面（如 Cassie，1.0 N 以上算接触）
+        # --- No fly --- 
+        srl_end_body_pos = self._rigid_body_pos[:, self._srl_end_ids, :]
+        contact_threshold = 0.095  
+        foot_height = srl_end_body_pos[:, 0:2, 2]  # 获取左脚的位置 
+        contact_now = foot_height <= contact_threshold  # 当前帧是否接触地面（如 Cassie，1.0 N 以上算接触）
 
         # contact_filt 是合并当前和上一帧的接触状态（避免 PhysX 抖动）
         contact_filt = torch.logical_or(contact_now, self.last_contacts)
@@ -700,6 +713,7 @@ def compute_srl_reward(
     reset_buf,
     to_target,
     progress_buf,
+    phase_buf,
     actions,
     srl_end_body_pos,
     potentials,
@@ -707,6 +721,7 @@ def compute_srl_reward(
     termination_height,
     death_cost,
     max_episode_length,
+    gait_period,
     torques_cost_scale: float = 0,
     dof_acc_cost_scale: float = 0 ,
     dof_vel_cost_scale: float = 0,
@@ -719,7 +734,7 @@ def compute_srl_reward(
     pelvis_height_reward_scale: float = 0,
     orientation_reward_scale: float = 0,
 ):
-    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, float, float, float, float, float,  float, float, float, float, float, float, float, float) -> Tuple[Tensor, Tensor, Tensor]
+    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, float, float, float, float, float, float,  float, float, float, float, float, float, float, float) -> Tuple[Tensor, Tensor, Tensor]
 
     # obs = root_h,                             # 1
     #       local_root_vel * obs_scales[0],     # 3
@@ -758,11 +773,15 @@ def compute_srl_reward(
     dof_vel_cost = torch.sum(dof_vel ** 2, dim=-1)
 
     # --- DOF acceleration cost ---
-    dof_vel_prev = obs_buf[:, 15+31:15+31+actions.shape[1]]  # 前一帧速度
+    dof_vel_prev = obs_buf[:, 15+30:15+30+actions.shape[1]]  # 前一帧速度
     dof_acc = dof_vel - dof_vel_prev  # 关节加速度
     dof_acc_magnitude_sq = torch.sum(dof_acc ** 2, dim=-1)
     dof_acc_reward = torch.exp(- 2 * dof_acc_magnitude_sq)
 
+    # --- Action Smooth ---
+    actions_prev = obs_buf[:, 22+30:22+30+ actions.shape[1]]
+    actions_err_magnitude_sq = torch.sum((actions - actions_prev) ** 2, dim=-1)
+    actions_smooth_reward = torch.exp(-0.3 *actions_err_magnitude_sq )
 
     # --- Pelvis Orientation ---
     euler_err = obs_buf[:,7:10] 
@@ -806,11 +825,11 @@ def compute_srl_reward(
 
 
     # --- Foot Phase ---
-    phase_t = (2 * math.pi / 12.0) * progress_buf.float()
+    phase_t = (2 * math.pi / gait_period) * phase_buf.float()
     phase_left = phase_t
     phase_right = (phase_t + math.pi) % (2 * math.pi)
-    expect_stancing_left  = (torch.sin(phase_left) > 0.7).float()  # stance phase left
-    expect_stancing_right = (torch.sin(phase_right) > 0.7).float()   # stance phase right
+    expect_stancing_left  = (torch.sin(phase_left) > 0.2).float()  # stance phase left
+    expect_stancing_right = (torch.sin(phase_right) > 0.2).float()   # stance phase right
     expect_flying_left  = (torch.sin(phase_left) < -0.7).float()  # swing phase left
     expect_flying_right = (torch.sin(phase_right) < -0.7).float()   # swing phase right
     is_contact_left = (left_foot_height < contact_threshold).float()
@@ -839,7 +858,8 @@ def compute_srl_reward(
         - no_fly_penalty \
         - gait_phase_penalty \
         + orientation_reward  \
-        + pelvis_height_reward
+        + pelvis_height_reward \
+        + actions_smooth_reward
 
     # --- Handle termination ---
     total_reward = torch.where(obs_buf[:, 0] < termination_height, torch.ones_like(total_reward) * death_cost, total_reward)
@@ -855,6 +875,7 @@ def compute_srl_reward(
 @torch.jit.script
 def compute_srl_bot_observations(
     progress_buf,
+    phase_buf,
     default_joint_pos,
     root_states ,
     dof_pos ,
@@ -867,8 +888,9 @@ def compute_srl_bot_observations(
     potentials,
     dt,
     target_vel_x,
+    gait_period,
 )  :
-    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, Tensor) -> Tuple[Tensor, Tensor, Tensor]
+    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, Tensor, float) -> Tuple[Tensor, Tensor, Tensor]
     # root state 分解
     root_pos = root_states[:, 0:3]
     root_rot = root_states[:, 3:7]
@@ -892,7 +914,7 @@ def compute_srl_bot_observations(
 
     # 主体关节位置编码（humanoid + SRL）
     # dof_obs = dof_to_obs(dof_pos)  
-    srl_dof_obs   = dof_pos - default_joint_pos  
+    srl_dof_obs   = dof_pos - default_joint_pos
     srl_dof_vel   = dof_vel
     srl_dof_force = dof_force_tensor 
 
@@ -906,7 +928,7 @@ def compute_srl_bot_observations(
 
 
     # 假设周期为 T=60 步，则频率为 1/T，每一步是 2π/T 相位步长
-    phase_t = (2 * math.pi / 12.0) * (progress_buf-1).float()  # shape: [num_envs]
+    phase_t = (2 * math.pi / gait_period) * (phase_buf-1).float()  # shape: [num_envs]
     sin_phase = torch.sin(phase_t).unsqueeze(-1)
     cos_phase = torch.cos(phase_t).unsqueeze(-1)
 
@@ -923,7 +945,7 @@ def compute_srl_bot_observations(
                      srl_dof_vel * obs_scales[3],        # 6    16:21
                      actions ,                           # 6    22:27
                      sin_phase,                          # 1    28
-                     cos_phase,                          # 1    29
+                     0*cos_phase,                          # 1    29
                     ), dim=-1)
     return obs , potentials, prev_potentials_new
 
@@ -932,6 +954,7 @@ def compute_srl_bot_observations(
 @torch.jit.script
 def compute_srl_bot_observations_mirrored(
     progress_buf,
+    phase_buf,
     mirror_mat,
     default_joint_pos,
     root_states ,
@@ -945,8 +968,9 @@ def compute_srl_bot_observations_mirrored(
     potentials,
     dt,
     target_vel_x,
+    gait_period,
 )  :
-    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, Tensor) ->  Tensor 
+    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, Tensor, float) ->  Tensor 
     
     
     # root state 分解
@@ -988,13 +1012,13 @@ def compute_srl_bot_observations_mirrored(
     srl_dof_obs = torch.matmul(srl_dof_obs, mirror_mat) # Perform the matrix multiplication to get mirrored dof_pos
     srl_dof_vel = torch.matmul(srl_dof_vel, mirror_mat)
     actions = torch.matmul(actions, mirror_mat)
-    # euler[:,0] = - euler[:,0] # yaw
+    euler_err[:,0] = - euler_err[:,0] # yaw
     # euler[:,2] = - euler[:,2] # roll
 
     # heading_proj[:,1] = -heading_proj[:,1]
 
     # 假设周期为 T=60 步，则频率为 1/T，每一步是 2π/T 相位步长
-    phase_t = (2 * math.pi / 12.0) * (progress_buf-1).float()  # shape: [num_envs]
+    phase_t = (2 * math.pi / gait_period) * (phase_buf-1).float()  # shape: [num_envs]
     sin_phase = torch.sin(phase_t).unsqueeze(-1)
     cos_phase = torch.cos(phase_t).unsqueeze(-1)
 
@@ -1011,7 +1035,7 @@ def compute_srl_bot_observations_mirrored(
                      srl_dof_vel * obs_scales[3],        # 6
                      actions ,
                      cos_phase,    # TODO: mirrored
-                     sin_phase,     
+                     0*sin_phase,     
                     ), dim=-1)
     return obs  
 

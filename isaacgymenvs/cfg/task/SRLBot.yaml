@@ -10,7 +10,7 @@ env:
   episodeLength: 1000
   enableDebugVis: False
   cameraFollow: True # if the camera follows humanoid or not
-  controlFrequencyInv: 2 # 30 Hz
+  controlFrequencyInv: 2 # FIXME: 2 
   clipActions: 1.0
   frame_stack: 5
   
@@ -30,6 +30,7 @@ env:
   jointsAtLimitCost: 0.25
   deathCost: -1.0
   terminationHeight: 0.6
+  gait_period: 18.0
 
   # reward weights
   torques_cost_scale: 5e-6
