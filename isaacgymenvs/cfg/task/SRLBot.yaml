@@ -30,7 +30,10 @@ env:
   jointsAtLimitCost: 0.25
   deathCost: -1.0
   terminationHeight: 0.6
+
+  # gait parameters
   gait_period: 18.0
+  foot_clearance: 0.2
 
   # reward weights
   torques_cost_scale: 5e-6
@@ -38,14 +41,14 @@ env:
   dof_vel_cost_scale: 0
   no_fly_penalty_scale: 10.0
   gait_similarity_penalty_scale: 1
-  heading_reward_scale: 2.0
   pelvis_height_reward_scale: 2.0
   orientation_reward_scale: 2.0
   tracking_ang_vel_reward_scale: 1
   vel_tracking_reward_scale: 6.0
+  clearance_penalty_scale: 50
 
   asset:
-    assetFileName: "mjcf/srl_bot/srl_bot_inversed.xml"
+    assetFileName: "mjcf/srl_bot/srl_bot_inversed_v2.xml"
 
   plane:
     staticFriction: 1.0
