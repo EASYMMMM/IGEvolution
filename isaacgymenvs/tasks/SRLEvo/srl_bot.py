@@ -471,7 +471,8 @@ class SRL_bot(VecTask):
         self.target_vel_x[:], self.target_pelvis_height[:], self.target_ang_vel_z[:] = set_task_target(self.target_vel_x,
                                                                                                        self.target_pelvis_height,
                                                                                                        self.target_ang_vel_z,
-                                                                                                       self.progress_buf)
+                                                                                                       self.progress_buf,
+                                                                                                       max_episode_length=self.max_episode_length)
 
     def reset_done(self):
         _, done_env_ids = super().reset_done()
@@ -550,7 +551,7 @@ class SRL_bot(VecTask):
         self.compute_observations()
         self.compute_reward(self.actions)
 
-        # self.set_task_target()
+        self.set_task_target()
         
         # mirrored info
         self.extras["obs_mirrored"] = self.obs_mirrored_buf.to(self.rl_device)  # 镜像观测
@@ -736,7 +737,7 @@ def quat_to_euler_xyz(q):
     return torch.stack((yaw_z, pitch_y, roll_x), dim=-1)
 
 
-@torch.jit.script
+# @torch.jit.script
 def compute_srl_reward(
     obs_buf,
     reset_buf,
@@ -833,8 +834,9 @@ def compute_srl_reward(
     root_target_ang_vel = torch.zeros((root_ang_vel.shape[0], 3), device=root_ang_vel.device)
     # target_ang_vel_z = torch.full((root_ang_vel.shape[0],), 0, device=root_ang_vel.device)
     root_target_ang_vel[:, 2] = target_ang_vel_z   
+    root_ang_vel[:,2] = root_ang_vel[:,2] * 2
     ang_vel_error_vec = root_ang_vel - root_target_ang_vel
-    ang_vel_tracking_reward = tracking_ang_vel_reward_scale * torch.exp(-3 * torch.norm(ang_vel_error_vec, dim=-1))  # α = 1.5
+    ang_vel_tracking_reward = tracking_ang_vel_reward_scale * torch.exp(-3 * torch.norm(ang_vel_error_vec, dim=-1))   
    
     # --- No fly --- 
     contact_threshold = 0.095  
@@ -969,8 +971,8 @@ def compute_srl_bot_observations(
     cos_phase = torch.where(standing_phase_mask.unsqueeze(-1), cos_phase*0, cos_phase)
 
     obs = torch.cat((root_h,                             # 1    0
-                     local_root_vel * obs_scales[0],     # 3    1:3
-                     local_root_ang_vel * obs_scales[1], # 3    4:6
+                     local_root_vel ,     # 3    1:3
+                     local_root_ang_vel , # 3    4:6
                      euler_err,                          # 3    7:9
                      srl_dof_obs * obs_scales[2],        # 6    10:15
                      srl_dof_vel * obs_scales[3],        # 6    16:21
@@ -1080,6 +1082,9 @@ def set_task_target(
     max_episode_length=1000,
 )  :
 # type: (Tensor, Tensor, Tensor, Tensor, int) -> Tuple[Tensor, Tensor, Tensor]
+
+    step_period = 150
+
     target_vel_x = cur_target_vel_x.clone().float() 
     target_pelvis_height = cur_target_pelvis_height.clone().float() 
     target_ang_vel_z = cur_target_ang_vel_z.clone().float() 
@@ -1091,19 +1096,19 @@ def set_task_target(
     vel_x_choices = torch.tensor([0.0, 0.8, 1.0, 1.2, 1.4, 1.6], device=cur_target_vel_x.device)
 
     # 单纯速度变化
-    vel_x_choices = torch.tensor([0.8, 1.0, 1.2, 1.4, 1.6], device=cur_target_vel_x.device)
-    for i in range(max_episode_length//100):
-        mask = progress_buf == 100 * i+1
-        vel_indices = torch.randint(0, len(vel_x_choices), (len(target_vel_x),), device=target_vel_x.device)
-        target_vel_x =  torch.where(mask, unit_vel_x*vel_x_choices[vel_indices], target_vel_x)
+    # vel_x_choices = torch.tensor([0.8, 1.0, 1.2, 1.4, 1.6], device=cur_target_vel_x.device)
+    # for i in range(max_episode_length//step_period):
+    #     mask = progress_buf == step_period * i+1
+    #     vel_indices = torch.randint(0, len(vel_x_choices), (len(target_vel_x),), device=target_vel_x.device)
+    #     target_vel_x =  torch.where(mask, unit_vel_x*vel_x_choices[vel_indices], target_vel_x)
 
     # 速度变化+站立交替进行
-    # for i in range(max_episode_length//100):
-    #     mask = progress_buf == 100 * i+1
-    #     vel_indices = torch.randint(1, len(vel_x_choices), (len(target_vel_x),), device=target_vel_x.device)
-    #     if i%2 == 1:
-    #         vel_indices = vel_indices * 0
-    #     target_vel_x =  torch.where(mask, unit_vel_x*vel_x_choices[vel_indices], target_vel_x)
+    for i in range(max_episode_length//step_period):
+        mask = progress_buf == step_period * i+1
+        vel_indices = torch.randint(1, len(vel_x_choices), (len(target_vel_x),), device=target_vel_x.device)
+        if i%2 == 1:
+            vel_indices = vel_indices * 0
+        target_vel_x =  torch.where(mask, unit_vel_x*vel_x_choices[vel_indices], target_vel_x)
 
 
     return target_vel_x, target_pelvis_height, target_ang_vel_z

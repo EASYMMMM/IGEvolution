@@ -713,7 +713,13 @@ class SRL_Bot_PlayerContinuous(common_player.CommonPlayer):
                         axs3[1].set_ylabel('Vel X')
                         axs3[1].legend()
                         axs3[1].grid(True)
+                        angvel_z_smooth = lowpass_filter(obs_array[:, 6])
+                        prev_yaw = obs_array[:,7+30]
+                        yaw = obs_array[:,7]
+                        real_dt = 0.0166 * 2
+                        yaw_vel = (prev_yaw - yaw)/(real_dt)
                         axs3[2].plot(obs_array[:, 6], label='Actual Value')
+                        axs3[2].plot(angvel_z_smooth, label='Smoothed Value')
                         axs3[2].plot(obs_array[:, -2], label='Target Value', linestyle='--')
                         axs3[2].set_ylabel('AngVel Z')
                         axs3[2].legend()
@@ -761,8 +767,9 @@ class SRL_Bot_PlayerContinuous(common_player.CommonPlayer):
         return
 
 
-def lowpass_filter(data, cutoff=0.1, fs=1.0, order=4):
-    nyq = 0.5 * fs
+def lowpass_filter(data, cutoff=2.5, fs=30.0, order=4):
+    nyq = 0.5 * fs  # 奈奎斯特频率
     normal_cutoff = cutoff / nyq
     b, a = butter(order, normal_cutoff, btype='low', analog=False)
-    return filtfilt(b, a, data, axis=0)
+    filtered = filtfilt(b, a, data)
+    return filtered
