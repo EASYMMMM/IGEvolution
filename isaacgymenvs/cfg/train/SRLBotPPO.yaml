@@ -53,7 +53,7 @@ params:
     learning_rate: 5e-4
     lr_schedule: adaptive
     kl_threshold: 0.008
-    score_to_win: 20000
+    score_to_win: 999999
     max_epochs: ${resolve_default:1000,${....max_iterations}}
     save_best_after: 200
     save_frequency: 1000
@@ -70,5 +70,6 @@ params:
     clip_value: True
     seq_len: 4
     bounds_loss_coef: 0.0001
-    # 
-    sym_loss_coef: 0.0
+    # sym_loss_coef
+    a_sym_loss_coef: 0.0
+    c_sym_loss_coef: 0.0

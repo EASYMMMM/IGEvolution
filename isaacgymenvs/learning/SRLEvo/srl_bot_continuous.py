@@ -27,7 +27,7 @@ class SRL_Bot_Agent(a2c_continuous.A2CAgent):
     def __init__(self, base_name, params):
         a2c_continuous.A2CAgent.__init__(self, base_name, params)
         config = params['config']
-        self.sym_loss_coef = config.get('sym_loss_coef',None)\
+        self.a_sym_loss_coef = config.get('a_sym_loss_coef',None)\
 
     def init_tensors(self):
         super().init_tensors()
@@ -49,7 +49,7 @@ class SRL_Bot_Agent(a2c_continuous.A2CAgent):
             self.experience_buffer.update_data('obses', n, self.obs['obs'])
             self.experience_buffer.update_data('dones', n, self.dones)
             # mirrored_obs
-            self.experience_buffer.update_data('obs_mirrored', n, self.obs['obs'])
+            self.experience_buffer.update_data('obs_mirrored', n, self.obs['obs_mirrored'])
             mirrored_obs = {}
             mirrored_obs['obs']  =  self.obs['obs_mirrored']
 
@@ -130,17 +130,18 @@ class SRL_Bot_Agent(a2c_continuous.A2CAgent):
         a_losses = []
         c_losses = []
         b_losses = []
-        sym_losses = []
+        a_sym_losses = []
+        c_sym_losses = []
         entropies = []
         kls = []
 
         for mini_ep in range(0, self.mini_epochs_num):
             ep_kls = []
             for i in range(len(self.dataset)):
-                a_loss, c_loss, entropy, kl, last_lr, lr_mul, cmu, csigma, b_loss, sym_loss = self.train_actor_critic(self.dataset[i])
+                a_loss, c_loss, entropy, kl, last_lr, lr_mul, cmu, csigma, b_loss, a_sym_loss = self.train_actor_critic(self.dataset[i])
                 a_losses.append(a_loss)
                 c_losses.append(c_loss)
-                sym_losses.append(sym_loss)
+                a_sym_losses.append(a_sym_loss)
                 ep_kls.append(kl)
                 entropies.append(entropy)
                 if self.bounds_loss_coef is not None:
@@ -173,7 +174,7 @@ class SRL_Bot_Agent(a2c_continuous.A2CAgent):
         update_time = update_time_end - update_time_start
         total_time = update_time_end - play_time_start
 
-        return batch_dict['step_time'], play_time, update_time, total_time, a_losses, c_losses, b_losses, sym_losses, entropies, kls, last_lr, lr_mul
+        return batch_dict['step_time'], play_time, update_time, total_time, a_losses, c_losses, b_losses, a_sym_losses, entropies, kls, last_lr, lr_mul
 
 
 
@@ -307,7 +308,6 @@ class SRL_Bot_Agent(a2c_continuous.A2CAgent):
         }
 
         with torch.no_grad():
-
             res_dict = self.model(input_dict)
 
         return   res_dict
@@ -370,18 +370,23 @@ class SRL_Bot_Agent(a2c_continuous.A2CAgent):
             else:
                 b_loss = torch.zeros(1, device=self.ppo_device)
 
-            # symmetric loss
-            sym_info = self.sym_loss(mu,mu_mirrored)
-            sym_loss = sym_info['sym_loss']
+            # Actor symmetric loss
+            actor_sym_info = self.sym_loss(mu,mu_mirrored)
+            actor_sym_loss = actor_sym_info['sym_loss']
 
-            losses, sum_mask = torch_ext.apply_masks([a_loss.unsqueeze(1), c_loss , entropy.unsqueeze(1), b_loss.unsqueeze(1), sym_loss.unsqueeze(1)], rnn_masks)
-            a_loss, c_loss, entropy, b_loss, sym_loss  = losses[0], losses[1], losses[2], losses[3], losses[4]
+            # Critic symmetric loss
+            # res_mirrored_train = self.model(batch_mirrored_train)
+            # values_sym = res_mirrored_train['values']        # V(g·s), shape [B,1]
+            # critic_sym_loss = (values_sym - return_batch.detach()) ** 2
+
+            losses, sum_mask = torch_ext.apply_masks([a_loss.unsqueeze(1), c_loss , entropy.unsqueeze(1), b_loss.unsqueeze(1), actor_sym_loss.unsqueeze(1)], rnn_masks)
+            a_loss, c_loss, entropy, b_loss, actor_sym_loss,  = losses[0], losses[1], losses[2], losses[3], losses[4]
 
             loss = a_loss \
                    + 0.5 * c_loss * self.critic_coef \
                    - entropy * self.entropy_coef \
                    + b_loss * self.bounds_loss_coef \
-                   + self.sym_loss_coef * sym_loss
+                   + self.a_sym_loss_coef * actor_sym_loss
             
             if self.multi_gpu:
                 self.optimizer.zero_grad()
@@ -410,7 +415,7 @@ class SRL_Bot_Agent(a2c_continuous.A2CAgent):
 
         self.train_result = (a_loss, c_loss, entropy, \
             kl_dist, self.last_lr, lr_mul, \
-            mu.detach(), sigma.detach(), b_loss, sym_loss)
+            mu.detach(), sigma.detach(), b_loss, actor_sym_loss)
         
     def sym_loss(self, mus, mus_mirrored):
         # 计算mus和mus_mirrored之间的平方误差

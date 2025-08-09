@@ -593,6 +593,7 @@ class SRL_Bot_PlayerContinuous(common_player.CommonPlayer):
     def __init__(self,params):
         super().__init__(params)
         self.obs_log = []
+        self.target_yaw_log = []
 
     def run(self):
         n_games = self.games_num
@@ -648,6 +649,7 @@ class SRL_Bot_PlayerContinuous(common_player.CommonPlayer):
                 else:
                     obs_np = np.array(obs[0, :])
                 self.obs_log.append(obs_np)
+                self.target_yaw_log.append(info['target_yaw'].cpu().numpy())
 
                 cr += r
                 steps += 1
@@ -666,8 +668,11 @@ class SRL_Bot_PlayerContinuous(common_player.CommonPlayer):
                 if done_count > 0:
                     if 0 in done_indices:
                         # 转为 numpy 数组，shape: [T, D]
+                        target_yaw = []
                         obs_array = np.stack(self.obs_log, axis=0)
+                        target_yaw = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.target_yaw_log], axis=0)
                         self.obs_log.clear()
+                        self.target_yaw_log.clear()
 
                         num_dims = 30
                         mid = num_dims // 2
@@ -702,7 +707,7 @@ class SRL_Bot_PlayerContinuous(common_player.CommonPlayer):
                         self.obs_log = []
 
                         # Target Tracking
-                        fig3, axs3 = plt.subplots(3, 1, figsize=(10, 3 * 2.5), sharex=True)
+                        fig3, axs3 = plt.subplots(4, 1, figsize=(10, 4 * 2.5), sharex=True)
                         axs3[0].plot(obs_array[:, 0], label='Actual Value')
                         axs3[0].plot(obs_array[:, -1], label='Target Value', linestyle='--')
                         axs3[0].set_ylabel('Pel H')
@@ -724,6 +729,14 @@ class SRL_Bot_PlayerContinuous(common_player.CommonPlayer):
                         axs3[2].set_ylabel('AngVel Z')
                         axs3[2].legend()
                         axs3[2].grid(True)
+
+                        axs3[3].plot(target_yaw[:, 0]-obs_array[:, 7], label='Actual Value')
+                        axs3[3].plot(target_yaw[:, 0], label='Target Value', linestyle='--')
+                        axs3[3].set_ylabel('AngVel Z')
+                        axs3[3].legend()
+                        axs3[3].grid(True)
+
+
                         plt.suptitle("Target Tracking")
                         plt.tight_layout()
                         plt.show()
