@@ -40,7 +40,7 @@ env:
   dof_acc_cost_scale: 0.5
   dof_vel_cost_scale: 0
   no_fly_penalty_scale: 10.0
-  gait_similarity_penalty_scale: 1
+  gait_similarity_penalty_scale: 10
   pelvis_height_reward_scale: 2.0
   orientation_reward_scale: 2.0
   tracking_ang_vel_reward_scale: 1.0

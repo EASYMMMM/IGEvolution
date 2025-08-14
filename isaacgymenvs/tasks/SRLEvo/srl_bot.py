@@ -164,7 +164,7 @@ class SRL_bot(VecTask):
         self.target_yaw = torch.zeros(self.num_envs, device=self.device)
         self.target_ang_vel_z = torch.zeros(self.num_envs, device=self.device)
         self.target_pelvis_height = torch.full((self.num_envs,), 0.89, device=self.device)
-        self.target_vel_x = torch.full((self.num_envs,), 1.5, device=self.device)
+        self.target_vel_x = torch.full((self.num_envs,), 1.4, device=self.device)
 
         self._terminate_buf = torch.ones(self.num_envs, device=self.device, dtype=torch.long)
 
@@ -860,8 +860,8 @@ def compute_srl_reward(
     phase_t = (2 * math.pi / gait_period) * phase_buf.float()
     phase_left = phase_t
     phase_right = (phase_t + math.pi) % (2 * math.pi)
-    expect_stancing_left  = (torch.sin(phase_left) > 0.2).float()  # stance phase left
-    expect_stancing_right = (torch.sin(phase_right) > 0.2).float()   # stance phase right
+    expect_stancing_left  = (torch.sin(phase_left) > -0.2).float()  # stance phase left
+    expect_stancing_right = (torch.sin(phase_right) > -0.2).float()   # stance phase right
     expect_flying_left  = (torch.sin(phase_left) < -0.7).float()  # swing phase left
     expect_flying_right = (torch.sin(phase_right) < -0.7).float()   # swing phase right
     is_contact_left = (left_foot_height < contact_threshold).float()
@@ -886,7 +886,6 @@ def compute_srl_reward(
         - torques_cost_scale * torques_cost \
         + dof_acc_cost_scale * dof_acc_reward \
         - dof_vel_cost_scale * dof_vel_cost \
-        - contact_force_cost \
         + orientation_reward  \
         + pelvis_height_reward \
         + actions_smooth_reward \
@@ -980,7 +979,7 @@ def compute_srl_bot_observations(
                      srl_dof_vel * obs_scales[3],        # 6    16:21
                      actions ,                           # 6    22:27
                      sin_phase,                          # 1    28
-                     0 * cos_phase,                          # 1    29
+                     0*cos_phase,                          # 1    29
                     ), dim=-1)
     return obs , potentials, prev_potentials_new
 
@@ -1064,6 +1063,10 @@ def compute_srl_bot_observations_mirrored(
     sin_phase = torch.where(standing_phase_mask.unsqueeze(-1), sin_phase*0, sin_phase)
     cos_phase = torch.where(standing_phase_mask.unsqueeze(-1), cos_phase*0, cos_phase)
 
+    # phase mirrored
+    sin_phase = - sin_phase
+    cos_phase = - cos_phase
+
     obs = torch.cat((root_h,                         # 1
                      local_root_vel * obs_scales[0], # 3
                      local_root_ang_vel * obs_scales[1], # 3
@@ -1071,7 +1074,7 @@ def compute_srl_bot_observations_mirrored(
                      srl_dof_obs * obs_scales[2],        # 6
                      srl_dof_vel * obs_scales[3],        # 6
                      actions ,
-                     -sin_phase,    # TODO: mirrored
+                     sin_phase,    # TODO: mirrored
                      0*cos_phase,     
                     ), dim=-1)
     return obs  
@@ -1108,6 +1111,16 @@ def set_task_target(
     #     mask = progress_buf == velocity_change_period * i+1
     #     vel_indices = torch.randint(0, len(vel_x_choices), (len(target_vel_x),), device=target_vel_x.device)
     #     target_vel_x =  torch.where(mask, unit_vel_x*vel_x_choices[vel_indices], target_vel_x)
+
+    # 速度变化 Delta Vx
+    delta_vel_x_choices = torch.tensor([-0.2, 0.0, 0.2], device=cur_target_vel_x.device)
+    delta_vel_x = torch.zeros_like(target_vel_x)
+    for i in range(max_episode_length//velocity_change_period):
+        mask = progress_buf == velocity_change_period * i+1
+        vel_indices = torch.randint(0, len(delta_vel_x_choices), (len(target_vel_x),), device=delta_vel_x_choices.device)
+        delta_vel_x =  torch.where(mask, unit_vel_x*delta_vel_x_choices[vel_indices], delta_vel_x)
+    target_vel_x = target_vel_x + delta_vel_x
+    target_vel_x =  target_vel_x.clamp(min=0.8, max=1.6)
 
     # 速度变化+站立交替进行
     # for i in range(max_episode_length//step_period):
