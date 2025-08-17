@@ -395,9 +395,14 @@ class SRL_bot(VecTask):
                 self.target_ang_vel_z,
                 self.target_pelvis_height,
             ), dim=-1)  # shape [num_envs, 3]
+            mirrored_task_params = torch.stack((
+                self.target_vel_x,
+                - self.target_ang_vel_z,
+                self.target_pelvis_height,
+            ), dim=-1)  # shape [num_envs, 3]
             self.obs_buf[:] = torch.cat([base_obs, task_params], dim=-1)
             base_obs_mirrored = self.obs_mirrored_buffer.reshape(self.num_envs, -1)
-            self.obs_mirrored_buf[:] = torch.cat([base_obs_mirrored, task_params], dim=-1)
+            self.obs_mirrored_buf[:] = torch.cat([base_obs_mirrored, mirrored_task_params], dim=-1)
 
             self.potentials[:] = potentials
             self.prev_potentials[:] = prev_potentials
@@ -414,10 +419,15 @@ class SRL_bot(VecTask):
                 self.target_vel_x[env_ids],
                 self.target_ang_vel_z[env_ids],
                 self.target_pelvis_height[env_ids],
-            ), dim=-1)  # shape [len(env_ids), 3]  # TODO: Task Randomizination
+            ), dim=-1)  # shape [len(env_ids), 3]  
+            mirrored_task_params = torch.stack((
+                self.target_vel_x[env_ids],
+                self.target_ang_vel_z[env_ids],
+                self.target_pelvis_height[env_ids],
+            ), dim=-1)  # shape [len(env_ids), 3]  
             self.obs_buf[env_ids] = torch.cat([base_obs, task_params], dim=-1)
             base_obs_mirrored = self.obs_mirrored_buffer[env_ids].reshape(len(env_ids), -1)
-            self.obs_mirrored_buf[env_ids] = torch.cat([base_obs_mirrored, task_params], dim=-1)
+            self.obs_mirrored_buf[env_ids] = torch.cat([base_obs_mirrored, mirrored_task_params], dim=-1)
 
             self.potentials[env_ids] = potentials
             self.prev_potentials[env_ids] = prev_potentials
@@ -554,6 +564,7 @@ class SRL_bot(VecTask):
         self.compute_observations()
         self.compute_reward(self.actions)
 
+        # TODO: Task Randomization
         self.set_task_target()
         
         # mirrored info
@@ -794,7 +805,6 @@ def compute_srl_reward(
     # --- Pelvis velocity ---
     root_vel = obs_buf[:, 1:3] 
     root_target_vel = torch.zeros((root_vel.shape[0], 2), device=root_vel.device)
-    # target_vel_x = torch.full((root_vel.shape[0],), 2.0, device=root_vel.device)
     root_target_vel[:, 0] = target_vel_x   
     vel_error_vec = root_vel - root_target_vel
     vel_tracking_reward =  vel_tracking_reward_scale *  torch.exp(-3 * torch.norm(vel_error_vec, dim=-1))  # α = 1.5
@@ -880,7 +890,7 @@ def compute_srl_reward(
    
     # --- Total reward ---
     total_reward = alive_reward  \
-        + progress_reward \
+        + 0 * progress_reward \
         + vel_tracking_reward \
         + ang_vel_tracking_reward \
         - torques_cost_scale * torques_cost \
@@ -979,7 +989,7 @@ def compute_srl_bot_observations(
                      srl_dof_vel * obs_scales[3],        # 6    16:21
                      actions ,                           # 6    22:27
                      sin_phase,                          # 1    28
-                     0*cos_phase,                          # 1    29
+                     0*cos_phase,                        # 1    29
                     ), dim=-1)
     return obs , potentials, prev_potentials_new
 
@@ -1049,7 +1059,7 @@ def compute_srl_bot_observations_mirrored(
     srl_dof_vel = torch.matmul(srl_dof_vel, mirror_mat)
     actions = torch.matmul(actions, mirror_mat)
     euler_err[:,0] = - euler_err[:,0] # yaw
-    # euler[:,2] = - euler[:,2] # roll
+    euler_err[:,2] = - euler_err[:,2] # roll
 
     # heading_proj[:,1] = -heading_proj[:,1]
 
@@ -1068,10 +1078,10 @@ def compute_srl_bot_observations_mirrored(
     cos_phase = - cos_phase
 
     obs = torch.cat((root_h,                         # 1
-                     local_root_vel * obs_scales[0], # 3
-                     local_root_ang_vel * obs_scales[1], # 3
-                     euler_err,                              # 3 
-                     srl_dof_obs * obs_scales[2],        # 6
+                     local_root_vel  ,               # 3
+                     local_root_ang_vel  ,           # 3
+                     euler_err,                      # 3 
+                     srl_dof_obs * obs_scales[2],    # 6
                      srl_dof_vel * obs_scales[3],        # 6
                      actions ,
                      sin_phase,    # TODO: mirrored
@@ -1079,7 +1089,7 @@ def compute_srl_bot_observations_mirrored(
                     ), dim=-1)
     return obs  
 
-
+# TODO: Task Setting
 @torch.jit.script
 def set_task_target(
     cur_target_vel_x,
@@ -1093,6 +1103,8 @@ def set_task_target(
 
     step_period = 150
     velocity_change_period = 200
+    height_change_period = 180
+
     target_vel_x = cur_target_vel_x.clone().float() 
     target_pelvis_height = cur_target_pelvis_height.clone().float() 
     target_ang_vel_z = cur_target_ang_vel_z.clone().float() 
@@ -1102,25 +1114,37 @@ def set_task_target(
     unit_vel_x = torch.ones_like(target_vel_x, device=target_vel_x.device)
     ang_vel_choices = torch.tensor([0.0, -0.785/2,  0.785/2], device=cur_target_vel_x.device)
     yaw_choices = torch.tensor([0.0,-0.785, 0.785],device=cur_target_vel_x.device)
-    height_choices = torch.tensor([0.75, 0.85, 0.95], device=cur_target_vel_x.device)
+    height_choices = torch.tensor([0.84, 0.89, 0.94, 0.99], device=cur_target_vel_x.device)
     vel_x_choices = torch.tensor([0.0, 0.8, 1.0, 1.2, 1.4, 1.6], device=cur_target_vel_x.device)
 
-    # 单纯速度变化
-    # vel_x_choices = torch.tensor([0.8, 1.0, 1.2, 1.4, 1.6], device=cur_target_vel_x.device)
-    # for i in range(max_episode_length//velocity_change_period):
-    #     mask = progress_buf == velocity_change_period * i+1
-    #     vel_indices = torch.randint(0, len(vel_x_choices), (len(target_vel_x),), device=target_vel_x.device)
-    #     target_vel_x =  torch.where(mask, unit_vel_x*vel_x_choices[vel_indices], target_vel_x)
+    # 高度变化
+    for i in range(max_episode_length//height_change_period):
+        mask = progress_buf == height_change_period * i+1
+        height_indices = torch.randint(0, len(height_choices), (len(target_pelvis_height),), device=target_pelvis_height.device)
+        target_pelvis_height =  torch.where(mask, unit_vel_x*height_choices[height_indices], target_pelvis_height)
+    mask = progress_buf == 1  # reset
+    target_pelvis_height =  torch.where(mask, unit_vel_x*height_choices[1], target_pelvis_height)
 
-    # 速度变化 Delta Vx
-    delta_vel_x_choices = torch.tensor([-0.2, 0.0, 0.2], device=cur_target_vel_x.device)
-    delta_vel_x = torch.zeros_like(target_vel_x)
+    # 单纯速度变化
+    vel_x_choices = torch.tensor([0.8, 1.0, 1.2, 1.4, 1.6], device=cur_target_vel_x.device)
     for i in range(max_episode_length//velocity_change_period):
         mask = progress_buf == velocity_change_period * i+1
-        vel_indices = torch.randint(0, len(delta_vel_x_choices), (len(target_vel_x),), device=delta_vel_x_choices.device)
-        delta_vel_x =  torch.where(mask, unit_vel_x*delta_vel_x_choices[vel_indices], delta_vel_x)
-    target_vel_x = target_vel_x + delta_vel_x
-    target_vel_x =  target_vel_x.clamp(min=0.8, max=1.6)
+        vel_indices = torch.randint(0, len(vel_x_choices), (len(target_vel_x),), device=target_vel_x.device)
+        target_vel_x =  torch.where(mask, unit_vel_x*vel_x_choices[vel_indices], target_vel_x)
+
+    # 速度变化 Delta Vx
+    # delta_vel_x_choices = torch.tensor([-0.2, 0.0, 0.2], device=cur_target_vel_x.device)
+    # delta_vel_x = torch.zeros_like(target_vel_x)
+    # for i in range(max_episode_length//velocity_change_period):
+    #     mask = progress_buf == velocity_change_period * i+1
+    #     vel_indices =  torch.randint(0, len(delta_vel_x_choices), (len(target_vel_x),), device=delta_vel_x_choices.device)
+    #     delta_vel_x =  torch.where(mask, unit_vel_x*delta_vel_x_choices[vel_indices], delta_vel_x)
+    # target_vel_x =  target_vel_x + delta_vel_x
+    # target_vel_x =  target_vel_x.clamp(min=0.8, max=1.6)
+
+    # # progress buf 小于velocity_change_period时，固定站立
+    # mask = progress_buf <= velocity_change_period
+    # target_vel_x =  torch.where(mask, unit_vel_x*0.0, target_vel_x)
 
     # 速度变化+站立交替进行
     # for i in range(max_episode_length//step_period):
