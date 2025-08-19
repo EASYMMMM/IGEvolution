@@ -523,7 +523,7 @@ class HumanoidAMPSRLmarlBase(VecTask):
         return
 
     def _compute_observations(self, env_ids=None):
-        humanoid_obs, srl_obs, srl_obs_mirrored = self._compute_humanoid_obs(env_ids)
+        humanoid_obs, srl_obs, srl_obs_mirrored = self._compute_env_obs(env_ids)
 
         if (env_ids is None):
             self.srl_obs_buffer[:, 1:, :] = self.srl_obs_buffer[:, :-1, :]  # 向后移动数据
@@ -547,7 +547,7 @@ class HumanoidAMPSRLmarlBase(VecTask):
 
         return
 
-    def _compute_humanoid_obs(self, env_ids=None):
+    def _compute_env_obs(self, env_ids=None):
         if (env_ids is None):
             root_states = self._root_states
             dof_pos = self._dof_pos
@@ -883,7 +883,14 @@ def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, l
     humanoid_dof_obs = dof_to_obs(dof_pos[:,0:28]) # 仅保留humanoid关节位置
     humanoid_dof_vel = dof_vel[:,0:28]
     # root_h 1; root_rot_obs 6; local_root_vel 3 ; local_root_ang_vel 3 ; dof_obs 58; dof_vel 36 ; load_cell_force 6, flat_local_key_pos 12
-    obs = torch.cat((root_h, root_rot_obs, local_root_vel, local_root_ang_vel, humanoid_dof_obs, humanoid_dof_vel, load_cell_force, flat_local_key_pos), dim=-1)
+    obs = torch.cat((root_h, 
+                     root_rot_obs, 
+                     local_root_vel,
+                     local_root_ang_vel, 
+                     humanoid_dof_obs, 
+                     humanoid_dof_vel, 
+                     load_cell_force,
+                     flat_local_key_pos), dim=-1)
     return obs
 
 

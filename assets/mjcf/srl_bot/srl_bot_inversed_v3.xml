@@ -28,16 +28,16 @@
                     <!-- <joint armature="0.02" axis="0 1 0" damping="0" name="SRL_freejoint_y" pos="-0.525 0 0" range="-45 45" stiffness="0"/> -->
 					<geom density="1000" name="SRL_geom_root" pos="0 0 0" size="0.2 0.095 0.05" type="box" contype="1" conaffinity="1"/>
 					<!-- <geom density="1000" name="SRL_geom_load" pos="0 0 0.35" size="0.13 0.13 0.22" type="box" contype="1" conaffinity="1"/> -->
-					<geom density="2000" name="SRL_geom_load" pos="0 0 0.22" size="0.13 0.13 0.11" type="box" contype="1" conaffinity="1"/>
+					<geom density="1000" name="SRL_geom_load" pos="0 0 0.22" size="0.13 0.13 0.11" type="box" contype="1" conaffinity="1"/>
 					<body name="SRL_right_leg1" pos="0.02 0.13 0"  quat="1.0 0.0 0.0 0.0">
 						<geom density="1000" fromto="0 0 0 0.60 0 0" name="SRL_geom_right_leg1" size="0.03" type="capsule"/>
 						<joint armature="0.002" axis="0 0 1" damping="2" name="SRL_joint_right_hipjoint_z" pos="0 0 0" range="0 40" stiffness="150"/>
 						<joint armature="0.002" axis="0 1 0" damping="2" name="SRL_joint_right_hipjoint_y" pos="0 0 0" range="-5 70" stiffness="150"/>
-						<body name="SRL_right_leg2" pos="0.60 0 0" quat="0.92388 0.0 0.38268 0.0">
+						<body name="SRL_right_leg2" pos="0.60 0 0" quat="0.70711 0.0 0.70711 0.0">
 							<geom density="1000" fromto="0 0 0 0.50 0 0" name="SRL_geom_right_leg2" size="0.03" type="capsule"/>
-							<joint armature="0.002" axis="0 1 0" damping="4" name="SRL_joint_right_kneejoint" pos="0 0 0" range="-50 50" stiffness="300"/>
+							<joint armature="0.002" axis="0 1 0" damping="2" name="SRL_joint_right_kneejoint" pos="0 0 0" range="-50 50" stiffness="150"/>
 							<body name="SRL_right_end" pos="0.50 0 0" quat="0.70711 0.0 -0.70711 0.0">
-								<geom density="1000" friction="5.0 0.05 0.05" name="SRL_geom_right_end" pos="0 0 -0.045" size="0.05" type="sphere"  contype="1" conaffinity="1"/>
+								<geom density="1000" friction="5.0 0.05 0.05" name="SRL_geom_right_end" pos="0 0 -0.045" size="0.05" type="sphere"   />
 								<!-- <joint armature="0.02" axis="0 1 0" damping="30" name="SRL_joint_right_ankle" pos="0 0 0" range="-5 5" stiffness="300"/> -->
 							</body>
 						</body>
@@ -46,9 +46,9 @@
 						<geom density="1000" fromto="0 0 0 0.60 0 0" name="SRL_geom_left_leg1" size="0.03" type="capsule"/>
 						<joint armature="0.002" axis="0 0 -1" damping="2" name="SRL_joint_left_hip_z" pos="0 0 0" range="0 40" stiffness="150"/>
 						<joint armature="0.002" axis="0 1 0" damping="2" name="SRL_joint_left_hip_y" pos="0 0 0" range="-5 70" stiffness="150"/>
-						<body name="SRL_left_leg2" pos="0.60 0 0" quat="0.92388 0.0 0.38268 0.0">
+						<body name="SRL_left_leg2" pos="0.60 0 0" quat="0.70711 0.0 0.70711 0.0">
 							<geom density="1000" fromto="0 0 0 0.50 0 0" name="SRL_geom_left_leg2" size="0.03" type="capsule"/>
-							<joint armature="0.002" axis="0 1 0" damping="4" name="SRL_joint_left_kneejoint" pos="0 0 0" range="-50 50" stiffness="300"/>
+							<joint armature="0.002" axis="0 1 0" damping="2" name="SRL_joint_left_kneejoint" pos="0 0 0" range="-50 90" stiffness="150"/>
 							<body name="SRL_left_end" pos="0.50 0 0" quat="0.70711 0.0 -0.70711 0.0">
 								<geom density="1000" friction="5.0 0.05 0.05" name="SRL_geom_left_end" pos="0 0 -0.045" size="0.05" type="sphere" />
 								<!-- <joint armature="0.02" axis="0 1 0" damping="30" name="SRL_joint_left_ankle" pos="0 0 0" range="-5 5" stiffness="300"/> -->

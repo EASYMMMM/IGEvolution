@@ -153,25 +153,18 @@ python train.py task=Ant checkpoint=runs/Ant/nn/Ant.pth test=True num_envs=64
   you will need to escape them and put quotes around the string. For example,
   `checkpoint="./runs/Ant/nn/last_Antep\=501rew\[5981.31\].pth"`
 
-## 3. AMP训练Humanoid
+## 3. Humanoid Model Pretrain
 
-- **存在BUG**: `home/ps/IssacGymEnvs-main/issacgymenvs/learning/commen_agent.py`第98行：`self.seq_len`
+使用预训练仿真模型（Human+Mini SRL `hsrl_mode1_v3_s1.xml`）进行Humanoid Pretrain。
 
-本示例训练一个模拟人模型，以模仿存储在 mocap 数据中的不同预录人体动画 - 走路、跑步和后空翻。
+训练：  
+`cd isaacgymenvs`    
+`python SRL_Evo_train.py task=HumanoidAMPSRLGym_s1 wandb_project=SRL_Evo experiment=AMP_Pretrain task.env.asset.assetFileName='mjcf/humanoid_srl_v3/hsrl_mode1_v3_s1.xml' headless=True wandb_activate=True max_iterations=4000  sim_device=cuda:0 rl_device=cuda:0 num_envs=4096 `    
 
-可以使用命令行参数 "task=HumanoidAMP"启动它。可以在任务配置中使用 `motion_file` 设置要训练的动画文件。注意：在测试模式下，查看器摄像头会从第一个环境开始跟随Humanoid。这可以在环境 yaml 配置中通过设置 `cameraFollow=False` 进行更改，或在命令行中通过 hydra 覆盖进行更改，如下所示：`++task.env.cameraFollow=False`。
-
-
-
-本软件源包含 CMU 动作捕捉库 (http://mocap.cs.cmu.edu/) 中的一些动作，但可以使用 poselib `fbx_importer.py`将其他动画从 FBX 转换为可训练的格式。您可以在 `isaacgymenvs/tasks/amp/poselib/README.md` 中了解有关 poselib 和该转换工具的更多信息。
-
+查看AMP示例结果：  
+`python SRL_Evo_train.py task=HumanoidAMPSRLGym_s1 test=True task.env.asset.assetFileName='mjcf/humanoid_srl_v3/hsrl_mode1_v3_s1.xml'  num_envs=4 checkpoint=saved_runs/AMP_HumanoidPretrain/nn/AMP_HumanoidPretrain_24-16-28-38.pth    sim_device=cuda:0 rl_device=cuda:0` 
 
 
-```bash
-python train.py task=HumanoidAMP ++task.env.motion_file=amp_humanoid_run.npy experiment=AMP_run rl_device=cuda:1 sim_device=cuda:1
-```
-
-x11vnc -display :1 -auth /run/user/1000/gdm/Xauthority -forever -rfbauth ~/.vnc/passwd -listen 0.0.0.0
 
 
 

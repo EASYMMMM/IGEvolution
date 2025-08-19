@@ -73,9 +73,11 @@ class SRL_bot(VecTask):
         self.gait_period = self.cfg["env"]["gait_period"]
         self.foot_clearance = self.cfg["env"]["foot_clearance"]
 
+        self.progress_reward_scale = self.cfg["env"]["progress_reward_scale"]
         self.torques_cost_scale = self.cfg["env"]["torques_cost_scale"]
         self.dof_acc_cost_scale = self.cfg["env"]["dof_acc_cost_scale"]
         self.dof_vel_cost_scale = self.cfg["env"]["dof_vel_cost_scale"]
+        self.dof_pos_cost_sacle = self.cfg["env"]["dof_pos_cost_sacle"]
         self.no_fly_penalty_scale = self.cfg["env"]["no_fly_penalty_scale"]
         self.tracking_ang_vel_reward_scale = self.cfg["env"]["tracking_ang_vel_reward_scale"]
         self.vel_tracking_reward_scale = self.cfg["env"]["vel_tracking_reward_scale"]
@@ -83,17 +85,24 @@ class SRL_bot(VecTask):
         self.pelvis_height_reward_scale = self.cfg["env"]["pelvis_height_reward_scale"]
         self.orientation_reward_scale = self.cfg["env"]["orientation_reward_scale"]
         self.clearance_penalty_scale = self.cfg["env"]["clearance_penalty_scale"]
+        self.lateral_distance_penalty_scale = self.cfg["env"]["lateral_distance_penalty_scale"]
         
         self.frame_stack = self.cfg["env"]["frame_stack"]  # 帧堆叠数量
         
         self.cfg["env"]["numObservations"] = 30 * self.frame_stack + 3
         self.cfg["env"]["numActions"] = 6
+        # self.default_joint_angles = [0*np.pi, 
+        #                              0.15*np.pi,
+        #                              0.25*np.pi,
+        #                              0*np.pi,
+        #                              0.15*np.pi,
+        #                              0.25*np.pi]
         self.default_joint_angles = [0*np.pi, 
-                                     0.15*np.pi,
                                      0.25*np.pi,
                                      0*np.pi,
-                                     0.15*np.pi,
-                                     0.25*np.pi]
+                                     0*np.pi,
+                                     0.25*np.pi,
+                                     0*np.pi]
 
 
        
@@ -272,7 +281,8 @@ class SRL_bot(VecTask):
         self.num_joints = self.gym.get_asset_joint_count(humanoid_asset)
 
         start_pose = gymapi.Transform()
-        start_pose.p = gymapi.Vec3(*get_axis_params(0.91, self.up_axis_idx))
+        # TODO: V3 MODEL Z
+        start_pose.p = gymapi.Vec3(*get_axis_params(0.94, self.up_axis_idx))
         start_pose.r = gymapi.Quat(0.0, 0.0, 0.0, 1.0)
 
         self.start_rotation = torch.tensor([start_pose.r.x, start_pose.r.y, start_pose.r.z, start_pose.r.w], device=self.device)
@@ -349,6 +359,7 @@ class SRL_bot(VecTask):
     def compute_reward(self, actions):
         clearance_reward = self.compute_foot_clearance_reward()
         to_target = self.targets - self.initial_root_states[:, 0:3]
+        srl_root_pos = self.srl_root_states[:, 0:3]
         srl_end_body_pos = self._rigid_body_pos[:, self._srl_end_ids, :]
         self.rew_buf[:], self.reset_buf, self._terminate_buf[:] = compute_srl_reward(
             self.obs_buf,
@@ -359,15 +370,18 @@ class SRL_bot(VecTask):
             self.phase_buf,
             self.actions,
             srl_end_body_pos,
+            srl_root_pos,
             self.potentials,
             self.prev_potentials,
             self.termination_height,
             self.death_cost,
             self.max_episode_length,
             self.gait_period,
+            progress_reward_scale = self.progress_reward_scale,
             torques_cost_scale = self.torques_cost_scale,
             dof_acc_cost_scale = self.dof_acc_cost_scale,
             dof_vel_cost_scale = self.dof_vel_cost_scale,
+            dof_pos_cost_sacle = self.dof_pos_cost_sacle,
             no_fly_penalty_scale = self.no_fly_penalty_scale,
             vel_tracking_reward_scale = self.vel_tracking_reward_scale,
             tracking_ang_vel_reward_scale = self.tracking_ang_vel_reward_scale,
@@ -375,6 +389,7 @@ class SRL_bot(VecTask):
             pelvis_height_reward_scale = self.pelvis_height_reward_scale,
             orientation_reward_scale = self.orientation_reward_scale,
             clearance_penalty_scale = self.clearance_penalty_scale,
+            lateral_distance_penalty_scale = self.lateral_distance_penalty_scale,
         
         )   
 
@@ -503,8 +518,9 @@ class SRL_bot(VecTask):
         position_noise[:,1] = positions.squeeze(-1)
         position_noise[:,4] = - positions.squeeze(-1)
         velocities = torch_rand_float(-0.1, 0.1, (len(env_ids), self.num_dof), device=self.device)
-
-        self.dof_pos[env_ids] = tensor_clamp(self.initial_dof_pos[env_ids] + position_noise, self.dof_limits_lower, self.dof_limits_upper)
+        # TODO: random init
+        # self.dof_pos[env_ids] = tensor_clamp(self.initial_dof_pos[env_ids] + positions, self.dof_limits_lower, self.dof_limits_upper)
+        self.dof_pos[env_ids] = tensor_clamp(self.initial_dof_pos[env_ids] , self.dof_limits_lower, self.dof_limits_upper)
         self.dof_vel[env_ids] = velocities
 
         env_ids_int32 = env_ids.to(dtype=torch.int32)
@@ -565,7 +581,7 @@ class SRL_bot(VecTask):
         self.compute_reward(self.actions)
 
         # TODO: Task Randomization
-        self.set_task_target()
+        # self.set_task_target()
         
         # mirrored info
         self.extras["obs_mirrored"] = self.obs_mirrored_buf.to(self.rl_device)  # 镜像观测
@@ -761,15 +777,18 @@ def compute_srl_reward(
     phase_buf,
     actions,
     srl_end_body_pos,
+    srl_root_pos,
     potentials,
     prev_potentials,
     termination_height,
     death_cost,
     max_episode_length,
     gait_period,
+    progress_reward_scale: float = 0,
     torques_cost_scale: float = 0,
-    dof_acc_cost_scale: float = 0 ,
+    dof_acc_cost_scale: float = 0,
     dof_vel_cost_scale: float = 0,
+    dof_pos_cost_sacle: float = 0,
     contact_force_cost_scale: float = 0,
     tracking_ang_vel_reward_scale: float = 0,
     no_fly_penalty_scale: float = 0,
@@ -778,18 +797,19 @@ def compute_srl_reward(
     pelvis_height_reward_scale: float = 0,
     orientation_reward_scale: float = 0,
     clearance_penalty_scale: float = 0,
+    lateral_distance_penalty_scale: float = 0,
 ):
-    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, float, float, float, float, float,  float, float, float, float, float, float, float, float, float) -> Tuple[Tensor, Tensor, Tensor]
+    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, float, float, float, float, float, float,  float, float, float, float, float, float, float, float, float, float, float) -> Tuple[Tensor, Tensor, Tensor]
 
-    # obs = root_h,                             # 1
-    #       local_root_vel * obs_scales[0],     # 3
-    #       local_root_ang_vel * obs_scales[1], # 3
-    #       projected_gravity,                  # 3 
-    #       srl_dof_obs * obs_scales[2],        # 6
-    #       srl_dof_vel * obs_scales[3],        # 6
-    #       actions ,                           # 6    
-    #       sin_phase,                          # 1
-    #       cos_phase,                          # 1
+    # obs = root_h,                             # 1    0
+    #       local_root_vel ,                    # 3    1:3
+    #       local_root_ang_vel ,                # 3    4:6
+    #       euler_err,                          # 3    7:9
+    #       srl_dof_obs * obs_scales[2],        # 6    10:15
+    #       srl_dof_vel * obs_scales[3],        # 6    16:21
+    #       actions ,                           # 6    22:27
+    #       sin_phase,                          # 1    28
+    #       0*cos_phase,                        # 1    29
 
     # --- Task Command ---
     target_pelvis_height = obs_buf[:, -1] 
@@ -803,8 +823,8 @@ def compute_srl_reward(
     progress_reward = progress_reward_coef * (potentials - prev_potentials)
 
     # --- Pelvis velocity ---
-    root_vel = obs_buf[:, 1:3] 
-    root_target_vel = torch.zeros((root_vel.shape[0], 2), device=root_vel.device)
+    root_vel = obs_buf[:, 1:4] 
+    root_target_vel = torch.zeros((root_vel.shape[0], 3), device=root_vel.device)
     root_target_vel[:, 0] = target_vel_x   
     vel_error_vec = root_vel - root_target_vel
     vel_tracking_reward =  vel_tracking_reward_scale *  torch.exp(-3 * torch.norm(vel_error_vec, dim=-1))  # α = 1.5
@@ -812,12 +832,18 @@ def compute_srl_reward(
     # --- Torques cost ---
     torques_cost = 0 * torch.sum(actions ** 2, dim=-1)
 
+    # --- DOF deviation cost ---
+    dof_pos = obs_buf[:, 10:16]
+    dof_pos[:,0] = dof_pos[:,0] * 3 # 
+    dof_pos[:,3] = dof_pos[:,0] * 3
+    dof_pos_cost = torch.sum(dof_pos ** 2, dim=-1)
+
     # --- DOF velocity cost ---
-    dof_vel = obs_buf[:, 15:15+actions.shape[1]]
+    dof_vel = obs_buf[:, 16:16+actions.shape[1]]
     dof_vel_cost = torch.sum(dof_vel ** 2, dim=-1)
 
     # --- DOF acceleration cost ---
-    dof_vel_prev = obs_buf[:, 15+30:15+30+actions.shape[1]]  # 前一帧速度
+    dof_vel_prev = obs_buf[:, 16+30:16+30+actions.shape[1]]  # 前一帧速度
     dof_acc = dof_vel - dof_vel_prev  # 关节加速度
     dof_acc_magnitude_sq = torch.sum(dof_acc ** 2, dim=-1)
     dof_acc_reward = torch.exp(- 2 * dof_acc_magnitude_sq)
@@ -865,6 +891,13 @@ def compute_srl_reward(
     contact_force_magnitude = torch.norm(contact_force, dim=-1)
     contact_force_cost = contact_force_cost_scale * contact_force_magnitude
 
+    # --- Feet Lateral Distance ---
+    local_srl_end_body_pos = srl_end_body_pos - srl_root_pos.unsqueeze(-2)
+    lateral_distance = torch.abs(local_srl_end_body_pos[:,0,1] - local_srl_end_body_pos[:,1,1])
+    min_d, max_d = 0.21, 0.31 # FIXME: Lateral Distance 
+    below_violation = torch.clamp(min_d - lateral_distance, min=0.0)
+    above_violation = torch.clamp(lateral_distance - max_d, min=0.0)
+    feet_lateral_penalty = below_violation + above_violation  
 
     # --- Foot Phase ---
     phase_t = (2 * math.pi / gait_period) * phase_buf.float()
@@ -890,18 +923,20 @@ def compute_srl_reward(
    
     # --- Total reward ---
     total_reward = alive_reward  \
-        + 0 * progress_reward \
+        + progress_reward_scale * progress_reward \
         + vel_tracking_reward \
         + ang_vel_tracking_reward \
         - torques_cost_scale * torques_cost \
-        + dof_acc_cost_scale * dof_acc_reward \
+        - dof_pos_cost_sacle * dof_pos_cost \
         - dof_vel_cost_scale * dof_vel_cost \
+        + dof_acc_cost_scale * dof_acc_reward \
         + orientation_reward  \
         + pelvis_height_reward \
         + actions_smooth_reward \
         - no_fly_penalty \
         - gait_phase_penalty \
-        - clearance_penalty * clearance_penalty_scale
+        - clearance_penalty * clearance_penalty_scale \
+        - lateral_distance_penalty_scale * feet_lateral_penalty
 
     # --- Handle termination ---
     total_reward = torch.where(obs_buf[:, 0] < termination_height, torch.ones_like(total_reward) * death_cost, total_reward)
@@ -1118,12 +1153,12 @@ def set_task_target(
     vel_x_choices = torch.tensor([0.0, 0.8, 1.0, 1.2, 1.4, 1.6], device=cur_target_vel_x.device)
 
     # 高度变化
-    for i in range(max_episode_length//height_change_period):
-        mask = progress_buf == height_change_period * i+1
-        height_indices = torch.randint(0, len(height_choices), (len(target_pelvis_height),), device=target_pelvis_height.device)
-        target_pelvis_height =  torch.where(mask, unit_vel_x*height_choices[height_indices], target_pelvis_height)
-    mask = progress_buf == 1  # reset
-    target_pelvis_height =  torch.where(mask, unit_vel_x*height_choices[1], target_pelvis_height)
+    # for i in range(max_episode_length//height_change_period):
+    #     mask = progress_buf == height_change_period * i+1
+    #     height_indices = torch.randint(0, len(height_choices), (len(target_pelvis_height),), device=target_pelvis_height.device)
+    #     target_pelvis_height =  torch.where(mask, unit_vel_x*height_choices[height_indices], target_pelvis_height)
+    # mask = progress_buf == 1  # reset
+    # target_pelvis_height =  torch.where(mask, unit_vel_x*height_choices[1], target_pelvis_height)
 
     # 单纯速度变化
     vel_x_choices = torch.tensor([0.8, 1.0, 1.2, 1.4, 1.6], device=cur_target_vel_x.device)

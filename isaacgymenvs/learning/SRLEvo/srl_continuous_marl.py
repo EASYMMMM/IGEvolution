@@ -208,8 +208,8 @@ class SRL_MultiAgent(common_agent.CommonAgent):
 
     def get_action_values(self, obs):
         processed_obs = self._preproc_obs(obs['obs'])
-        self.model.eval()
-        self.model_srl.eval()
+        self.model.eval() # humanoid policy
+        self.model_srl.eval() # srl policy
         humanoid_obs = processed_obs[:, :self.obs_num_humanoid[0]]
         srl_obs = processed_obs[:, self.obs_num_humanoid[0]:]
         humanoid_input_dict = {
