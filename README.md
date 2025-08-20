@@ -162,7 +162,7 @@ python train.py task=Ant checkpoint=runs/Ant/nn/Ant.pth test=True num_envs=64
 `python SRL_Evo_train.py task=HumanoidAMPSRLGym_s1 wandb_project=SRL_Evo experiment=AMP_Pretrain task.env.asset.assetFileName='mjcf/humanoid_srl_v3/hsrl_mode1_v3_s1.xml' headless=True wandb_activate=True max_iterations=4000  sim_device=cuda:0 rl_device=cuda:0 num_envs=4096 `    
 
 查看AMP示例结果：  
-`python SRL_Evo_train.py task=HumanoidAMPSRLGym_s1 test=True task.env.asset.assetFileName='mjcf/humanoid_srl_v3/hsrl_mode1_v3_s1.xml'  num_envs=4 checkpoint=saved_runs/AMP_HumanoidPretrain/nn/AMP_HumanoidPretrain_24-16-28-38.pth    sim_device=cuda:0 rl_device=cuda:0` 
+`python SRL_Evo_train.py task=HumanoidAMPSRLGym_s1 test=True task.env.asset.assetFileName='mjcf/humanoid_srl_v3/hsrl_mode1_v3_s1.xml'  num_envs=4 checkpoint=saved_runs/AMP_HumanoidPretrain/network/AMP_HumanoidPretrain_24-16-28-38.pth    sim_device=cuda:0 rl_device=cuda:0` 
 
 
 
