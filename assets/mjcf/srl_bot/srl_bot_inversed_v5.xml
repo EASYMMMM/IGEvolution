@@ -1,14 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- 单独训练外肢体 -->
 <mujoco model="XMLModel">
-    <compiler angle="degree"/>
 	<statistic center="0 0 1" extent="2"/>
 	<option timestep="0.00555"/>
 	<default>
 		<motor ctrllimited="true" ctrlrange="-1 1"/>
 		<default class="body">
-			<geom   friction="1.0 0.05 0.05" type="capsule" solimp="0.9 0.99 0.003" solref="0.015 1"/>
-			<joint armature="0.007" damping="0.1" limited="true" stiffness="5" type="hinge" solimplimit="0 0.99 0.01"/>
+			<geom condim="1" friction="1.0 0.05 0.05" type="capsule" solimp="0.9 0.99 0.003" solref="0.015 1"/>
+			<joint armature="0.000" damping="0.1" limited="true" stiffness="5" type="hinge" solimplimit="0 0.99 0.01"/>
 			<site group="3" size="0.04"/>
 			<default class="force-torque">
 				<site rgba="1 0 0 1" size="0.01 0.01 0.02" type="box"/>
@@ -28,27 +27,27 @@
                     <!-- <joint armature="0.02" axis="0 1 0" damping="0" name="SRL_freejoint_y" pos="-0.525 0 0" range="-45 45" stiffness="0"/> -->
 					<geom density="1000" name="SRL_geom_root" pos="0 0 0" size="0.2 0.095 0.05" type="box" contype="1" conaffinity="1"/>
 					<!-- <geom density="1000" name="SRL_geom_load" pos="0 0 0.35" size="0.13 0.13 0.22" type="box" contype="1" conaffinity="1"/> -->
-					<geom density="1000" name="SRL_geom_load" pos="0 0 0.22" size="0.13 0.13 0.11" type="box" contype="1" conaffinity="1"/>
-					<body name="SRL_right_leg1" pos="0.02 0.15 0"  quat="1.0 0.0 0.0 0.0">
+					<geom density="2000" name="SRL_geom_load" pos="0 0 0.22" size="0.13 0.13 0.11" type="box" contype="1" conaffinity="1"/>
+					<body name="SRL_right_leg1" pos="0.02 0.13 0"  quat="1.0 0.0 0.0 0.0">
 						<geom density="1000" fromto="0 0 0 0.60 0 0" name="SRL_geom_right_leg1" size="0.03" type="capsule"/>
-						<joint armature="0.002" axis="0 0 1" damping="2" name="SRL_joint_right_hipjoint_z" pos="0 0 0" range="-5 40" stiffness="150"/>
-						<joint armature="0.002" axis="0 1 0" damping="2" name="SRL_joint_right_hipjoint_y" pos="0 0 0" range="-5 70" stiffness="150"/>
+						<joint armature="0.00" axis="1 0 0" damping="4" name="SRL_joint_right_hipjoint_x" pos="0 0 0" range="0 40" stiffness="200" actuatorfrcrange="-300 300"/>
+						<joint armature="0.00" axis="0 1 0" damping="4" name="SRL_joint_right_hipjoint_y" pos="0 0 0" range="-170 170" stiffness="200" actuatorfrcrange="-300 300"/>
 						<body name="SRL_right_leg2" pos="0.60 0 0" quat="0.70711 0.0 0.70711 0.0">
 							<geom density="1000" fromto="0 0 0 0.50 0 0" name="SRL_geom_right_leg2" size="0.03" type="capsule"/>
-							<joint armature="0.002" axis="0 1 0" damping="2" name="SRL_joint_right_kneejoint" pos="0 0 0" range="-50 50" stiffness="150"/>
+							<joint armature="0.00" axis="0 1 0" damping="4" name="SRL_joint_right_kneejoint" pos="0 0 0" range="-170 170" stiffness="200" actuatorfrcrange="-300 300"/>
 							<body name="SRL_right_end" pos="0.50 0 0" quat="0.70711 0.0 -0.70711 0.0">
-								<geom density="1000" friction="5.0 0.05 0.05" name="SRL_geom_right_end" pos="0 0 -0.045" size="0.05" type="sphere"   />
+								<geom density="1000" friction="5.0 0.05 0.05" name="SRL_geom_right_end" pos="0 0 -0.045" size="0.05" type="sphere"  contype="1" conaffinity="1"/>
 								<!-- <joint armature="0.02" axis="0 1 0" damping="30" name="SRL_joint_right_ankle" pos="0 0 0" range="-5 5" stiffness="300"/> -->
 							</body>
 						</body>
 					</body>
-					<body name="SRL_left_leg1" pos="0.02 -0.15 0"  quat="1.0 0.0 0.0 0.0">
+					<body name="SRL_left_leg1" pos="0.02 -0.13 0"  quat="1.0 0.0 0.0 0.0">
 						<geom density="1000" fromto="0 0 0 0.60 0 0" name="SRL_geom_left_leg1" size="0.03" type="capsule"/>
-						<joint armature="0.002" axis="0 0 -1" damping="2" name="SRL_joint_left_hip_z" pos="0 0 0" range="-5 40" stiffness="150"/>
-						<joint armature="0.002" axis="0 1 0" damping="2" name="SRL_joint_left_hip_y" pos="0 0 0" range="-5 70" stiffness="150"/>
+						<joint armature="0.00" axis="-1 0 0" damping="4" name="SRL_joint_left_hip_x" pos="0 0 0" range="0 40" stiffness="200"  />
+						<joint armature="0.00" axis="0 1 0" damping="4" name="SRL_joint_left_hip_y" pos="0 0 0" range="-170 170" stiffness="200"  />
 						<body name="SRL_left_leg2" pos="0.60 0 0" quat="0.70711 0.0 0.70711 0.0">
 							<geom density="1000" fromto="0 0 0 0.50 0 0" name="SRL_geom_left_leg2" size="0.03" type="capsule"/>
-							<joint armature="0.002" axis="0 1 0" damping="2" name="SRL_joint_left_kneejoint" pos="0 0 0" range="-50 90" stiffness="150"/>
+							<joint armature="0.00" axis="0 1 0" damping="4" name="SRL_joint_left_kneejoint" pos="0 0 0" range="-170 170" stiffness="200"  />
 							<body name="SRL_left_end" pos="0.50 0 0" quat="0.70711 0.0 -0.70711 0.0">
 								<geom density="1000" friction="5.0 0.05 0.05" name="SRL_geom_left_end" pos="0 0 -0.045" size="0.05" type="sphere" />
 								<!-- <joint armature="0.02" axis="0 1 0" damping="30" name="SRL_joint_left_ankle" pos="0 0 0" range="-5 5" stiffness="300"/> -->
@@ -59,10 +58,10 @@
 			</body>
 	</worldbody>
 	<actuator>
-		<motor gear="125" joint="SRL_joint_right_hipjoint_z" name="SRL_joint_right_hipjoint_z"/>
+		<motor gear="125" joint="SRL_joint_right_hipjoint_x" name="SRL_joint_right_hipjoint_x"/>
 		<motor gear="125" joint="SRL_joint_right_hipjoint_y" name="SRL_joint_right_hipjoint_y"/>
 		<motor gear="125" joint="SRL_joint_right_kneejoint" name="SRL_joint_right_kneejoint"/>
-		<motor gear="125" joint="SRL_joint_left_hip_z" name="SRL_joint_left_hip_z"/>
+		<motor gear="125" joint="SRL_joint_left_hip_x" name="SRL_joint_left_hip_x"/>
 		<motor gear="125" joint="SRL_joint_left_hip_y" name="SRL_joint_left_hip_y"/>
 		<motor gear="125" joint="SRL_joint_left_kneejoint" name="SRL_joint_left_kneejoint"/>
 	</actuator>

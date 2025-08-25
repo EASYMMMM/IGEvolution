@@ -49,6 +49,7 @@ class SRL_bot(VecTask):
         self.cfg = cfg
         
         self._pd_control = self.cfg["env"].get("pdControl", True)
+        self._force_control = self.cfg["env"].get("forceControl", False)
         self.randomization_params = self.cfg["task"]["randomization_params"]
         self.randomize = self.cfg["task"]["randomize"]
         self.dof_vel_scale = self.cfg["env"]["dofVelocityScale"]
@@ -73,6 +74,7 @@ class SRL_bot(VecTask):
         self.gait_period = self.cfg["env"]["gait_period"]
         self.foot_clearance = self.cfg["env"]["foot_clearance"]
 
+        self.alive_reward_scale = self.cfg["env"]["alive_reward_scale"]
         self.progress_reward_scale = self.cfg["env"]["progress_reward_scale"]
         self.torques_cost_scale = self.cfg["env"]["torques_cost_scale"]
         self.dof_acc_cost_scale = self.cfg["env"]["dof_acc_cost_scale"]
@@ -86,7 +88,9 @@ class SRL_bot(VecTask):
         self.orientation_reward_scale = self.cfg["env"]["orientation_reward_scale"]
         self.clearance_penalty_scale = self.cfg["env"]["clearance_penalty_scale"]
         self.lateral_distance_penalty_scale = self.cfg["env"]["lateral_distance_penalty_scale"]
-        
+        self.actions_rate_scale = self.cfg["env"]["actions_rate_scale"]
+        self.actions_smoothness_scale = self.cfg["env"]["actions_smoothness_scale"]
+
         self.frame_stack = self.cfg["env"]["frame_stack"]  # 帧堆叠数量
         
         self.cfg["env"]["numObservations"] = 30 * self.frame_stack + 3
@@ -213,6 +217,11 @@ class SRL_bot(VecTask):
 
     def create_sim(self):
         self.up_axis_idx = 2 # index of up axis: Y=1, Z=2
+        self.torques = torch.zeros(self.num_envs, self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
+        self.p_gains = torch.zeros(self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
+        self.d_gains = torch.zeros(self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
+        self.torque_limits = torch.zeros(self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
+
         self.sim = super().create_sim(self.device_id, self.graphics_device_id, self.physics_engine, self.sim_params)
 
         self._create_ground_plane()
@@ -310,23 +319,46 @@ class SRL_bot(VecTask):
                 dof_state["pos"][j] = self.default_joint_angles[j]
 
             self.gym.set_actor_dof_states(env_ptr, handle, dof_state, gymapi.STATE_ALL)
-
+            body_props = self.gym.get_actor_rigid_body_properties(env_ptr, handle)
             self.envs.append(env_ptr)
             self.humanoid_handles.append(handle)
-
-            if (self._pd_control):
+            
+            if self._force_control:
+                dof_prop = self.gym.get_asset_dof_properties(humanoid_asset)
+                dof_prop["stiffness"].fill(0.0)
+                dof_prop["damping"].fill(0.0)
+                dof_prop["velocity"].fill(14.0)
+                dof_prop["effort"].fill(200.0)
+                dof_prop["driveMode"] = gymapi.DOF_MODE_EFFORT
+                self.gym.set_actor_dof_properties(env_ptr, handle, dof_prop)
+            elif (self._pd_control):
                 dof_prop = self.gym.get_asset_dof_properties(humanoid_asset)
                 dof_prop["driveMode"] = gymapi.DOF_MODE_POS
                 self.gym.set_actor_dof_properties(env_ptr, handle, dof_prop)
+        
+        dof_props = self.gym.get_asset_dof_properties(humanoid_asset)
+        for i in range(len(dof_props)):
+            self.p_gains[i] = float(dof_props[i]['stiffness'])
+            self.d_gains[i] = float(dof_props[i]['damping'])
 
         dof_prop = self.gym.get_actor_dof_properties(env_ptr, handle)
         for j in range(self.num_dof):
+            self.torque_limits[j] = dof_prop["effort"][j].item()
             if dof_prop['lower'][j] > dof_prop['upper'][j]:
                 self.dof_limits_lower.append(dof_prop['upper'][j])
                 self.dof_limits_upper.append(dof_prop['lower'][j])
             else:
                 self.dof_limits_lower.append(dof_prop['lower'][j])
                 self.dof_limits_upper.append(dof_prop['upper'][j])
+        if self._force_control:
+            self.dof_limits_lower[1] = self.default_joint_angles[1] - 45/180*np.pi
+            self.dof_limits_lower[2] = self.default_joint_angles[2] - 45/180*np.pi
+            self.dof_limits_lower[4] = self.default_joint_angles[4] - 45/180*np.pi
+            self.dof_limits_lower[5] = self.default_joint_angles[5] - 45/180*np.pi
+            self.dof_limits_upper[1] = self.default_joint_angles[1] + 45/180*np.pi
+            self.dof_limits_upper[2] = self.default_joint_angles[2] + 45/180*np.pi
+            self.dof_limits_upper[4] = self.default_joint_angles[4] + 45/180*np.pi
+            self.dof_limits_upper[5] = self.default_joint_angles[5] + 45/180*np.pi
 
         feet_names = ['SRL_left_end','SRL_right_end']
         self.feet_indices = torch.zeros(len(feet_names), dtype=torch.long, device=self.device, requires_grad=False)
@@ -340,8 +372,7 @@ class SRL_bot(VecTask):
 
         self.extremities = to_torch([5, 8], device=self.device, dtype=torch.long)
 
-        if (self._pd_control):
-            self._build_pd_action_offset_scale()
+        self._build_pd_action_offset_scale()
 
     def _build_srl_end_body_ids_tensor(self, env_ptr, actor_handle):
         body_ids = []
@@ -377,6 +408,7 @@ class SRL_bot(VecTask):
             self.death_cost,
             self.max_episode_length,
             self.gait_period,
+            alive_reward_scale = self.alive_reward_scale,
             progress_reward_scale = self.progress_reward_scale,
             torques_cost_scale = self.torques_cost_scale,
             dof_acc_cost_scale = self.dof_acc_cost_scale,
@@ -390,7 +422,8 @@ class SRL_bot(VecTask):
             orientation_reward_scale = self.orientation_reward_scale,
             clearance_penalty_scale = self.clearance_penalty_scale,
             lateral_distance_penalty_scale = self.lateral_distance_penalty_scale,
-        
+            actions_rate_scale = self.actions_rate_scale,
+            actions_smoothness_scale = self.actions_smoothness_scale,
         )   
 
     def compute_observations(self, env_ids=None):
@@ -437,7 +470,7 @@ class SRL_bot(VecTask):
             ), dim=-1)  # shape [len(env_ids), 3]  
             mirrored_task_params = torch.stack((
                 self.target_vel_x[env_ids],
-                self.target_ang_vel_z[env_ids],
+                -self.target_ang_vel_z[env_ids],
                 self.target_pelvis_height[env_ids],
             ), dim=-1)  # shape [len(env_ids), 3]  
             self.obs_buf[env_ids] = torch.cat([base_obs, task_params], dim=-1)
@@ -555,14 +588,15 @@ class SRL_bot(VecTask):
 
     def pre_physics_step(self, actions):
         self.actions = actions.to(self.device).clone()
-        if (self._pd_control):
+        if self._force_control:
+            pd_tar = self._action_to_pd_targets(self.actions)
+            torques = self.p_gains*(pd_tar - self.dof_pos) - self.d_gains*self.dof_vel
+            self.torques = torch.clip(torques, -self.torque_limits, self.torque_limits).view(self.torques.shape)
+            self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(self.torques))
+        elif (self._pd_control):
             pd_tar = self._action_to_pd_targets(self.actions) # pd_tar.shape: [num_actors, num_dofs]
             pd_tar_tensor = gymtorch.unwrap_tensor(pd_tar)
             self.gym.set_dof_position_target_tensor(self.sim, pd_tar_tensor)
-        else:
-            forces = self.actions * self.motor_efforts.unsqueeze(0) * self.power_scale
-            force_tensor = gymtorch.unwrap_tensor(forces)
-            self.gym.set_dof_actuation_force_tensor(self.sim, force_tensor)
 
     def post_physics_step(self):
         self.progress_buf += 1
@@ -581,7 +615,7 @@ class SRL_bot(VecTask):
         self.compute_reward(self.actions)
 
         # TODO: Task Randomization
-        # self.set_task_target()
+        self.set_task_target()
         
         # mirrored info
         self.extras["obs_mirrored"] = self.obs_mirrored_buf.to(self.rl_device)  # 镜像观测
@@ -620,7 +654,11 @@ class SRL_bot(VecTask):
     
     def _action_to_pd_targets(self, action):
         pd_tar = self._pd_action_offset + self._pd_action_scale * action
-        return pd_tar
+        margin = 0.0 * math.pi / 180.0 
+        low  = (self.dof_limits_lower + margin).unsqueeze(0)
+        high = (self.dof_limits_upper - margin).unsqueeze(0)
+        return torch.max(torch.min(pd_tar, high), low)
+
     
     def _build_pd_action_offset_scale(self):
         # Read joint limits
@@ -634,7 +672,8 @@ class SRL_bot(VecTask):
             curr_mid = 0.5 * (curr_high + curr_low)
             
             # 70% of joint range → to leave some margin
-            curr_scale = 0.7 * (curr_high - curr_low)
+            # TODO: soft limit
+            curr_scale = 0.45 * (curr_high - curr_low)
             curr_low = curr_mid - curr_scale
             curr_high = curr_mid + curr_scale
 
@@ -784,6 +823,7 @@ def compute_srl_reward(
     death_cost,
     max_episode_length,
     gait_period,
+    alive_reward_scale: float = 0,
     progress_reward_scale: float = 0,
     torques_cost_scale: float = 0,
     dof_acc_cost_scale: float = 0,
@@ -798,8 +838,10 @@ def compute_srl_reward(
     orientation_reward_scale: float = 0,
     clearance_penalty_scale: float = 0,
     lateral_distance_penalty_scale: float = 0,
+    actions_rate_scale: float = 0,
+    actions_smoothness_scale: float = 0,
 ):
-    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, float, float, float, float, float, float,  float, float, float, float, float, float, float, float, float, float, float) -> Tuple[Tensor, Tensor, Tensor]
+    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, float, float, float, float, float, float, float,  float, float, float, float, float, float, float, float, float, float, float, float, float) -> Tuple[Tensor, Tensor, Tensor]
 
     # obs = root_h,                             # 1    0
     #       local_root_vel ,                    # 3    1:3
@@ -827,7 +869,7 @@ def compute_srl_reward(
     root_target_vel = torch.zeros((root_vel.shape[0], 3), device=root_vel.device)
     root_target_vel[:, 0] = target_vel_x   
     vel_error_vec = root_vel - root_target_vel
-    vel_tracking_reward =  vel_tracking_reward_scale *  torch.exp(-3 * torch.norm(vel_error_vec, dim=-1))  # α = 1.5
+    vel_tracking_reward =  vel_tracking_reward_scale *  torch.exp(-4 * torch.norm(vel_error_vec, dim=-1))  # α = 1.5
 
     # --- Torques cost ---
     torques_cost = 0 * torch.sum(actions ** 2, dim=-1)
@@ -850,21 +892,23 @@ def compute_srl_reward(
 
     # --- Action Smooth ---
     actions_prev = obs_buf[:, 22+30:22+30+ actions.shape[1]]
-    actions_err_magnitude_sq = torch.sum((actions - actions_prev) ** 2, dim=-1)
-    actions_smooth_reward = torch.exp(-0.3 *actions_err_magnitude_sq )
+    actions_prev_prev = obs_buf[:, 22+60:22+60+ actions.shape[1]]
+    actions_rate = torch.sum((actions - actions_prev) ** 2, dim=-1)
+    actions_smoothness = torch.sum((actions - 2*actions_prev + actions_prev_prev) ** 2, dim=-1)
+    actions_smooth_reward = torch.exp(-0.3 *actions_rate )
 
     # --- Pelvis Orientation ---
     euler_err = obs_buf[:,7:10] 
     angle_diff = ((euler_err + math.pi) % (2 * math.pi)) - math.pi
-    cos_angle = torch.cos(angle_diff)
+    cos_angle = torch.cos(2 * angle_diff)
     ori_error = 1 - torch.mean(cos_angle, dim=-1)
-    orientation_reward = orientation_reward_scale * torch.exp(-20 * ori_error   ) 
+    orientation_reward = torch.exp(-20 * ori_error   ) 
 
     # --- Pelvis height ---
     pelvis_height = obs_buf[:,0]
     # target_pelvis_height = torch.full((pelvis_height.shape[0],), 0.88, device=pelvis_height.device)
     pelvis_height_error = pelvis_height - target_pelvis_height
-    pelvis_height_reward = pelvis_height_reward_scale * torch.exp(-10 * (10* pelvis_height_error) **2 ) 
+    pelvis_height_reward =  torch.exp(-12 * (10* pelvis_height_error) **2 ) 
 
     # --- Pelvis angular rate ---
     root_ang_vel = obs_buf[:, 4:7]
@@ -894,7 +938,7 @@ def compute_srl_reward(
     # --- Feet Lateral Distance ---
     local_srl_end_body_pos = srl_end_body_pos - srl_root_pos.unsqueeze(-2)
     lateral_distance = torch.abs(local_srl_end_body_pos[:,0,1] - local_srl_end_body_pos[:,1,1])
-    min_d, max_d = 0.21, 0.31 # FIXME: Lateral Distance 
+    min_d, max_d = 0.21, 0.32 # FIXME: Lateral Distance 
     below_violation = torch.clamp(min_d - lateral_distance, min=0.0)
     above_violation = torch.clamp(lateral_distance - max_d, min=0.0)
     feet_lateral_penalty = below_violation + above_violation  
@@ -922,7 +966,7 @@ def compute_srl_reward(
     gait_phase_penalty =  gait_phase_penalty*gait_phase_penalty_coef
    
     # --- Total reward ---
-    total_reward = alive_reward  \
+    total_reward = alive_reward_scale * alive_reward  \
         + progress_reward_scale * progress_reward \
         + vel_tracking_reward \
         + ang_vel_tracking_reward \
@@ -930,9 +974,10 @@ def compute_srl_reward(
         - dof_pos_cost_sacle * dof_pos_cost \
         - dof_vel_cost_scale * dof_vel_cost \
         + dof_acc_cost_scale * dof_acc_reward \
-        + orientation_reward  \
-        + pelvis_height_reward \
-        + actions_smooth_reward \
+        + orientation_reward_scale * orientation_reward  \
+        + pelvis_height_reward_scale * pelvis_height_reward \
+        - actions_rate_scale * actions_rate \
+        - actions_smoothness_scale * actions_smoothness \
         - no_fly_penalty \
         - gait_phase_penalty \
         - clearance_penalty * clearance_penalty_scale \
@@ -1024,7 +1069,7 @@ def compute_srl_bot_observations(
                      srl_dof_vel * obs_scales[3],        # 6    16:21
                      actions ,                           # 6    22:27
                      sin_phase,                          # 1    28
-                     0*cos_phase,                        # 1    29
+                     cos_phase,                        # 1    29
                     ), dim=-1)
     return obs , potentials, prev_potentials_new
 
@@ -1120,7 +1165,7 @@ def compute_srl_bot_observations_mirrored(
                      srl_dof_vel * obs_scales[3],        # 6
                      actions ,
                      sin_phase,    # TODO: mirrored
-                     0*cos_phase,     
+                     cos_phase,     
                     ), dim=-1)
     return obs  
 
@@ -1153,12 +1198,12 @@ def set_task_target(
     vel_x_choices = torch.tensor([0.0, 0.8, 1.0, 1.2, 1.4, 1.6], device=cur_target_vel_x.device)
 
     # 高度变化
-    # for i in range(max_episode_length//height_change_period):
-    #     mask = progress_buf == height_change_period * i+1
-    #     height_indices = torch.randint(0, len(height_choices), (len(target_pelvis_height),), device=target_pelvis_height.device)
-    #     target_pelvis_height =  torch.where(mask, unit_vel_x*height_choices[height_indices], target_pelvis_height)
-    # mask = progress_buf == 1  # reset
-    # target_pelvis_height =  torch.where(mask, unit_vel_x*height_choices[1], target_pelvis_height)
+    for i in range(max_episode_length//height_change_period):
+        mask = progress_buf == height_change_period * i+1
+        height_indices = torch.randint(0, len(height_choices), (len(target_pelvis_height),), device=target_pelvis_height.device)
+        target_pelvis_height =  torch.where(mask, unit_vel_x*height_choices[height_indices], target_pelvis_height)
+    mask = progress_buf == 1  # reset
+    target_pelvis_height =  torch.where(mask, unit_vel_x*height_choices[1], target_pelvis_height)
 
     # 单纯速度变化
     vel_x_choices = torch.tensor([0.8, 1.0, 1.2, 1.4, 1.6], device=cur_target_vel_x.device)

@@ -15,6 +15,7 @@ env:
   frame_stack: 5
   
   pdControl: True
+  forceControl: True
   powerScale: 1.0
 
   # reward parameters
@@ -36,6 +37,7 @@ env:
   foot_clearance: 0.2
 
   # reward weights
+  alive_reward_scale: 1.0
   torques_cost_scale: 5e-6
   progress_reward_scale: 1
   dof_acc_cost_scale: 0.5
@@ -44,11 +46,13 @@ env:
   no_fly_penalty_scale: 10.0
   gait_similarity_penalty_scale: 10
   pelvis_height_reward_scale: 2.0
-  orientation_reward_scale: 2.0
-  tracking_ang_vel_reward_scale: 1.0
+  orientation_reward_scale: 3.0
+  tracking_ang_vel_reward_scale: 2.0
   vel_tracking_reward_scale: 6.0
   clearance_penalty_scale: 50
-  lateral_distance_penalty_scale: 10
+  lateral_distance_penalty_scale: 30
+  actions_rate_scale: 0.1
+  actions_smoothness_scale: 0.1
 
   asset:
     assetFileName: "mjcf/srl_bot/srl_bot_inversed_v2.xml"
