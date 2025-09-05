@@ -42,10 +42,10 @@ env:
   progress_reward_scale: 1
   dof_acc_cost_scale: 0.5
   dof_vel_cost_scale: 1
-  dof_pos_cost_sacle: 0.1
+  dof_pos_cost_sacle: 0.05
   no_fly_penalty_scale: 10.0
   gait_similarity_penalty_scale: 10
-  pelvis_height_reward_scale: 2.0
+  pelvis_height_reward_scale: 10.0
   orientation_reward_scale: 3.0
   tracking_ang_vel_reward_scale: 2.0
   vel_tracking_reward_scale: 6.0
