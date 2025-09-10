@@ -45,7 +45,7 @@ env:
   dof_pos_cost_sacle: 0.05
   no_fly_penalty_scale: 10.0
   gait_similarity_penalty_scale: 10
-  pelvis_height_reward_scale: 10.0
+  pelvis_height_reward_scale: 5.0
   orientation_reward_scale: 3.0
   tracking_ang_vel_reward_scale: 2.0
   vel_tracking_reward_scale: 6.0
@@ -55,7 +55,7 @@ env:
   actions_smoothness_scale: 0.1
 
   asset:
-    assetFileName: "mjcf/srl_bot/srl_bot_inversed_v2.xml"
+    assetFileName: "mjcf/srl_bot/srl_bot_inversed_v5.xml"
 
   plane:
     staticFriction: 1.0

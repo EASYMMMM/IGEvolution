@@ -895,7 +895,6 @@ def compute_srl_reward(
     actions_prev_prev = obs_buf[:, 22+60:22+60+ actions.shape[1]]
     actions_rate = torch.sum((actions - actions_prev) ** 2, dim=-1)
     actions_smoothness = torch.sum((actions - 2*actions_prev + actions_prev_prev) ** 2, dim=-1)
-    actions_smooth_reward = torch.exp(-0.3 *actions_rate )
 
     # --- Pelvis Orientation ---
     euler_err = obs_buf[:,7:10] 
@@ -971,12 +970,12 @@ def compute_srl_reward(
         + progress_reward_scale * progress_reward \
         + vel_tracking_reward \
         + ang_vel_tracking_reward \
+        + orientation_reward_scale * orientation_reward  \
+        + pelvis_height_reward_scale * pelvis_height_reward \
         - torques_cost_scale * torques_cost \
         - dof_pos_cost_sacle * dof_pos_cost \
         - dof_vel_cost_scale * dof_vel_cost \
         + dof_acc_cost_scale * dof_acc_reward \
-        + orientation_reward_scale * orientation_reward  \
-        + pelvis_height_reward_scale * pelvis_height_reward \
         - actions_rate_scale * actions_rate \
         - actions_smoothness_scale * actions_smoothness \
         - no_fly_penalty \
