@@ -90,12 +90,17 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
     
     def _build_net(self, config):
         #super()._build_net(config)
+
         if self.obs_num_humanoid:
             config['input_shape'] = self.obs_num_humanoid
+        else:
+            config['input_shape'] = self.env.get_humanoid_obs_size()
         self.model = self.network.build(config,role='humanoid')
         self.model.to(self.device)
-        if self.obs_num_srl:
+        if self.obs_num_humanoid:
             config['input_shape'] = self.obs_num_srl
+        else:
+            config['input_shape'] = self.env.get_srl_obs_size()
         self.model_srl = self.network.build(config,role='srl')
         self.model_srl.to(self.device)
 
@@ -108,39 +113,29 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
             self._amp_input_mean_std.eval()
         return
     
-    def mask_humanoid_obs(self, obs):
-        # root_h 1; root_rot_obs 6; local_root_vel 3 ; local_root_ang_vel 3 ; dof_obs 60; dof_vel 36 ; flat_local_key_pos 12
-        mask = torch.ones_like(obs)
-        mask[: , 125: ]  = 0  # SRL dof position
-        masked_obs = obs * mask
-        return masked_obs
     
     def get_action(self, obs_dict, is_deterministic = False):
         obs = obs_dict['obs']
         if self.has_batch_dimension == False:
             obs = unsqueeze_obs(obs)
-        obs = self._preproc_obs(obs)
+        processed_obs = self._preproc_obs(obs)
         input_dict = {
             'is_train': False,
             'prev_actions': None, 
-            'obs' : obs,
+            'obs' : processed_obs,
             'rnn_states' : self.states
         }
-
-        if self._humanoid_obs_masked : # MLY:humanoid观测掩码
-            masked_input_dict = {
-                'is_train': False,
-                'prev_actions': None, 
-                'obs' : self.mask_humanoid_obs(obs), 
-                'rnn_states' : self.states               
-                }
+        if self.env.get_srl_obs_size() == self.env.get_humanoid_obs_size():
+            srl_input_dict = input_dict
+        else:
+            self.obs_num_humanoid = self.env.get_humanoid_obs_size()
+            input_dict['obs'] = processed_obs[:, :self.obs_num_humanoid]
+            srl_input_dict = input_dict.copy()
+            srl_input_dict['obs'] = processed_obs[:, self.obs_num_humanoid:]
             
         with torch.no_grad():
-            if self._humanoid_obs_masked :
-                res_dict = self.model(masked_input_dict)
-            else:
-                res_dict = self.model(input_dict)
-            res_dict_srl = self.model_srl(input_dict)
+            res_dict = self.model(input_dict)
+            res_dict_srl = self.model_srl(srl_input_dict)
         mu_humanoid = res_dict['mus']
         action_humanoid = res_dict['actions']
         mu_srl = res_dict_srl['mus']
@@ -237,7 +232,7 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                 'srl_end_pos': [],
                 'srl_end_vel': [],
                 'key_body_pos': [],
-                'dof_forces':[],
+                'action':[],
                 'obs':[],
                 'done':[],
             }
@@ -285,8 +280,7 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                     self._post_step(info)
                     
                     # 只记录第一个环境的动作
-                    dof_forces = info["dof_forces"]
-                    episode_actions.append(dof_forces[0].cpu().numpy())  # 假设动作输出是Tensor
+                    episode_actions.append(action[0].cpu().numpy())  # 假设动作输出是Tensor
                     episode_velocity.append(info["x_velocity"][0].cpu().numpy()) # 
 
                     # 记录第一个智能体的肢体位置数据
@@ -300,7 +294,7 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                     episode_data['srl_end_pos'].append(srl_end_pos)
                     episode_data['srl_end_vel'].append(srl_end_vel)
                     episode_data['key_body_pos'].append(key_body_pos)
-                    episode_data['dof_forces'].append(dof_forces[0].cpu().numpy())
+                    episode_data['action'].append(action[0].cpu().numpy())
                     episode_data['obs'].append( dof_pos)
 
                     if self._save_load_cell_data:
@@ -337,7 +331,7 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                                     f'episode_root_pos': episode_data['root_pos'],
                                     f'episode_srl_end_pos': episode_data['srl_end_pos'],
                                     f'episode_key_body_pos': episode_data['key_body_pos'],
-                                    f'episode_dof_forces': episode_data['dof_forces'],
+                                    f'episode_action': episode_data['action'],
                                     f'episode_obs': episode_data['obs'],
                                     f'episode_dones': episode_data['done'],
                                 }
@@ -543,11 +537,10 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
             config['amp_input_shape'] = self.env.amp_observation_space.shape
         else:
             config['amp_input_shape'] = self.env_info['amp_observation_space']
-        config['actions_num_humanoid'] = self.actions_num_humanoid
-        self.actions_num_srl = - self.actions_num_humanoid + self.actions_num
-        config['actions_num_srl'] = self.actions_num_srl
-        config['obs_num_humanoid'] = (self.obs_num_humanoid,)
-        config['obs_num_srl'] = (self.obs_num_srl,)
+        config['actions_num_humanoid'] = self.env.get_humanoid_action_size()
+        config['actions_num_srl'] = self.env.get_srl_action_size()
+        config['obs_num_humanoid'] =[self.env.get_humanoid_obs_size(),]
+        config['obs_num_srl'] =  [self.env.get_srl_obs_size(),]
         return config
 
     def _amp_debug(self, info):

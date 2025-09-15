@@ -114,7 +114,7 @@ class HumanoidAMPSRLmarlBase(VecTask):
             "height_measurements" : 5.0 }
      
         # --- SRL-Gym Defined End ---
-
+        self.frame_stack = 5
         self.cfg["env"]["numObservations"] = self.get_obs_size()
         self.cfg["env"]["numActions"] = self.get_action_size()
    

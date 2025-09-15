@@ -61,8 +61,6 @@ class SRL_bot(VecTask):
         self.actions_cost_scale = self.cfg["env"]["actionsCost"]
         self.energy_cost_scale = self.cfg["env"]["energyCost"]
         self.joints_at_limit_cost_scale = self.cfg["env"]["jointsAtLimitCost"]
-        self.death_cost = self.cfg["env"]["deathCost"]
-        self.termination_height = self.cfg["env"]["terminationHeight"]
         self.camera_follow = self.cfg["env"].get("cameraFollow", False)
 
         self.debug_viz = self.cfg["env"]["enableDebugVis"]
@@ -74,6 +72,9 @@ class SRL_bot(VecTask):
         self.gait_period = self.cfg["env"]["gait_period"]
         self.foot_clearance = self.cfg["env"]["foot_clearance"]
 
+        self.death_cost = self.cfg["env"]["deathCost"]
+        self.termination_height = self.cfg["env"]["terminationHeight"]
+        
         self.alive_reward_scale = self.cfg["env"]["alive_reward_scale"]
         self.progress_reward_scale = self.cfg["env"]["progress_reward_scale"]
         self.torques_cost_scale = self.cfg["env"]["torques_cost_scale"]

@@ -1,5 +1,5 @@
 # used to create the object
-name: SRLBot
+name: SRL_HRI
 
 physics_engine: ${..physics_engine}
 
@@ -7,37 +7,57 @@ physics_engine: ${..physics_engine}
 env: 
   numEnvs: ${resolve_default:4096,${...num_envs}}
   envSpacing: 5
-  episodeLength: 1200
-  enableDebugVis: False
+  episodeLength: 1000
   cameraFollow: True # if the camera follows humanoid or not
-  controlFrequencyInv: 2   
-  clipActions: 1.0
-  frame_stack: 5
+  enableDebugVis: False
   
   pdControl: True
-  forceControl: True
+  forceControl: False
   powerScale: 1.0
+  controlFrequencyInv: 2 # 30 Hz
+  stateInit: "Random"
+  hybridInitProb: 0.5
+  numAMPObsSteps: 2
 
-  # reward parameters
-  headingWeight: 0.5
-  upWeight: 0.1
+  localRootObs: False
+  contactBodies: ["right_foot", "left_foot","right_shin","left_shin"]
+  terminationHeight: 0.6
+  enableEarlyTermination: True
 
-  # cost parameters
-  actionsCost: 0.01
-  energyCost: 0.05
-  dofVelocityScale: 0.1
-  angularVelocityScale: 0.25
-  contactForceScale: 0.01
-  jointsAtLimitCost: 0.25
-  deathCost: -1.0
-  terminationHeight: 0.75
+  # animation files to learn from
+  # these motions should use hyperparameters from HumanoidAMPPPO.yaml
+  motion_file: "amp_humanoid_walk.npy"
+  #motion_file: "amp_humanoid_run.npy"
+  #motion_file: "amp_humanoid_dance.npy"
 
-  # gait parameters
+  # these motions should use hyperparameters from HumanoidAMPPPOLowGP.yaml
+  #motion_file: "amp_humanoid_hop.npy"
+  #motion_file: "amp_humanoid_backflip.npy"
+  srl_endpos_obs: False
+  
+  asset:
+    assetFileName: "mjcf/srl_hri/srl_hri_basic.xml"
+
+  plane:
+    staticFriction: 1.0
+    dynamicFriction: 1.0
+    restitution: 0.0
+
+  humanoid_obs_num: 111
+  srl_obs_num: 31
+  srl_obs_frame_stack: 5  
+  srl_command_num: 3
+  humanoid_actions_num: 28
+  srl_actions_num: 7
+ 
   gait_period: 18.0
   foot_clearance: 0.2
 
+  deathCost: -1.0
+  srlTerminationHeight: 0.75
+
   # reward weights
-  alive_reward_scale: 1.0
+  alive_reward_scale: 2.0
   torques_cost_scale: 5e-6
   progress_reward_scale: 1
   dof_acc_cost_scale: 0.5
@@ -53,17 +73,27 @@ env:
   lateral_distance_penalty_scale: 30
   actions_rate_scale: 0.1
   actions_smoothness_scale: 0.1
+  
+  torque_threshold: 50  # 力矩惩罚施加阈值
+  upper_reward_w: 1 
+  srl_torque_reward_w: 0.0005 # 外肢体力矩惩罚 torque cost 
+  srl_load_cell_w: 0.00      # 力矩传感器惩罚 
+  srl_root_force_reward_w: 0 # 外肢体根部受力惩罚
+  srl_feet_slip_w: 0    # 末端滑动惩罚
+  autogen_model: True  # 模型自动生成
+  load_cell: True      # 背板处受力传感器
+  humanoid_load_cell_obs: False      # Humanoid 观测中是否添加load cell
+  srl_partial_obs: False             # SRL使用部分观测，指的是不包含Humanoid相关观测
 
-  asset:
-    assetFileName: "mjcf/srl_bot/srl_bot_basic.xml"
-
-  plane:
-    staticFriction: 1.0
-    dynamicFriction: 1.0
-    restitution: 0.0
-
-  # set to True if you use camera sensors in the environment
-  enableCameraSensors: False
+  design_param_obs: False
+  design_params:
+    mode: mode1
+    first_leg_lenth: 0.40
+    first_leg_size: 0.03
+    second_leg_lenth: 0.80
+    second_leg_size: 0.03
+    third_leg_size: 0.03
+  # ------------ ------------
 
 sim:
   dt: 0.0166 # 1/60 s
@@ -84,7 +114,7 @@ sim:
     default_buffer_size_multiplier: 5.0
     max_gpu_contact_pairs: 8388608 # 8*1024*1024
     num_subscenes: ${....num_subscenes}
-    contact_collection: 0 # 0: CC_NEVER (don't collect contact info), 1: CC_LAST_SUBSTEP (collect only contacts on last substep), 2: CC_ALL_SUBSTEPS (broken - do not use!)
+    contact_collection: 2 # 0: CC_NEVER (don't collect contact info), 1: CC_LAST_SUBSTEP (collect only contacts on last substep), 2: CC_ALL_SUBSTEPS (broken - do not use!)
 
 task:
   randomize: False
@@ -156,3 +186,4 @@ task:
             distribution: "gaussian"
             schedule: "linear"  # "linear" will scale the current random sample by `min(current num steps, schedule_steps) / schedule_steps`
             schedule_steps: 3000
+

@@ -74,6 +74,14 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         self.model_srl.to(self.ppo_device)
         self.states = None
 
+        print('='*20)
+        print('Humanoid Actor:', self.model.a2c_network.actor_mlp)
+        print('Humanoid Critic:', self.model.a2c_network.critic_mlp)
+        print('Humanoid Discriminator:', self.model.a2c_network._disc_mlp)
+        print('SRL Actor:', self.model_srl.a2c_network.actor_mlp)
+        print('SRL Critic:', self.model_srl.a2c_network.critic_mlp)
+        print('='*20)
+
         self.init_rnn_from_model(self.model)
         self.last_lr = float(self.last_lr)
         self.last_lr_srl = float(self.last_lr)
@@ -108,11 +116,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         self.game_rewards_srl  = torch_ext.AverageMeter(self.value_size, self.games_to_track).to(self.ppo_device)
         self.game_rewards_amp  = torch_ext.AverageMeter(self.value_size, self.games_to_track).to(self.ppo_device)
         self.game_rewards_task = torch_ext.AverageMeter(self.value_size, self.games_to_track).to(self.ppo_device)
-        self.game_rewards_v_p  = torch_ext.AverageMeter(self.value_size, self.games_to_track).to(self.ppo_device)  # velocity penalty
-        self.game_rewards_t_c  = torch_ext.AverageMeter(self.value_size, self.games_to_track).to(self.ppo_device)  # torque cost
-        self.game_rewards_u_r  = torch_ext.AverageMeter(self.value_size, self.games_to_track).to(self.ppo_device)  # upper reward
-        self.game_rewards_srl_t_c  = torch_ext.AverageMeter(self.value_size, self.games_to_track).to(self.ppo_device)
-
+     
         # 观测值标准化
         if self.normalize_value:
             # self.value_mean_std = self.central_value_net.model.value_mean_std if self.has_central_value else self.model.value_mean_std
@@ -148,11 +152,6 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         self.current_rewards_srl = torch.zeros_like(self.current_rewards,dtype=torch.float32, device=self.ppo_device)
         self.current_rewards_amp = torch.zeros_like(self.current_rewards,dtype=torch.float32, device=self.ppo_device)
         self.current_rewards_task = torch.zeros_like(self.current_rewards,dtype=torch.float32, device=self.ppo_device)
-        self.current_rewards_v_p = torch.zeros_like(self.current_rewards,dtype=torch.float32, device=self.ppo_device)
-        self.current_rewards_t_c = torch.zeros_like(self.current_rewards,dtype=torch.float32, device=self.ppo_device)
-        self.current_rewards_u_r = torch.zeros_like(self.current_rewards,dtype=torch.float32, device=self.ppo_device)
-        self.current_rewards_srl_t_c = torch.zeros_like(self.current_rewards,dtype=torch.float32, device=self.ppo_device)
-
 
         env_info['action_space'] = Box(-1,1,(self.actions_num_srl,1))
         env_info['observation_space'] = Box(np.ones(self.obs_num_srl) * -np.Inf, np.ones(self.obs_num_srl) * np.Inf)
@@ -327,10 +326,10 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             terminated = infos['terminate'].float()
             terminated = terminated.unsqueeze(-1)
 
-            _velocity_penalty = infos['v_penalty']
-            _torque_cost = infos['torque_cost']
-            _upper_reward = infos['upper_reward'] 
-            _srl_torque_cost = infos['srl_torque_cost']
+            # _velocity_penalty = infos['v_penalty']
+            # _torque_cost = infos['torque_cost']
+            # _upper_reward = infos['upper_reward'] 
+            # _srl_torque_cost = infos['srl_torque_cost']
             
             ''' humanoid value of next state '''
             next_vals = self._eval_critic_humanoid(self.obs)  
@@ -352,10 +351,6 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             self.current_rewards_task += rewards     # task reward
             self.current_rewards      += _total_rewards  # task reward + amp reward
             self.current_rewards_amp  += _amp_rewards['disc_rewards']
-            self.current_rewards_t_c  += _torque_cost.unsqueeze(1)       # 分量 
-            self.current_rewards_v_p  += _velocity_penalty.unsqueeze(1)  # 分量
-            self.current_rewards_u_r  += _upper_reward.unsqueeze(1)      # upper reward
-            self.current_rewards_srl_t_c += _srl_torque_cost.unsqueeze(1) 
 
             all_done_indices = self.dones.nonzero(as_tuple=False)
             done_indices = all_done_indices[::self.num_agents]
@@ -364,30 +359,19 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             # self.game_rewards_srl.update(self.current_rewards_srl[done_indices])
             self.game_rewards_amp.update(self.current_rewards_amp[done_indices])
             self.game_rewards_task.update(self.current_rewards_task[done_indices])
-            self.game_rewards_v_p.update(self.current_rewards_v_p[done_indices])
-            self.game_rewards_t_c.update(self.current_rewards_t_c[done_indices])
-            self.game_rewards_u_r.update(self.current_rewards_u_r[done_indices])
-            self.game_rewards_srl_t_c.update(self.current_rewards_srl_t_c[done_indices])
-
+       
             self.current_lengths += 1
             self.game_lengths.update(self.current_lengths[done_indices])
             self.algo_observer.process_infos(infos, done_indices)
 
             not_dones = 1.0 - self.dones.float()
-            # TODO：可以在这里添加评估指标
+            # TODO：可以在这里添加Fitness Function
             for idx in done_indices:
                 ep_lenth = self.current_lengths[idx].item()
-                srl_t_c = - self.current_rewards_srl_t_c[idx].item() / ep_lenth
-                evaluate_t_c = self.current_rewards_t_c[idx].item() / ep_lenth # torque cose
-                evaluate_u_r = self.current_rewards_u_r[idx].item() / ep_lenth # upper reward
                 amp_reward = self.current_rewards_amp[idx].item()
-                # if amp_reward < 200:
-                #     amp_reward = -200 + amp_reward
-                # else:
-                #     amp_reward = 0
-                reward = 2*evaluate_t_c + 2*evaluate_u_r + srl_t_c 
+                # reward = 2*evaluate_t_c + 2*evaluate_u_r + srl_t_c 
                 # 添加新的 reward 到队列中
-                self.evaluate_rewards.append(reward)
+                # self.evaluate_rewards.append(reward)
                 self.evaluate_amp_rewards.append(amp_reward)
             ''' If env is done, reset current_reward '''
             
@@ -395,10 +379,6 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             # self.current_rewards_srl = self.current_rewards_srl * not_dones.unsqueeze(1)
             self.current_rewards_amp     = self.current_rewards_amp     * not_dones.unsqueeze(1)
             self.current_rewards_task    = self.current_rewards_task    * not_dones.unsqueeze(1)
-            self.current_rewards_v_p     = self.current_rewards_v_p     * not_dones.unsqueeze(1)
-            self.current_rewards_t_c     = self.current_rewards_t_c     * not_dones.unsqueeze(1)
-            self.current_rewards_u_r     = self.current_rewards_u_r     * not_dones.unsqueeze(1)
-            self.current_rewards_srl_t_c = self.current_rewards_srl_t_c * not_dones.unsqueeze(1)
             self.current_lengths = self.current_lengths * not_dones
 
             if (self.vec_env.env.viewer and (n == (self.horizon_length - 1))):
@@ -936,7 +916,6 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         self._hsrl_checkpoint = config.get('hsrl_checkpoint',False)
 
         self.mirror_loss = config.get('mirror_loss', False)
-        self._humanoid_obs_masked = config.get('humanoid_obs_masked', False)
 
         return
 
@@ -1056,22 +1035,13 @@ class SRL_MultiAgent(common_agent.CommonAgent):
                     # mean_rewards_srl = self.game_rewards_srl.get_mean()
                     mean_rewards_amp = self.game_rewards_amp.get_mean()
                     mean_rewards_task = self.game_rewards_task.get_mean()
-                    mean_rewards_t_c = self.game_rewards_t_c.get_mean()
-                    mean_rewards_v_p = self.game_rewards_v_p.get_mean()
-                    mean_rewards_u_r = self.game_rewards_u_r.get_mean()
-                    mean_rewards_srl_t_c = self.game_rewards_srl_t_c.get_mean()
-
+                 
                     for i in range(self.value_size):
                         self.writer.add_scalar('rewards/total_frame'.format(i), mean_rewards[i], frame)
                         self.writer.add_scalar('rewards/total_iter'.format(i), mean_rewards[i], epoch_num)
                         self.writer.add_scalar('rewards/total_time'.format(i), mean_rewards[i], total_time)
                         # task
-                        self.writer.add_scalar('rewards/srl_torque_cost'.format(i), mean_rewards_srl_t_c[i], frame)
                         self.writer.add_scalar('rewards/task'.format(i), mean_rewards_task[i], frame)
-                        self.writer.add_scalar('rewards/v_penalty'.format(i), mean_rewards_v_p[i], frame)
-                        self.writer.add_scalar('rewards/torque_cost'.format(i), mean_rewards_t_c[i], frame)
-                        self.writer.add_scalar('rewards/u_reward'.format(i), mean_rewards_u_r[i], frame)
-                        
                         # amp
                         self.writer.add_scalar('rewards/AMP'.format(i), mean_rewards_amp[i], frame)
                     self.writer.add_scalar('episode_lengths/frame', mean_lengths, frame)
@@ -1088,7 +1058,8 @@ class SRL_MultiAgent(common_agent.CommonAgent):
                     self.save(self.model_output_file)
                     print('MAX EPOCHS NUM!')
                     self.writer.close()
-                    avg_evaluate_rewards = sum(self.evaluate_rewards) / len(self.evaluate_rewards)
+                    avg_evaluate_rewards = 0
+                    # avg_evaluate_rewards = sum(self.evaluate_rewards) / len(self.evaluate_rewards)
                     avg_evaluate_amp_rewards = sum(self.evaluate_amp_rewards) / len(self.evaluate_amp_rewards)
                     return avg_evaluate_rewards, avg_evaluate_amp_rewards, epoch_num, self.frame, 
 

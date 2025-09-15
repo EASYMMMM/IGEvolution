@@ -62,6 +62,7 @@ from .SRLEvo.humanoid_amp_srl_v2 import HumanoidAMPSRLGym_v2
 from .SRLEvo.hsrl_marl import HumanoidAMPSRLGym_marl
 from .SRLEvo.humanoid_amp_s1 import HumanoidAMP_s1
 
+from .SRLEvo.srl_hri import SRL_HRI
 from .SRLEvo.srl_bot import SRL_bot
 
 def resolve_allegro_kuka(cfg, *args, **kwargs):
@@ -124,5 +125,6 @@ isaacgym_task_map = {
     "HumanoidAMPSRLGym_marl":HumanoidAMPSRLGym_marl,
     "HumanoidAMPSRLGym_s1":HumanoidAMP_s1,
     "SRLBot":SRL_bot,
+    "SRL_HRI":SRL_HRI,
     # "HumanoidSRLGym": HumanoidAMPSRLTest,
 }
