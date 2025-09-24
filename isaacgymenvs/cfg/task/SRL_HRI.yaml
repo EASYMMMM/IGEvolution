@@ -12,16 +12,17 @@ env:
   enableDebugVis: False
   
   pdControl: True
-  forceControl: False
+  forceControl: True
   powerScale: 1.0
   controlFrequencyInv: 2 # 30 Hz
-  stateInit: "Random"
+  stateInit: "Default"  # Default, Random, Hybrid
   hybridInitProb: 0.5
   numAMPObsSteps: 2
 
   localRootObs: False
   contactBodies: ["right_foot", "left_foot","right_shin","left_shin"]
   terminationHeight: 0.6
+  SRLterminationHeight: 0.70 
   enableEarlyTermination: True
 
   # animation files to learn from
@@ -44,7 +45,7 @@ env:
     restitution: 0.0
 
   humanoid_obs_num: 111
-  srl_obs_num: 31
+  srl_obs_num: 32
   srl_obs_frame_stack: 5  
   srl_command_num: 3
   humanoid_actions_num: 28
@@ -57,7 +58,7 @@ env:
   srlTerminationHeight: 0.75
 
   # reward weights
-  alive_reward_scale: 2.0
+  alive_reward_scale: 1.0
   torques_cost_scale: 5e-6
   progress_reward_scale: 1
   dof_acc_cost_scale: 0.5

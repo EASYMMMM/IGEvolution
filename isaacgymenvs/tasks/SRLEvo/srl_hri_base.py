@@ -9,13 +9,11 @@ from isaacgymenvs.utils.torch_jit_utils import quat_mul, to_torch, get_axis_para
      exp_map_to_quat, quat_to_tan_norm, my_quat_rotate, calc_heading_quat_inv, quat_rotate_inverse
 
 from ..base.vec_task import VecTask
+from isaacgymenvs.learning.SRLEvo.srl_models import ModelSRLContinuous 
+from isaacgymenvs.learning.SRLEvo.srl_network_builder import SRLBuilder 
 
 DOF_BODY_IDS = [1, 2, 3, 4, 6, 7, 9, 10, 11, 12, 13, 14]
 DOF_OFFSETS = [0, 3, 6, 9, 10, 13, 14, 17, 18, 21, 24, 25, 28]
-NUM_OBS = 131 + 111 # humanoid: 111, SRL 38
-NUM_HUMANOID_OBS = 13 + 52 + 28 + 12 + 6  # Humanoid基本观测 + 人机交互力
-NUM_ACTIONS = 28 + 6 + 1  # Actions humanoid (Dof=28) + SRL + freejoint-Y
-NUM_HUMANOID_ACTIONS = 28
 
 SRL_ROOT_BODY_NAMES = ["SRL", "SRL_root"]
 UPPER_BODY_NAMES = ["pelvis", "torso"]
@@ -44,6 +42,7 @@ class SRL_HRIBase(VecTask):
         # self._contact_bodies = self.cfg["env"]["contactBodies"]
         self._contact_bodies = self.cfg["env"]["contactBodies"]  
         self._termination_height = self.cfg["env"]["terminationHeight"]
+        self._srl_termination_height = self.cfg["env"]["SRLterminationHeight"]
         self._enable_early_termination = self.cfg["env"]["enableEarlyTermination"]
 
         # --- env  ---
@@ -101,7 +100,14 @@ class SRL_HRIBase(VecTask):
 
         self.cfg["env"]["numObservations"] = self.get_obs_size()
         self.cfg["env"]["numActions"] = self.get_action_size()
-   
+
+        self.default_srl_joint_angles = [0*np.pi, 
+                                         0.28*np.pi,
+                                         0*np.pi,
+                                         0*np.pi,
+                                         0.28*np.pi,
+                                         0*np.pi]
+        
         super().__init__(config=self.cfg, rl_device=rl_device, sim_device=sim_device, graphics_device_id=graphics_device_id, headless=headless, virtual_screen_capture=virtual_screen_capture, force_render=force_render)
 
         dt = self.cfg["sim"]["dt"]
@@ -163,21 +169,15 @@ class SRL_HRIBase(VecTask):
 
         self.target_yaw = torch.zeros(self.num_envs, device=self.device)
         self.target_ang_vel_z = torch.zeros(self.num_envs, device=self.device)
-        self.target_pelvis_height = torch.full((self.num_envs,), 0.84, device=self.device)
-        self.target_vel_x = torch.full((self.num_envs,), 1.4, device=self.device)
+        self.target_pelvis_height = torch.full((self.num_envs,), 0.83, device=self.device)
+        self.target_vel_x = torch.full((self.num_envs,), 0.0, device=self.device)
 
         self._initial_dof_pos = torch.zeros_like(self._dof_pos, device=self.device, dtype=torch.float)
         right_shoulder_x_handle = self.gym.find_actor_dof_handle(self.envs[0], self.humanoid_handles[0], "right_shoulder_x")
         left_shoulder_x_handle = self.gym.find_actor_dof_handle(self.envs[0], self.humanoid_handles[0], "left_shoulder_x")
-        self._initial_dof_pos[:, right_shoulder_x_handle] = 0.5 * np.pi
-        self._initial_dof_pos[:, left_shoulder_x_handle] = -0.5 * np.pi
+        self._initial_dof_pos[:, right_shoulder_x_handle] = 0 * np.pi
+        self._initial_dof_pos[:, left_shoulder_x_handle] = 0 * np.pi
 
-        self.default_srl_joint_angles = [0*np.pi, 
-                                         0.25*np.pi,
-                                         0*np.pi,
-                                         0*np.pi,
-                                         0.25*np.pi,
-                                         0*np.pi]
         self.initial_srl_dof_pos = torch.tensor(self.default_srl_joint_angles, device=self.device).unsqueeze(0).repeat(self.num_envs, 1)
         self._initial_dof_pos[:, -6:] = self.initial_srl_dof_pos
         
@@ -264,14 +264,25 @@ class SRL_HRIBase(VecTask):
     def get_srl_action_size(self):
         return self.srl_actions_num
 
+    def get_teacher_srl_action_size(self):
+        return self.srl_actions_num - 1
+
     def get_humanoid_obs_size(self):
         return self.humanoid_obs_num
     
     def get_srl_obs_size(self):
         return self.srl_obs_num*self.srl_obs_frame_stack + self.srl_command_num
 
+    def get_teacher_srl_obs_size(self):
+        return 153
+
     def create_sim(self):
         self.up_axis_idx = 2 # index of up axis: Y=1, Z=2
+        self.torques = torch.zeros(self.num_envs, self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
+        self.p_gains = torch.zeros(self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
+        self.d_gains = torch.zeros(self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
+        self.torque_limits = torch.zeros(self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
+
         self.sim = super().create_sim(self.device_id, self.graphics_device_id, self.physics_engine, self.sim_params)
 
         self._create_ground_plane()
@@ -370,7 +381,7 @@ class SRL_HRIBase(VecTask):
         self.num_joints = self.gym.get_asset_joint_count(humanoid_asset)
 
         start_pose   = gymapi.Transform()
-        start_pose.p = gymapi.Vec3(*get_axis_params(0.89, self.up_axis_idx))
+        start_pose.p = gymapi.Vec3(*get_axis_params(0.86, self.up_axis_idx))
         start_pose.r = gymapi.Quat(0.0, 0.0, 0.0, 1.0)
 
         self.start_rotation = torch.tensor([start_pose.r.x, start_pose.r.y, start_pose.r.z, start_pose.r.w], device=self.device)
@@ -386,9 +397,7 @@ class SRL_HRIBase(VecTask):
                 self.sim, lower, upper, num_per_row
             )
             contact_filter = 0
-            
             handle = self.gym.create_actor(env_ptr, humanoid_asset, start_pose, "humanoid", i, contact_filter, 0)
-
             self.gym.enable_actor_dof_force_sensors(env_ptr, handle)
 
             for j in range(self.num_bodies):
@@ -397,22 +406,46 @@ class SRL_HRIBase(VecTask):
 
             self.envs.append(env_ptr)
             self.humanoid_handles.append(handle)
-
+            
+            dof_prop = self.gym.get_asset_dof_properties(humanoid_asset)
             if (self._pd_control):
                 dof_prop = self.gym.get_asset_dof_properties(humanoid_asset)
                 dof_prop["driveMode"] = gymapi.DOF_MODE_POS
-                self.gym.set_actor_dof_properties(env_ptr, handle, dof_prop)
-            #print(self.gym.get_actor_dof_names(env_ptr,handle))
+            if self._force_control:
+                srl_start_id = self.get_humanoid_action_size()
+                dof_prop[srl_start_id:]["stiffness"].fill(0.0)
+                dof_prop[srl_start_id:]["damping"].fill(0.0)
+                dof_prop[srl_start_id:]["velocity"].fill(14.0)
+                dof_prop[srl_start_id:]["effort"].fill(200.0)
+                dof_prop[srl_start_id:]["driveMode"] = gymapi.DOF_MODE_EFFORT
+                dof_prop[srl_start_id]["driveMode"] = gymapi.DOF_MODE_NONE
+            self.gym.set_actor_dof_properties(env_ptr, handle, dof_prop)
+
+        dof_props = self.gym.get_asset_dof_properties(humanoid_asset)
+        for i in range(len(dof_props)):
+            self.p_gains[i] = float(dof_props[i]['stiffness'])
+            self.d_gains[i] = float(dof_props[i]['damping'])
 
         dof_prop = self.gym.get_actor_dof_properties(env_ptr, handle)
         for j in range(self.num_dof):
+            self.torque_limits[j] = dof_prop["effort"][j].item()
             if dof_prop['lower'][j] > dof_prop['upper'][j]:
                 self.dof_limits_lower.append(dof_prop['upper'][j])
                 self.dof_limits_upper.append(dof_prop['lower'][j])
             else:
                 self.dof_limits_lower.append(dof_prop['lower'][j])
                 self.dof_limits_upper.append(dof_prop['upper'][j])
-
+        #FIXME: srl dof range
+        if self._force_control:
+            self.dof_limits_lower[srl_start_id+1+1] = self.default_srl_joint_angles[1] - 45/180*np.pi
+            self.dof_limits_lower[srl_start_id+1+2] = self.default_srl_joint_angles[2] - 45/180*np.pi
+            self.dof_limits_lower[srl_start_id+1+4] = self.default_srl_joint_angles[4] - 45/180*np.pi
+            self.dof_limits_lower[srl_start_id+1+5] = self.default_srl_joint_angles[5] - 45/180*np.pi
+            self.dof_limits_upper[srl_start_id+1+1] = self.default_srl_joint_angles[1] + 45/180*np.pi
+            self.dof_limits_upper[srl_start_id+1+2] = self.default_srl_joint_angles[2] + 45/180*np.pi
+            self.dof_limits_upper[srl_start_id+1+4] = self.default_srl_joint_angles[4] + 45/180*np.pi
+            self.dof_limits_upper[srl_start_id+1+5] = self.default_srl_joint_angles[5] + 45/180*np.pi
+                
         self.dof_limits_lower = to_torch(self.dof_limits_lower, device=self.device)
         self.dof_limits_upper = to_torch(self.dof_limits_upper, device=self.device)
 
@@ -422,8 +455,8 @@ class SRL_HRIBase(VecTask):
         
         self._srl_end_ids = self._build_srl_end_body_ids_tensor(env_ptr, handle)
 
-        if (self._pd_control):
-            self._build_pd_action_offset_scale()
+
+        self._build_pd_action_offset_scale()
 
         return
         
@@ -459,6 +492,8 @@ class SRL_HRIBase(VecTask):
                 # extend the action range to be a bit beyond the joint limits so that the motors
                 # don't lose their strength as they approach the joint limits
                 curr_scale = 0.7 * (curr_high - curr_low)
+                if dof_offset >= self.get_humanoid_action_size():  # srl
+                    curr_scale = 0.45 * (curr_high - curr_low)
                 curr_low = curr_mid - curr_scale
                 curr_high = curr_mid + curr_scale
 
@@ -466,9 +501,12 @@ class SRL_HRIBase(VecTask):
                 lim_high[dof_offset] =  curr_high
 
         self._pd_action_offset = 0.5 * (lim_high + lim_low)
-        self._pd_action_scale  = 0.5 * (lim_high - lim_low)
+        self._pd_action_offset[self.get_humanoid_action_size()+1:]=self.default_srl_joint_angles
         self._pd_action_offset = to_torch(self._pd_action_offset, device=self.device)
+
+        self._pd_action_scale  = 0.5 * (lim_high - lim_low)
         self._pd_action_scale  = to_torch(self._pd_action_scale, device=self.device)
+
 
         return
 
@@ -499,20 +537,8 @@ class SRL_HRIBase(VecTask):
         to_target = self.targets - self._initial_root_states[:, 0:3]
         srl_root_pos = self.srl_root_states[:, 0:3]
         clearance_reward = self.compute_foot_clearance_reward()
-        # self.rew_buf[:], self.rew_v_pen_buf[:], self.rew_joint_cost_buf[:], self.rew_upper_buf[:] = compute_humanoid_reward(self.obs_buf, 
-        #                                                                             self.dof_force_tensor, 
-        #                                                                             self._contact_forces,
-        #                                                                             actions,
-        #                                                                             self._torque_threshold,
-        #                                                                             srl_root_body_pos,
-        #                                                                             self._upper_reward_w,
-        #                                                                             self._srl_joint_ids,
-        #                                                                             load_cell_sensor,
-        #                                                                             srl_feet_slip,
-        #                                                                             srl_torque_w  = self._srl_torque_reward_w, 
-        #                                                                             srl_load_cell_w = self._srl_load_cell_w,
-        #                                                                             srl_feet_slip_w = self._srl_feet_slip_w)
-        self.rew_buf[:]  = compute_srl_reward(self.srl_obs_buf[:],
+        self.rew_buf[:] = compute_humanoid_reward(self.obs_buf)
+        self.srl_rew_buf[:]  = compute_srl_reward(self.srl_obs_buf[:],
                                             clearance_reward,
                                             to_target,
                                             self.progress_buf,
@@ -547,10 +573,10 @@ class SRL_HRIBase(VecTask):
         return
 
     def _compute_reset(self):
-        self.reset_buf[:], self._terminate_buf[:] = compute_humanoid_reset(self.reset_buf, self.progress_buf,
-                                                   self._contact_forces, self._contact_body_ids,
+        self.reset_buf[:], self._terminate_buf[:] = compute_humanoid_reset(self.reset_buf, self.progress_buf, self.srl_obs_buf,
+                                                   self._dof_pos[:,-self.srl_actions_num:], self._contact_forces, self._contact_body_ids,
                                                    self._rigid_body_pos, self.max_episode_length,
-                                                   self._enable_early_termination, self._termination_height)
+                                                   self._enable_early_termination, self._termination_height, self._srl_termination_height)
         return
 
     def _refresh_sim_tensors(self):
@@ -717,11 +743,15 @@ class SRL_HRIBase(VecTask):
 
         if self._force_control:
             pd_tar = self._action_to_pd_targets(self.actions)
-            torques = self.p_gains*(pd_tar - self.dof_pos) - self.d_gains*self.dof_vel
+            torques = self.p_gains*(pd_tar - self._dof_pos) - self.d_gains*self._dof_vel
             self.torques = torch.clip(torques, -self.torque_limits, self.torque_limits).view(self.torques.shape)
+            self.torques[:,:self.get_humanoid_action_size()+1] = 0.00
+            # self.torques[:,self.get_humanoid_action_size()+1:] = self.torques[:,self.get_humanoid_action_size()+1:]*0.000001
             self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(self.torques))
-        elif (self._pd_control):
+        if self._pd_control:
             pd_tar = self._action_to_pd_targets(self.actions) # pd_tar.shape: [num_actors, num_dofs]
+            if self._force_control:
+                pd_tar[:,self.get_humanoid_action_size():] = 0.00
             pd_tar_tensor = gymtorch.unwrap_tensor(pd_tar)
             self.gym.set_dof_position_target_tensor(self.sim, pd_tar_tensor)
 
@@ -752,12 +782,25 @@ class SRL_HRIBase(VecTask):
         self.extras['dof_pos'] = self._dof_pos[0].to(self.rl_device)
         self.extras['load_cell'] = self.vec_sensor_tensor[0,self.load_cell_ssidx,:].to(self.rl_device)
         self.extras['right_srl_end_sensor'] = self.vec_sensor_tensor[0,self.right_srl_end_ssidx,:].to(self.rl_device)
-
+        self.extras["target_yaw"] = self.target_yaw
+        
         # debug viz
         if self.viewer and self.debug_viz:
             self._update_debug_viz()
 
         return
+
+    def get_srl_teacher_obs_mask(self):
+        obs_dim = self.srl_obs_num  # 单帧观测维度
+        frame_stack = self.srl_obs_frame_stack  # 堆叠帧数
+        cmd_dim = 3      # 命令输入维度
+        total_dim = obs_dim * frame_stack + cmd_dim
+        masked_idx = torch.ones(total_dim, dtype=torch.float32)
+        mask_num_list = [22, 31]  # 需要mask的单帧观测索引，后续可直接修改
+        for i in range(frame_stack):
+            for idx in mask_num_list:
+                masked_idx[i * obs_dim + idx] = 0.0
+        return masked_idx.bool()
 
     def SRL_joint_torque_cost(self):
         joint_forces = self.dof_force_tensor[:, self._srl_joint_ids]
@@ -827,7 +870,10 @@ class SRL_HRIBase(VecTask):
 
     def _action_to_pd_targets(self, action):
         pd_tar = self._pd_action_offset + self._pd_action_scale * action
-        return pd_tar
+        margin = 0.0 * math.pi / 180.0 
+        low  = (self.dof_limits_lower + margin).unsqueeze(0)
+        high = (self.dof_limits_upper - margin).unsqueeze(0)
+        return torch.max(torch.min(pd_tar, high), low)
 
     def _init_camera(self):
         self.gym.refresh_actor_root_state_tensor(self.sim)
@@ -1066,6 +1112,7 @@ def compute_srl_observations(
                      actions ,                           # 7    22:28
                      sin_phase,                          # 1    29
                      cos_phase,                          # 1    30
+                     srl_dof_obs[:,0:1]                    # 1    31
                     ), dim=-1)
     return obs , potentials, prev_potentials_new
 
@@ -1151,7 +1198,7 @@ def compute_srl_observations_mirrored(
                      local_root_vel  ,               # 3
                      local_root_ang_vel  ,           # 3
                      euler_err,                      # 3 
-                     srl_dof_obs[:,1:] * obs_scales[2],    # 6
+                     srl_dof_obs[:,:] * obs_scales[2],    # 6
                      srl_dof_vel[:,1:] * obs_scales[3],        # 6
                      actions ,
                      sin_phase,    
@@ -1159,88 +1206,19 @@ def compute_srl_observations_mirrored(
                     ), dim=-1)
     return obs  
 
+def compute_humanoid_reward(obs_buf):
+    target_vel_x = obs_buf[:, -3]
 
+    # --- Target Velocity ---
+    root_vel = obs_buf[:, 7:10] 
+    root_target_vel = torch.zeros((root_vel.shape[0], 3), device=root_vel.device)
+    root_target_vel[:, 0] = target_vel_x  
+    vel_error_vec = root_vel - root_target_vel
+    vel_tracking_reward =  1 *  torch.exp(-4 * torch.norm(vel_error_vec, dim=-1))  # α = 1.5
 
+    total_reward = vel_tracking_reward
+    return total_reward
 
-# 计算任务奖励函数
-@torch.jit.script
-def compute_humanoid_reward(obs_buf, 
-                            dof_force_tensor, 
-                            contact_buf,  # body net contact force
-                            action, 
-                            _torque_threshold, 
-                            upper_body_pos, 
-                            upper_reward_w, 
-                            srl_joint_ids,
-                            srl_load_cell_sensor,
-                            srl_feet_slip,
-                            srl_torque_w = 0.0,
-                            srl_load_cell_w  = 0.0 ,
-                            srl_feet_slip_w = 0.0):
-    # type: (Tensor, Tensor, Tensor, Tensor, int, Tensor, int, Tensor, Tensor, Tensor, float, float , float ) -> Tuple[Tensor, Tensor, Tensor, Tensor]
-    
-    # TODO: 目标速度跟随
-    velocity_threshold = 1.4
-    
-    velocity  = obs_buf[:,7]  # vx
-    vy  = obs_buf[:,8]  # vy
-    velocity_penalty = - 20 * (vy**2) - torch.where(velocity < velocity_threshold, (velocity_threshold - velocity)**2, torch.zeros_like(velocity))
-
-    
-    
-    # v1.5.12 比例惩罚，humanoid力矩绝对值超过100
-    torque_threshold = _torque_threshold
-    torque_usage   = dof_force_tensor[:, 14:28]
-    torque_penalty = torch.where(torch.abs(torque_usage) > torque_threshold, 
-                                 (torch.abs(torque_usage) - torque_threshold) / torque_threshold, 
-                                 torch.zeros_like(torque_usage))
-    torque_reward  = - torch.sum(torque_penalty, dim=1)
-    # MLY: 暂时关闭HUMANOID受力惩罚
-    torque_reward = torque_reward * 0
-
-    # 外肢体水平奖励项
-    board_pos = upper_body_pos[:, 0, :]  # (4096, 3)
-    root_pos = upper_body_pos[:, 1, :]  # (4096, 3)
-    upper_body_direction = board_pos - root_pos  # 维度 (4096, 3)
-    norm_upper_body_direction = upper_body_direction / torch.norm(upper_body_direction, dim=1, keepdim=True)
-    # upper_reward = upper_reward_w * (norm_upper_body_direction[:,2] - 1 )
-    upper_reward = - upper_reward_w * (torch.abs(norm_upper_body_direction[:,2]) )
-
-    # SRL 关节力矩惩罚
-    srl_joint_forces = dof_force_tensor[:,  srl_joint_ids]
-    srl_torque_sum = - torch.sum((srl_joint_forces/100) ** 2, dim=1)
-    srl_torque_reward = srl_torque_sum * srl_torque_w
-    # MLY: 暂时关闭SRL受力惩罚
-    srl_torque_reward = 0
-
-
-    # SRL Root受力惩罚
-    load_cell_z = srl_load_cell_sensor[:,2] # 原始数据为正
-    load_cell_y = srl_load_cell_sensor[:,1]
-    load_cell_x = srl_load_cell_sensor[:,0] 
-    scaled_z    = torch.clamp(torch.abs(load_cell_z), min=50, max=2500)  # 限制受力范围
-    scaled_y    = torch.clamp(torch.abs(load_cell_y), min=50, max=2500) 
-    scaled_x    = torch.clamp(torch.abs(load_cell_x), min=50, max=2500)
-    z_penalty   = ((scaled_z - 50) / 50) ** 2 # 平方
-    y_penalty   = ((scaled_y - 50) / 50) ** 2  
-    x_penalty   = ((scaled_x - 50) / 50) ** 2  
-    # z_penalty =  torch.log(1.0 + (scaled_z - 100) / 100.0) / 3.0  # 对数
-    srl_load_cell_reward = -srl_load_cell_w * (z_penalty + y_penalty + x_penalty)
-
-    # 末端滑动惩罚 feet slip
-    srl_feet_slip_reward = - srl_feet_slip_w * srl_feet_slip.squeeze(1)
-
-
-    # scaled_x = torch.clamp(load_cell_x ,min=0)
-    # x_penalty = scaled_x / 1000.0  # ~1 if x=1000
-    # load_cell_penalty =  z_penalty    
-    # srl_load_cell_reward = -load_cell_penalty * srl_load_cell_w       
-
-    # reward = -velocity_penalty + torque_reward
-    reward = velocity_penalty + torque_reward + upper_reward + srl_torque_reward + srl_load_cell_reward + srl_feet_slip_reward
-    
-    # return reward, velocity_penalty, torque_reward, upper_reward
-    return reward, velocity_penalty, srl_load_cell_reward, upper_reward
 
 
 # @torch.jit.script
@@ -1359,11 +1337,12 @@ def compute_srl_reward(
     contact_threshold = 0.095  
     left_foot_height = srl_end_body_pos[:, 0, 2]  # 获取左脚的位置 
     right_foot_height = srl_end_body_pos[:, 1, 2]  # 获取右脚的位置 
+    # walking
     no_feet_on_ground = (left_foot_height > contact_threshold) & (right_foot_height > contact_threshold)
-    no_fly_penalty_coef = torch.where(target_vel_x < 0.1, 5*torch.ones_like(target_vel_x), torch.ones_like(target_vel_x))
-    no_fly_penalty_scale = no_fly_penalty_scale * no_fly_penalty_coef
-    # 如果两只脚同时离地，给予惩罚
-    no_fly_penalty = torch.where(no_feet_on_ground, torch.ones_like(no_feet_on_ground) * no_fly_penalty_scale, torch.zeros_like(no_feet_on_ground))
+    # standing
+    no_both_feet_on_ground = (left_foot_height > contact_threshold) | (right_foot_height > contact_threshold)
+    fly_idx = torch.where(target_vel_x < 0.1, no_both_feet_on_ground, no_feet_on_ground)
+    no_fly_penalty = torch.where(fly_idx, torch.ones_like(no_feet_on_ground) * no_fly_penalty_scale, torch.zeros_like(no_feet_on_ground))
     
 
     # --- Contact force cost ---
@@ -1402,6 +1381,10 @@ def compute_srl_reward(
     gait_phase_penalty_coef = torch.where(target_vel_x < 0.1, torch.zeros_like(target_vel_x), torch.ones_like(target_vel_x))
     gait_phase_penalty =  gait_phase_penalty*gait_phase_penalty_coef
    
+    # Termination penalty
+    srl_unstable = torch.where(torch.abs(obs_buf[:,31]) > 0.38, torch.ones_like(alive_reward), torch.zeros_like(alive_reward))
+    srl_termination_penalty = srl_unstable*10
+
     # --- Total reward ---
     total_reward = alive_reward_scale * alive_reward  \
         + progress_reward_scale * progress_reward \
@@ -1418,7 +1401,8 @@ def compute_srl_reward(
         - no_fly_penalty \
         - gait_phase_penalty \
         - clearance_penalty * clearance_penalty_scale \
-        - lateral_distance_penalty_scale * feet_lateral_penalty
+        - lateral_distance_penalty_scale * feet_lateral_penalty \
+        - srl_termination_penalty
 
     # --- Handle termination ---
     total_reward = torch.where(obs_buf[:, 0] < termination_height, torch.ones_like(total_reward) * death_cost, total_reward)
@@ -1426,9 +1410,9 @@ def compute_srl_reward(
     return total_reward
 
 # @torch.jit.script
-def compute_humanoid_reset(reset_buf, progress_buf, contact_buf, contact_body_ids, rigid_body_pos,
-                           max_episode_length, enable_early_termination, termination_height):
-    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, float, bool, float) -> Tuple[Tensor, Tensor]
+def compute_humanoid_reset(reset_buf, progress_buf, srl_obs_buf, srl_freejoint_pos, contact_buf, contact_body_ids, rigid_body_pos,
+                           max_episode_length, enable_early_termination, termination_height, srl_termination_height):
+    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, bool, float, float) -> Tuple[Tensor, Tensor]
     terminated = torch.zeros_like(reset_buf)
 
     # 提前终止
@@ -1446,6 +1430,14 @@ def compute_humanoid_reset(reset_buf, progress_buf, contact_buf, contact_body_id
 
         has_fallen = torch.logical_and(fall_contact, fall_height)
 
+        # srl fallen        
+        srl_fallen = torch.where(srl_obs_buf[:, 0] < srl_termination_height, torch.ones_like(reset_buf), terminated)
+        # srl unstable
+        srl_unstable = torch.where(torch.abs(srl_freejoint_pos[:,0]) > 0.490, torch.ones_like(reset_buf), terminated)
+        srl_failed = torch.logical_or(srl_fallen, srl_unstable)
+
+        has_fallen = torch.logical_or(has_fallen, srl_failed)
+
         # first timestep can sometimes still have nonzero contact forces
         # so only check after first couple of steps
         has_fallen *= (progress_buf > 1)
@@ -1455,24 +1447,83 @@ def compute_humanoid_reset(reset_buf, progress_buf, contact_buf, contact_body_id
 
     return reset, terminated
 
-@torch.jit.script
-def compute_srl_feet_slip(srl_end_pos, srl_end_vel):
-    # type: (Tensor, Tensor ) -> Tensor
+# # 计算任务奖励函数
+# @torch.jit.script
+# def compute_humanoid_reward(obs_buf, 
+#                             dof_force_tensor, 
+#                             contact_buf,  # body net contact force
+#                             action, 
+#                             _torque_threshold, 
+#                             upper_body_pos, 
+#                             upper_reward_w, 
+#                             srl_joint_ids,
+#                             srl_load_cell_sensor,
+#                             srl_feet_slip,
+#                             srl_torque_w = 0.0,
+#                             srl_load_cell_w  = 0.0 ,
+#                             srl_feet_slip_w = 0.0):
+#     # type: (Tensor, Tensor, Tensor, Tensor, int, Tensor, int, Tensor, Tensor, Tensor, float, float , float ) -> Tuple[Tensor, Tensor, Tensor, Tensor]
+    
+#     # TODO: 目标速度跟随
+#     velocity_threshold = 1.4
+    
+#     velocity  = obs_buf[:,7]  # vx
+#     vy  = obs_buf[:,8]  # vy
+#     velocity_penalty = - 20 * (vy**2) - torch.where(velocity < velocity_threshold, (velocity_threshold - velocity)**2, torch.zeros_like(velocity))
 
-    # srl_end_pos: [num_envs, 2, 3]
-    # srl_end_vel: [num_envs, 2, 3]
-    num_envs = srl_end_pos.size(0)
+    
+    
+#     # v1.5.12 比例惩罚，humanoid力矩绝对值超过100
+#     torque_threshold = _torque_threshold
+#     torque_usage   = dof_force_tensor[:, 14:28]
+#     torque_penalty = torch.where(torch.abs(torque_usage) > torque_threshold, 
+#                                  (torch.abs(torque_usage) - torque_threshold) / torque_threshold, 
+#                                  torch.zeros_like(torque_usage))
+#     torque_reward  = - torch.sum(torque_penalty, dim=1)
+#     # MLY: 暂时关闭HUMANOID受力惩罚
+#     torque_reward = torque_reward * 0
 
-    # 判断是否接触地面（z < 0.9）
-    foot_contact = srl_end_pos[..., 2] < 0.095  # [num_envs, 2]，bool tensor
+#     # 外肢体水平奖励项
+#     board_pos = upper_body_pos[:, 0, :]  # (4096, 3)
+#     root_pos = upper_body_pos[:, 1, :]  # (4096, 3)
+#     upper_body_direction = board_pos - root_pos  # 维度 (4096, 3)
+#     norm_upper_body_direction = upper_body_direction / torch.norm(upper_body_direction, dim=1, keepdim=True)
+#     # upper_reward = upper_reward_w * (norm_upper_body_direction[:,2] - 1 )
+#     upper_reward = - upper_reward_w * (torch.abs(norm_upper_body_direction[:,2]) )
 
-    # 计算xy平面速度的合速度
-    foot_vel_mag = torch.sqrt(srl_end_vel[..., 0] ** 2 + srl_end_vel[..., 1] ** 2)  # [num_envs, 2]
+#     # SRL 关节力矩惩罚
+#     srl_joint_forces = dof_force_tensor[:,  srl_joint_ids]
+#     srl_torque_sum = - torch.sum((srl_joint_forces/100) ** 2, dim=1)
+#     srl_torque_reward = srl_torque_sum * srl_torque_w
+#     # MLY: 暂时关闭SRL受力惩罚
+#     srl_torque_reward = 0
 
-    # 判断是否滑动（速度 > 0.05 且接触地面）
-    foot_slip = (foot_contact & (foot_vel_mag > 0.05))  # [num_envs, 2]
 
-    # 若任一脚滑动，则该env为滑动状态
-    slip_flag = foot_slip.any(dim=1).float().unsqueeze(-1)  # [num_envs, 1]
+#     # SRL Root受力惩罚
+#     load_cell_z = srl_load_cell_sensor[:,2] # 原始数据为正
+#     load_cell_y = srl_load_cell_sensor[:,1]
+#     load_cell_x = srl_load_cell_sensor[:,0] 
+#     scaled_z    = torch.clamp(torch.abs(load_cell_z), min=50, max=2500)  # 限制受力范围
+#     scaled_y    = torch.clamp(torch.abs(load_cell_y), min=50, max=2500) 
+#     scaled_x    = torch.clamp(torch.abs(load_cell_x), min=50, max=2500)
+#     z_penalty   = ((scaled_z - 50) / 50) ** 2 # 平方
+#     y_penalty   = ((scaled_y - 50) / 50) ** 2  
+#     x_penalty   = ((scaled_x - 50) / 50) ** 2  
+#     # z_penalty =  torch.log(1.0 + (scaled_z - 100) / 100.0) / 3.0  # 对数
+#     srl_load_cell_reward = -srl_load_cell_w * (z_penalty + y_penalty + x_penalty)
 
-    return slip_flag
+#     # 末端滑动惩罚 feet slip
+#     srl_feet_slip_reward = - srl_feet_slip_w * srl_feet_slip.squeeze(1)
+
+
+#     # scaled_x = torch.clamp(load_cell_x ,min=0)
+#     # x_penalty = scaled_x / 1000.0  # ~1 if x=1000
+#     # load_cell_penalty =  z_penalty    
+#     # srl_load_cell_reward = -load_cell_penalty * srl_load_cell_w       
+
+#     # reward = -velocity_penalty + torque_reward
+#     reward = velocity_penalty + torque_reward + upper_reward + srl_torque_reward + srl_load_cell_reward + srl_feet_slip_reward
+    
+#     # return reward, velocity_penalty, torque_reward, upper_reward
+#     return reward, velocity_penalty, srl_load_cell_reward, upper_reward
+

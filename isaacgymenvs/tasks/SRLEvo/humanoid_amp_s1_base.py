@@ -83,8 +83,8 @@ class HumanoidAMP_s1_Base(VecTask):
         self._initial_dof_pos = torch.zeros_like(self._dof_pos, device=self.device, dtype=torch.float)
         right_shoulder_x_handle = self.gym.find_actor_dof_handle(self.envs[0], self.humanoid_handles[0], "right_shoulder_x")
         left_shoulder_x_handle = self.gym.find_actor_dof_handle(self.envs[0], self.humanoid_handles[0], "left_shoulder_x")
-        self._initial_dof_pos[:, right_shoulder_x_handle] = 0.5 * np.pi
-        self._initial_dof_pos[:, left_shoulder_x_handle] = -0.5 * np.pi
+        self._initial_dof_pos[:, right_shoulder_x_handle] = 0 * np.pi
+        self._initial_dof_pos[:, left_shoulder_x_handle] = 0 * np.pi
 
         self._initial_dof_vel = torch.zeros_like(self._dof_vel, device=self.device, dtype=torch.float)
         
@@ -524,7 +524,14 @@ def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, l
 @torch.jit.script
 def compute_humanoid_reward(obs_buf):
     # type: (Tensor) -> Tensor
-    reward = torch.ones_like(obs_buf[:, 0])
+    root_vel = obs_buf[:, 7:10] 
+    root_target_vel = torch.zeros((root_vel.shape[0], 3), device=root_vel.device)
+    root_target_vel[:, 0] = 1.0   
+    vel_error_vec = root_vel - root_target_vel
+    vel_tracking_reward =  1 *  torch.exp(-4 * torch.norm(vel_error_vec, dim=-1))  # α = 1.5
+
+    # reward = torch.ones_like(obs_buf[:, 0])
+    reward = vel_tracking_reward
     return reward
 
 @torch.jit.script

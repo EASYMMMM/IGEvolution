@@ -65,7 +65,7 @@ params:
     score_to_win: 20000
     max_epochs: ${resolve_default:5000,${....max_iterations}}
     save_best_after: 100
-    save_frequency: 1000
+    save_frequency: 250
     print_stats: True
     grad_norm: 1.0
     entropy_coef: 0.0
@@ -92,16 +92,19 @@ params:
 
     task_reward_w: 1.0
     disc_reward_w: 1.0
+    teacher_reward_w: 1.0
 
     actions_num_humanoid: 28
     
     # training settings
-    humanoid_checkpoint: "saved_runs/AMP_HumanoidPretrain/network/AMP_HumanoidPretrain_24-16-28-38.pth"
+    humanoid_checkpoint: "saved_runs/AMP_Pretrain_18-16-52-24/nn/AMP_Pretrain_18-16-52-35.pth"
     hsrl_checkpoint: False
+    srl_teacher_checkpoint: False
     mirror_loss: True
-    sym_loss_coef: 1
+    sym_loss_coef: 0.0
     train_srl: True
-    train_humanoid: False
+    train_humanoid: True
+    train_humanoid_freq: 5
 
     # project settings
     start_frame: 0  # 训练帧数对齐

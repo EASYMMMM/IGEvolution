@@ -68,6 +68,8 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
         self._save_load_cell_data = config.get('save_load_cell_data', False)
         self._humanoid_obs_masked = config.get('humanoid_obs_masked', False)
         super().__init__(params)
+        self.obs_log = []
+        self.target_yaw_log = []
 
         
         return
@@ -76,6 +78,7 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
         
         checkpoint = my_load_checkpoint(fn,map_location='cuda:0')
         self.model.load_state_dict(checkpoint['model'])
+        print("=> loaded humanoid checkpoint '{}' (iter {})".format(fn, checkpoint.get('iter', 0)))
         if self.normalize_input and 'running_mean_std' in checkpoint:
             self.model.running_mean_std.load_state_dict(checkpoint['running_mean_std'])
 
@@ -84,6 +87,8 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
             self.env.set_env_state(env_state)
 
         self.model_srl.load_state_dict(checkpoint['model_srl'])
+        print("=> loaded srl checkpoint '{}' (iter {})".format(fn, checkpoint.get('iter', 0)))
+
         if self._normalize_amp_input:
             self._amp_input_mean_std.load_state_dict(checkpoint['amp_input_mean_std'])
         return
@@ -118,21 +123,26 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
         obs = obs_dict['obs']
         if self.has_batch_dimension == False:
             obs = unsqueeze_obs(obs)
+        self.model.eval() # humanoid policy
+        self.model_srl.eval() # srl policy
         processed_obs = self._preproc_obs(obs)
+        self.obs_num_humanoid = self.env.get_humanoid_obs_size()
+        humanoid_obs = processed_obs[:, :self.obs_num_humanoid]
+        srl_obs = processed_obs[:, self.obs_num_humanoid:]
         input_dict = {
             'is_train': False,
             'prev_actions': None, 
-            'obs' : processed_obs,
+            'obs' : humanoid_obs,
             'rnn_states' : self.states
         }
-        if self.env.get_srl_obs_size() == self.env.get_humanoid_obs_size():
-            srl_input_dict = input_dict
-        else:
-            self.obs_num_humanoid = self.env.get_humanoid_obs_size()
-            input_dict['obs'] = processed_obs[:, :self.obs_num_humanoid]
-            srl_input_dict = input_dict.copy()
-            srl_input_dict['obs'] = processed_obs[:, self.obs_num_humanoid:]
-            
+        srl_input_dict = {
+            'is_train': False,
+            'prev_actions': None, 
+            'obs' : srl_obs,
+            'rnn_states' : self.states
+        }
+
+ 
         with torch.no_grad():
             res_dict = self.model(input_dict)
             res_dict_srl = self.model_srl(srl_input_dict)
@@ -141,7 +151,7 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
         mu_srl = res_dict_srl['mus']
         action_srl = res_dict_srl['actions']
         mu = torch.cat((mu_humanoid,mu_srl),1)
-        action = torch.cat((action_humanoid, action_srl),1)
+        action = torch.cat((action_humanoid, action_srl),dim=-1)
         self.states = res_dict['rnn_states']
         if is_deterministic:
             current_action = mu
@@ -268,15 +278,18 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                         masks = self.env.get_action_mask()
                         action = self.get_masked_action(obs_dict, masks, is_determenistic)
                     else:
-                        if not self.seperate_obs:
-                            action = self.get_action(obs_dict, is_determenistic)
-                        else:
-                            action = self.get_action_ma(obs_dict, is_determenistic)
+                        action = self.get_action(obs_dict, is_determenistic)
 
                     obs_dict, r, done, info =  self.env_step(self.env, action)
                     cr += r
                     steps += 1
-    
+                    obs = obs_dict['obs']  # shape: [num_envs, obs_dim]
+                    if isinstance(obs, torch.Tensor):
+                        obs_np = obs.detach().cpu().numpy()[0, self.env.get_humanoid_obs_size():]  # 取第一个环境
+                    else:
+                        obs_np = np.array(obs[0, :])
+                    self.obs_log.append(obs_np)
+                    self.target_yaw_log.append(info['target_yaw'].cpu().numpy())
                     self._post_step(info)
                     
                     # 只记录第一个环境的动作
@@ -316,7 +329,84 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                     else:
                         episode_data['done'].append(0)
 
+
                     if done_count > 0:
+                        if 0 in done_indices:
+                            # 转为 numpy 数组，shape: [T, D]
+                            target_yaw = []
+                            obs_array = np.stack(self.obs_log, axis=0)
+                            target_yaw = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.target_yaw_log], axis=0)
+                            self.obs_log.clear()
+                            self.target_yaw_log.clear()
+
+                            num_dims = 32
+                            mid = num_dims // 2
+
+                            # 前半维度
+                            fig1, axs1 = plt.subplots(mid, 1, figsize=(10, mid * 1.5), sharex=True)
+                            if mid == 1:
+                                axs1 = [axs1]
+
+                            for i in range(mid):
+                                axs1[i].plot(obs_array[:, i])
+                                axs1[i].set_ylabel(f"D{i}")
+                                axs1[i].grid(True)
+                            axs1[-1].set_xlabel("Step")
+                            plt.suptitle(f"Episode {games_played} Observation (Part 1)")
+                            plt.tight_layout()
+                            plt.show()
+
+                            # 后半维度
+                            fig2, axs2 = plt.subplots(num_dims - mid, 1, figsize=(10, (num_dims - mid) * 1.5), sharex=True)
+                            if (num_dims - mid) == 1:
+                                axs2 = [axs2]
+
+                            for i in range(mid, num_dims):
+                                axs2[i - mid].plot(obs_array[:, i])
+                                axs2[i - mid].set_ylabel(f"D{i}")
+                                axs2[i - mid].grid(True)
+                            axs2[-1].set_xlabel("Step")
+                            plt.suptitle(f"Episode {games_played} Observation (Part 2)")
+                            plt.tight_layout()
+                            plt.show()
+                            self.obs_log = []
+
+                            # Target Tracking
+                            fig3, axs3 = plt.subplots(4, 1, figsize=(10, 4 * 2.5), sharex=True)
+                            axs3[0].plot(obs_array[:, 0], label='Actual Value')
+                            axs3[0].plot(obs_array[:, -1], label='Target Value', linestyle='--')
+                            axs3[0].set_ylabel('Pel H')
+                            axs3[0].legend()
+                            axs3[0].grid(True)
+                            axs3[1].plot(obs_array[:, 1], label='Actual Value')
+                            axs3[1].plot(obs_array[:, -3], label='Target Value', linestyle='--')
+                            axs3[1].set_ylabel('Vel X')
+                            axs3[1].legend()
+                            axs3[1].grid(True)
+                            angvel_z_smooth = lowpass_filter(obs_array[:, 6])
+                            prev_yaw = obs_array[:,7+30]
+                            yaw = obs_array[:,7]
+                            real_dt = 0.0166 * 2
+                            yaw_vel = (prev_yaw - yaw)/(real_dt)
+                            axs3[2].plot(obs_array[:, 6], label='Actual Value')
+                            axs3[2].plot(angvel_z_smooth, label='Smoothed Value')
+                            axs3[2].plot(obs_array[:, -2], label='Target Value', linestyle='--')
+                            axs3[2].set_ylabel('AngVel Z')
+                            axs3[2].legend()
+                            axs3[2].grid(True)
+
+                            axs3[3].plot(target_yaw[:, 0]-obs_array[:, 7], label='Actual Value')
+                            axs3[3].plot(target_yaw[:, 0], label='Target Value', linestyle='--')
+                            axs3[3].set_ylabel('AngVel Z')
+                            axs3[3].legend()
+                            axs3[3].grid(True)
+
+
+                            plt.suptitle("Target Tracking")
+                            plt.tight_layout()
+                            plt.show()
+
+
                         if self._save_data:
                             if 0 in done_indices: # 第一个环境结束
                                 print('Env-0 end ')
@@ -341,11 +431,7 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                                     sio.savemat('run_data/GA314_best_env0_episode_data.mat', data_to_save)
                                     print("已保存env0的前三个episode的数据到env0_episode_data.mat")
 
-                                # 当第一个环境完成两个episode时，绘制动作曲线
-                                # if episode_count_env0 == 1:
-                                #     self.plot_actions(actions_env0)
-                                # if episode_count_env0 == 3:
-                                #     self.action0_ave(actions_env0)
+
 
                         if self._save_load_cell_data:
                             if 0 in done_indices:

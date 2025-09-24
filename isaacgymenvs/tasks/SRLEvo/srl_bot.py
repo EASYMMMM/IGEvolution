@@ -177,8 +177,8 @@ class SRL_bot(VecTask):
         self.prev_srl_end_body_pos = torch.zeros((self.num_envs,2,3), device=self.device)
         self.target_yaw = torch.zeros(self.num_envs, device=self.device)
         self.target_ang_vel_z = torch.zeros(self.num_envs, device=self.device)
-        self.target_pelvis_height = torch.full((self.num_envs,), 0.84, device=self.device)
-        self.target_vel_x = torch.full((self.num_envs,), 1.0, device=self.device)
+        self.target_pelvis_height = torch.full((self.num_envs,), 0.84, device=self.device)  # 0.84
+        self.target_vel_x = torch.full((self.num_envs,), 0.0, device=self.device)  # 1.0
 
         self._terminate_buf = torch.ones(self.num_envs, device=self.device, dtype=torch.long)
 
@@ -616,7 +616,7 @@ class SRL_bot(VecTask):
         self.compute_reward(self.actions)
 
         # TODO: Task Randomization
-        self.set_task_target()
+        # self.set_task_target()
         
         # mirrored info
         self.extras["obs_mirrored"] = self.obs_mirrored_buf.to(self.rl_device)  # 镜像观测

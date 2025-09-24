@@ -39,7 +39,6 @@ def my_safe_load(filename, **kwargs):
     return torch_ext.safe_filesystem_op(torch.load, filename, **kwargs)
 
 def my_load_checkpoint(filename,**kwargs):
-    print("=> my loading checkpoint '{}'".format(filename))
     state = my_safe_load(filename, **kwargs)
     return state
 
@@ -72,6 +71,16 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         net_config['input_shape'] = self.obs_num_srl
         self.model_srl = self.network.build(net_config,role='srl')
         self.model_srl.to(self.ppo_device)
+        # teacher model
+        self.network.network_builder.params['space']['continuous']['sigma_init']['val']=0
+        self.network.network_builder.params['mlp']['units']=[512,256,128]
+        self.network.network_builder.params['mlp']['activation']='elu'
+        net_config['input_shape'] = self.vec_env.env.get_teacher_srl_obs_size()
+        net_config['obs_num_srl'] = (self.vec_env.env.get_teacher_srl_obs_size(),)
+        net_config['actions_num_srl'] = self.vec_env.env.get_teacher_srl_action_size()
+        self.model_teacher_srl = self.network.build(net_config,role='srl')
+        self.model_teacher_srl.to(self.ppo_device)
+
         self.states = None
 
         print('='*20)
@@ -80,6 +89,8 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         print('Humanoid Discriminator:', self.model.a2c_network._disc_mlp)
         print('SRL Actor:', self.model_srl.a2c_network.actor_mlp)
         print('SRL Critic:', self.model_srl.a2c_network.critic_mlp)
+        print('SRL Teacher Actor:', self.model_teacher_srl.a2c_network.actor_mlp)
+        print('SRL Teacher Critic:', self.model_teacher_srl.a2c_network.critic_mlp)
         print('='*20)
 
         self.init_rnn_from_model(self.model)
@@ -89,23 +100,6 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         # 初始化优化器
         self.optimizer = optim.Adam(self.model.parameters(), float(self.last_lr), eps=1e-08, weight_decay=self.weight_decay)
         self.optimizer_srl = optim.Adam(self.model_srl.parameters(), float(self.last_lr), eps=1e-08, weight_decay=self.weight_decay)
-
-        # if self.has_central_value:
-        #     cv_config = {
-        #         'state_shape' : torch_ext.shape_whc_to_cwh(self.state_shape), 
-        #         'value_size' : self.value_size,
-        #         'ppo_device' : self.ppo_device, 
-        #         'num_agents' : self.num_agents, 
-        #         'num_steps' : self.horizon_length, 
-        #         'num_actors' : self.num_actors, 
-        #         'num_actions' : self.actions_num, 
-        #         'seq_len' : self.seq_len, 
-        #         'model' : self.central_value_config['network'],
-        #         'config' : self.central_value_config, 
-        #         'writter' : self.writer,
-        #         'multi_gpu' : self.multi_gpu
-        #     }
-        #     self.central_value_net = central_value.CentralValueTrain(**cv_config).to(self.ppo_device)
 
         self.use_experimental_cv = self.config.get('use_experimental_cv', True)
         self.dataset = amp_datasets.AMPDataset(self.batch_size, self.minibatch_size, self.is_discrete, self.is_rnn, self.ppo_device, self.seq_length)
@@ -126,11 +120,11 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         if self._normalize_amp_input:
             self._amp_input_mean_std = RunningMeanStd(self._amp_observation_space.shape).to(self.ppo_device)
 
-        self._srl_dof = 8
-
         self.evaluate_rewards = deque(maxlen=6)  # Reward used to evaluate the design
         self.evaluate_amp_rewards = deque(maxlen=6) 
         self.train_result = {}
+
+        self.update_counter = 0
         return
 
     def init_tensors(self):
@@ -168,7 +162,9 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             self._load_humanoid_network(self._humanoid_checkpoint)    
         if self._hsrl_checkpoint :
             self._load_hsrl_checkpoint(self._hsrl_checkpoint)
-            
+        if self._srl_teacher_checkpoint :
+            self._load_srl_teacher_checkpoint(self._srl_teacher_checkpoint)
+
         if self.mirror_loss:
             self.tensor_list += ['obses_mirrored']
         return
@@ -176,19 +172,22 @@ class SRL_MultiAgent(common_agent.CommonAgent):
     def _load_humanoid_network(self, fn):
         # fn: save path
         # fn = self._humanoid_checkpoint
+        print('=> loading humanoid checkpoint from {}'.format(fn))
         checkpoint = my_load_checkpoint(fn,map_location=self.device)
         self.set_weights(checkpoint)
         return
 
     def set_eval(self):
         super().set_eval()
+        self.model_srl.eval()
         if self._normalize_amp_input:
             self._amp_input_mean_std.eval()
         return
 
     def set_train(self):
-        super().set_train()
-        self.model_srl.train()
+        self.model.train()
+        if self.normalize_rms_advantage:
+            self.advantage_mean_std.train()
         if self._normalize_amp_input:
             self._amp_input_mean_std.train()  # 设置 AMP 输入标准化为训练模式
         return
@@ -225,7 +224,6 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         }
 
         with torch.no_grad():
-
             res_dict = self.model(humanoid_input_dict)
             res_dict_srl = self.model_srl(srl_input_dict)
             # if self.has_central_value:
@@ -238,9 +236,26 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             #     res_dict['values'] = value
         return res_dict, res_dict_srl
 
+    def get_teacher_srl_action_values(self, obs):
+        processed_obs = self._preproc_obs(obs['obs'])
+        self.model_teacher_srl.eval() # srl policy
+        srl_obs = processed_obs[:, self.obs_num_humanoid[0]:]
+        teacher_srl_obs = srl_obs[:, self.vec_env.env.get_srl_teacher_obs_mask()]
+        srl_input_dict = {
+            'is_train': False,
+            'prev_actions': None, 
+            'obs' : teacher_srl_obs,
+            'rnn_states' : self.rnn_states
+        }
+
+        with torch.no_grad():
+            res_dict = self.model_teacher_srl(srl_input_dict)
+
+        return res_dict
+
     def get_srl_mirrored_action_values(self, obs):
         processed_obs = self._preproc_obs(obs['obs'])
-        self.model_srl.eval()
+        # self.model_srl.eval()
         srl_input_dict = {
             'is_train': False,
             'prev_actions': None, 
@@ -278,7 +293,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             
 
             res_dict, res_dict_srl = self.get_action_values(self.obs) # 获取动作值
-
+            
             if self.mirror_loss: # 镜像损失
                 self.experience_buffer_srl.update_data('obs_mirrored', n, self.obs['obs_mirrored']) # 镜像观测
                 mirrored_obs = {}
@@ -288,6 +303,10 @@ class SRL_MultiAgent(common_agent.CommonAgent):
                 self.experience_buffer.update_data(k, n, res_dict[k]) 
                 self.experience_buffer_srl.update_data(k, n, res_dict_srl[k]) 
 
+            if self._srl_teacher_checkpoint:
+                res_dict_teacher_srl = self.get_teacher_srl_action_values(self.obs)
+
+            
             # if self.has_central_value:
             #     self.experience_buffer.update_data('states', n, self.obs['states'])
             
@@ -304,19 +323,17 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             srl_obs['obs'] = total_obs[:, self.obs_num_humanoid[0]:]
             
             # # srl reward
-            # rewards_srl = infos["srl_rewards"]
-            # rewards_srl = rewards_srl.unsqueeze(1)
+            rewards_srl = infos["srl_rewards"]
+            rewards_srl = rewards_srl.unsqueeze(1)
 
             ''' humanoid buffer '''
-            shaped_rewards = self.rewards_shaper(rewards)  # DefaultRewardsShaper
-            self.experience_buffer.update_data('rewards', n, shaped_rewards)
+            self.experience_buffer.update_data('rewards', n, rewards)
             self.experience_buffer.update_data('next_obses', n, humanoid_obs['obs'])
             self.experience_buffer.update_data('dones', n, self.dones)
             self.experience_buffer.update_data('amp_obs', n, infos['amp_obs'])
             
             ''' srl buffer '''
-            # shaped_rewards_srl = self.rewards_shaper(rewards_srl)
-            self.experience_buffer_srl.update_data('rewards', n, shaped_rewards)
+            self.experience_buffer_srl.update_data('rewards', n, rewards_srl)
             self.experience_buffer_srl.update_data('next_obses', n, srl_obs['obs'])
             self.experience_buffer_srl.update_data('dones', n, self.dones)
             if self.mirror_loss:
@@ -340,15 +357,19 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             next_vals_srl = self._eval_critic_srl(self.obs)  
             next_vals_srl *= (1.0 - terminated)
             self.experience_buffer_srl.update_data('next_values', n, next_vals_srl)
-            
-            # self.current_rewards_srl += rewards_srl
 
             # calculate AMP reward 
             _amp_rewards = self._calc_amp_rewards(infos['amp_obs']) 
+            if self._srl_teacher_checkpoint:
+                teacher_rewards = self.calc_teacher_rewards(res_dict_teacher_srl['actions'], res_dict_srl['actions'])
+            else:
+                teacher_rewards = None
             # calculate total reward
-            _total_rewards = self._combine_rewards(rewards,_amp_rewards)
+            _total_rewards = self._combine_humanoid_rewards(rewards,_amp_rewards)
+            _total_srl_rewards = self._combine_srl_rewards(rewards_srl, teacher_rewards )
             # store reward
             self.current_rewards_task += rewards     # task reward
+            self.current_rewards_srl  += _total_srl_rewards
             self.current_rewards      += _total_rewards  # task reward + amp reward
             self.current_rewards_amp  += _amp_rewards['disc_rewards']
 
@@ -356,7 +377,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             done_indices = all_done_indices[::self.num_agents]
   
             self.game_rewards.update(self.current_rewards[done_indices])
-            # self.game_rewards_srl.update(self.current_rewards_srl[done_indices])
+            self.game_rewards_srl.update(self.current_rewards_srl[done_indices])
             self.game_rewards_amp.update(self.current_rewards_amp[done_indices])
             self.game_rewards_task.update(self.current_rewards_task[done_indices])
        
@@ -375,11 +396,11 @@ class SRL_MultiAgent(common_agent.CommonAgent):
                 self.evaluate_amp_rewards.append(amp_reward)
             ''' If env is done, reset current_reward '''
             
-            self.current_rewards = self.current_rewards * not_dones.unsqueeze(1)
-            # self.current_rewards_srl = self.current_rewards_srl * not_dones.unsqueeze(1)
-            self.current_rewards_amp     = self.current_rewards_amp     * not_dones.unsqueeze(1)
-            self.current_rewards_task    = self.current_rewards_task    * not_dones.unsqueeze(1)
-            self.current_lengths = self.current_lengths * not_dones
+            self.current_rewards      = self.current_rewards      * not_dones.unsqueeze(1)
+            self.current_rewards_srl  = self.current_rewards_srl  * not_dones.unsqueeze(1)
+            self.current_rewards_amp  = self.current_rewards_amp  * not_dones.unsqueeze(1)
+            self.current_rewards_task = self.current_rewards_task * not_dones.unsqueeze(1)
+            self.current_lengths      = self.current_lengths * not_dones
 
             if (self.vec_env.env.viewer and (n == (self.horizon_length - 1))):
                 self._amp_debug(infos)
@@ -392,7 +413,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         mb_rewards = self.experience_buffer.tensor_dict['rewards'] # 获取奖励
         mb_amp_obs = self.experience_buffer.tensor_dict['amp_obs'] # 获取 AMP 观测
         amp_rewards = self._calc_amp_rewards(mb_amp_obs) # 计算 AMP 奖励
-        mb_rewards = self._combine_rewards(mb_rewards, amp_rewards) # 合并奖励
+        mb_rewards = self._combine_humanoid_rewards(mb_rewards, amp_rewards) # 合并奖励
 
         mb_advs = self.discount_values(mb_fdones, mb_values, mb_rewards, mb_next_values) # 折扣价值
         mb_returns = mb_advs + mb_values # 价值 = 当前价值+未来折扣价值
@@ -403,7 +424,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         mb_next_values_srl = self.experience_buffer_srl.tensor_dict['next_values'] # 获取下一个价值
 
         mb_rewards_srl = self.experience_buffer_srl.tensor_dict['rewards'] # 获取奖励
-        mb_rewards_srl = self._combine_rewards(mb_rewards_srl, amp_rewards) # 合并奖励
+        # mb_rewards_srl = self._combine_srl_rewards(mb_rewards_srl, amp_rewards) # 合并奖励
 
         mb_advs_srl = self.discount_values(mb_fdones_srl, mb_values_srl, mb_rewards_srl, mb_next_values_srl) # 折扣价值
         mb_returns_srl = mb_advs_srl + mb_values_srl # 价值 = 当前价值+未来折扣价值
@@ -442,10 +463,10 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         advantages = returns - values
 
         if self.normalize_value:
-            self.value_mean_std.train()
-            values = self.value_mean_std(values)
-            returns = self.value_mean_std(returns)
-            self.value_mean_std.eval()
+            self.value_mean_std_srl.train()
+            values  = self.value_mean_std_srl(values)
+            returns = self.value_mean_std_srl(returns)
+            self.value_mean_std_srl.eval()
 
         advantages = torch.sum(advantages, axis=1)
 
@@ -487,11 +508,6 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         return
 
     def train_epoch(self):
-
-        # freeze 
-        # if self._train_humanoid == False:
-        #     self._freeze_humanoid_model()
-
         play_time_start = time.time()
         with torch.no_grad():
             batch_dict, batch_dict_srl = self.play_steps() 
@@ -510,14 +526,12 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         else:
             batch_dict['amp_obs_replay'] = self._amp_replay_buffer.sample(num_obs_samples)['amp_obs']
 
-        self.set_train()  # 设置为训练模式
+        # self.set_train()  # 设置为训练模式
 
         self.curr_frames = batch_dict.pop('played_frames') #当前帧数
         self.prepare_dataset(batch_dict, batch_dict_srl) # 准备数据集
         self.algo_observer.after_steps()
 
-        # if self.has_central_value:
-        #     self.train_central_value()
 
         train_info = None
 
@@ -527,14 +541,13 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         for _ in range(0, self.mini_epochs_num):
             ep_kls = []
             for i in range(len(self.dataset)):  
-                # 调用 train_actor_critic 方法执行一次训练步骤
-
                 curr_train_info = self.train_actor_critic(self.dataset[i],self.dataset_srl[i])
                 if self.schedule_type == 'legacy':
-                    if self._train_humanoid:
-                        kl = curr_train_info['kl'].item()
-                    else:
-                        kl = curr_train_info['kl_srl'].item()
+                    # if self._train_humanoid:
+                    #     kl = curr_train_info['kl'].item()
+                    # else:
+                    #     kl = curr_train_info['kl_srl'].item()
+                    kl = curr_train_info['kl_srl'].item()
                     self.last_lr, self.entropy_coef = self.scheduler.update(self.last_lr, self.entropy_coef, self.epoch_num, 0, kl)
                     self.update_lr(self.last_lr)
 
@@ -544,6 +557,8 @@ class SRL_MultiAgent(common_agent.CommonAgent):
                         train_info[k] = [v]
                 else:
                     for k, v in curr_train_info.items():
+                        if k not in train_info:
+                            train_info[k] = []
                         train_info[k].append(v)
             
             if 'kl' in train_info:
@@ -577,14 +592,14 @@ class SRL_MultiAgent(common_agent.CommonAgent):
 
     def train_actor_critic(self, input_dict, input_dict_srl):
         if self._train_humanoid:
-            self.calc_gradients(input_dict)
+            self.update_counter += 1
+            if self.update_counter % self._train_humanoid_freq == 0:
+                self.calc_gradients(input_dict)
         self.calc_gradients_srl(input_dict_srl)
         
         return self.train_result
 
     def calc_gradients_srl(self, input_dict):
-        self.set_train()
-
         value_preds_batch = input_dict['old_values'] # 获取旧的值函数预测
         old_action_log_probs_batch = input_dict['old_logp_actions'] # 获取旧的动作对数概率
         advantage = input_dict['advantages'] # 获取优势
@@ -594,7 +609,6 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         actions_batch = input_dict['actions']  # 获取动作
         obs_batch = input_dict['obs'] # 获取观测
         obs_batch = self._preproc_obs(obs_batch) # 预处理观测
-
 
         lr = self.last_lr 
         kl = 1.0  # 初始化 KL 散度
@@ -616,6 +630,10 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             mu_mirrored = res_dict_srl_mirrored['mus']
         rnn_masks = None
         
+        self.model_srl.train()
+        if self.normalize_rms_advantage:
+            self.advantage_mean_std.train()
+
         with torch.cuda.amp.autocast(enabled=self.mixed_precision):
             res_dict = self.model_srl(batch_dict) # 通过模型计算结果
             action_log_probs = res_dict['prev_neglogp']  # 获取动作的对数概率
@@ -838,9 +856,15 @@ class SRL_MultiAgent(common_agent.CommonAgent):
 
         return
 
-    def _freeze_humanoid_model(self):
-        for param in self.model.parameters():
-            param.requires_grad = False
+
+    def calc_teacher_rewards(self, teacher_actions, student_actions):
+        """
+        计算教师-学生奖励: 学生动作接近教师动作时奖励更高
+        """
+        # 丢掉free joint第一维
+        teacher_r = -torch.sum((student_actions[:,1:] - teacher_actions) ** 2, dim=-1, keepdim=True)
+        return teacher_r
+
 
     def _actor_loss(self, old_action_log_probs_batch, action_log_probs, advantage, curr_e_clip):
         clip_frac = None
@@ -897,6 +921,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         self._start_frame = config.get('start_frame',0)
         self._task_reward_w = config['task_reward_w']
         self._disc_reward_w = config['disc_reward_w']
+        self._teacher_reward_w = config['teacher_reward_w']
 
         self._amp_observation_space = self.env_info['amp_observation_space']
         self._amp_batch_size = int(config['amp_batch_size'])
@@ -912,8 +937,10 @@ class SRL_MultiAgent(common_agent.CommonAgent):
 
         self._train_srl = config['train_srl']
         self._train_humanoid  = config['train_humanoid']
+        self._train_humanoid_freq  = config['train_humanoid_freq']
         self._humanoid_checkpoint = config.get('humanoid_checkpoint',False)
         self._hsrl_checkpoint = config.get('hsrl_checkpoint',False)
+        self._srl_teacher_checkpoint = config.get("srl_teacher_checkpoint", False)
 
         self.mirror_loss = config.get('mirror_loss', False)
 
@@ -1032,18 +1059,18 @@ class SRL_MultiAgent(common_agent.CommonAgent):
                     mean_rewards = self.game_rewards.get_mean()
                     mean_lengths = self.game_lengths.get_mean()
 
-                    # mean_rewards_srl = self.game_rewards_srl.get_mean()
+                    mean_rewards_srl = self.game_rewards_srl.get_mean()
                     mean_rewards_amp = self.game_rewards_amp.get_mean()
                     mean_rewards_task = self.game_rewards_task.get_mean()
                  
                     for i in range(self.value_size):
-                        self.writer.add_scalar('rewards/total_frame'.format(i), mean_rewards[i], frame)
-                        self.writer.add_scalar('rewards/total_iter'.format(i), mean_rewards[i], epoch_num)
-                        self.writer.add_scalar('rewards/total_time'.format(i), mean_rewards[i], total_time)
-                        # task
+                        self.writer.add_scalar('rewards/humanoid'.format(i), mean_rewards[i], frame)
+                        # humanoid task
                         self.writer.add_scalar('rewards/task'.format(i), mean_rewards_task[i], frame)
                         # amp
                         self.writer.add_scalar('rewards/AMP'.format(i), mean_rewards_amp[i], frame)
+                        # srl
+                        self.writer.add_scalar('rewards/SRL'.format(i), mean_rewards_srl[i], frame)
                     self.writer.add_scalar('episode_lengths/frame', mean_lengths, frame)
                     self.writer.add_scalar('episode_lengths/iter', mean_lengths, epoch_num)
                     
@@ -1067,9 +1094,16 @@ class SRL_MultiAgent(common_agent.CommonAgent):
          
     def _load_hsrl_checkpoint(self, fn,):
         # restore nn of humanoid & srl
+        print('=> loading hsrl checkpoint from {}'.format(fn))
         checkpoint = my_load_checkpoint(fn,map_location=self.device)
         self.model.load_state_dict(checkpoint['model'])
         self.model_srl.load_state_dict(checkpoint['model_srl'])
+
+    def _load_srl_teacher_checkpoint(self, fn,):
+        # restore nn of humanoid & srl
+        print('=> loading srl teacher checkpoint from {}'.format(fn))
+        checkpoint = my_load_checkpoint(fn,map_location=self.device)
+        self.model_teacher_srl.load_state_dict(checkpoint['model'], strict=False)
 
     def save(self, fn):
         state = self.get_full_state_weights()
@@ -1132,11 +1166,17 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         if self._normalize_amp_input:
             amp_obs = self._amp_input_mean_std(amp_obs)
         return amp_obs
-
-    def _combine_rewards(self, task_rewards, amp_rewards):
+    
+    def _combine_humanoid_rewards(self, task_rewards, amp_rewards):
         disc_r = amp_rewards['disc_rewards']
-        combined_rewards = self._task_reward_w * task_rewards + \
-                         + self._disc_reward_w * disc_r
+        combined_rewards = self._task_reward_w * task_rewards \
+                           + self._disc_reward_w * disc_r
+        return combined_rewards
+
+    def _combine_srl_rewards(self, srl_rewards, teacher_rewards=None):
+        combined_rewards = srl_rewards
+        if teacher_rewards is not None:
+            combined_rewards += self._teacher_reward_w * teacher_rewards
         return combined_rewards
 
     def _eval_disc(self, amp_obs):
@@ -1248,7 +1288,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         humanoid_obs = processed_obs[:, :self.obs_num_humanoid[0]]
         
         if self.normalize_input:
-            processed_obs = self.model.norm_obs(humanoid_obs)
+            humanoid_obs = self.model.norm_obs(humanoid_obs)
         value = self.model.a2c_network.eval_critic(humanoid_obs)
 
         if self.normalize_value:
@@ -1263,7 +1303,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         srl_obs = processed_obs[:, -self.obs_num_srl[0]:]
 
         if self.normalize_input:
-            processed_obs = self.model_srl.norm_obs(srl_obs)
+            srl_obs = self.model_srl.norm_obs(srl_obs)
         value = self.model_srl.a2c_network.eval_critic(srl_obs)
 
         if self.normalize_value:
