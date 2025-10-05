@@ -95,7 +95,7 @@
 						<joint armature="0.01" axis="1 0 0" damping="20" name="right_ankle_x" pos="0 0 0" range="-30 30" stiffness="200"/>
 						<joint armature="0.01" axis="0 1 0" damping="20" name="right_ankle_y" pos="0 0 0" range="-55 55" stiffness="200"/>
 						<joint armature="0.01" axis="0 0 1" damping="20" name="right_ankle_z" pos="0 0 0" range="-40 40" stiffness="200"/>
-						<geom density="1141" name="right_foot" pos="0.045 0 -0.0225" size="0.0885 0.045 0.0275" type="box"/>
+						<geom density="1141" name="right_foot" friction="5.0 0.05 0.05" pos="0.045 0 -0.0225" size="0.0885 0.045 0.0275" type="box"/>
 						<site class="touch" name="right_foot" pos="0.045 0 -0.0225" size="0.0895 0.055 0.0285" type="box"/>
 					</body>
 				</body>
@@ -117,15 +117,17 @@
 						<joint armature="0.01" axis="1 0 0" damping="20" name="left_ankle_x" pos="0 0 0" range="-30 30" stiffness="200"/>
 						<joint armature="0.01" axis="0 1 0" damping="20" name="left_ankle_y" pos="0 0 0" range="-55 55" stiffness="200"/>
 						<joint armature="0.01" axis="0 0 1" damping="20" name="left_ankle_z" pos="0 0 0" range="-40 40" stiffness="200"/>
-						<geom density="1141" name="left_foot" pos="0.045 0 -0.0225" size="0.0885 0.045 0.0275" type="box"/>
+						<geom density="1141" name="left_foot" friction="5.0 0.05 0.05" pos="0.045 0 -0.0225" size="0.0885 0.045 0.0275" type="box"/>
 						<site class="touch" name="left_foot" pos="0.045 0 -0.0225" size="0.0895 0.055 0.0285" type="box"/>
 					</body>
 				</body>
 			</body>
-			<body name="SRL" pos="-0.20 0 0.05" >
+			<body name="SRL" pos="-0.25 0 0.05" > <!-- <body name="SRL" pos="-0.20 0 0.05" > -->
                 <geom name="board" pos="0 0 0" size="0.0005 0.1 0.1 " type="box" density='100'/> 
+				<joint armature="0.00" axis="1 0 0" damping="10" stiffness="100"  type="slide" name="SRL_damping_x" pos="0 0 0" range="-0.025 0.025" />
+				<joint armature="0.00" axis="0 0 1" damping="10" stiffness="100"  type="slide" name="SRL_damping_z" pos="0 0 0" range="-0.025 0.025" />
 				<body name="SRL_root" pos="-0.30 0 0" quat="0.0 0.0 0.0 1.0">
-                    <joint armature="0.00" axis="0 1 0" damping="0" name="SRL_freejoint_y" pos="-0.525 0 0" range="-20 20" stiffness="0"/>
+                    <joint armature="0.00" axis="0 1 0" damping="0" name="SRL_freejoint_y" pos="-0.30 0 0" range="-20 20" stiffness="0"/>
 					<geom density="1000" name="SRL_geom_root" pos="0 0 0" size="0.2 0.095 0.05" type="box" contype="1" conaffinity="1"/>
 					<geom density="500" name="SRL_geom_load" pos="0 0 0.22" size="0.13 0.13 0.11" type="box" contype="1" conaffinity="1"/>
 					<body name="SRL_right_leg1" pos="0.02 0.13 0"  quat="1.0 0.0 0.0 0.0">

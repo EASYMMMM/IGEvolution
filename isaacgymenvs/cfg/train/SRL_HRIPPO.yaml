@@ -25,6 +25,7 @@ params:
 
     mlp:
       units: [512, 256]
+      srl_units: [1024, 512]
       activation: relu
       d2rl: False
 
@@ -51,6 +52,7 @@ params:
     multi_gpu: ${....multi_gpu}
     mixed_precision: False
     normalize_input: True
+    normalize_srl_input: True
     normalize_value: True
     value_bootstrap: True
     num_actors: ${....task.env.numEnvs}
@@ -62,22 +64,23 @@ params:
     learning_rate: 3e-5
     lr_schedule: constant
     kl_threshold: 0.008
-    score_to_win: 20000
+    entropy_coef: 0.001
+    critic_coef: 5
+    bounds_loss_coef: 0.01
+
+    score_to_win: 2000000
     max_epochs: ${resolve_default:5000,${....max_iterations}}
     save_best_after: 100
     save_frequency: 250
     print_stats: True
     grad_norm: 1.0
-    entropy_coef: 0.0
     truncate_grads: False
     e_clip: 0.2
     horizon_length: 16
     minibatch_size: 32768
     mini_epochs: 6
-    critic_coef: 5
     clip_value: False
     seq_len: 4
-    bounds_loss_coef: 10
     amp_obs_demo_buffer_size: 200000
     amp_replay_buffer_size: 1000000
     amp_replay_keep_prob: 0.01
@@ -104,7 +107,8 @@ params:
     sym_loss_coef: 0.0
     train_srl: True
     train_humanoid: True
-    train_humanoid_freq: 5
+    train_humanoid_freq: 10
+    dagger_loss_coef: 0.0
 
     # project settings
     start_frame: 0  # 训练帧数对齐
@@ -112,6 +116,8 @@ params:
     train_dir: runs
     save_data: False  # 储存结果数据，用于演示
     save_load_cell_data: False  # 储存load cell数据，用于演示
+
+    play_deterministic: False
  
 
 gym:

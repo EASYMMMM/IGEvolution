@@ -59,16 +59,22 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         self.is_discrete = False
         self._setup_action_space()
         self.bounds_loss_coef = config.get('bounds_loss_coef', None)
-        self.sym_loss_coef = config.get('sym_loss_coef',None)
+        self.sym_loss_coef = config.get('sym_loss_coef',0)
+        self.dagger_loss_coef = config.get('dagger_loss_coef',0)
         self.clip_actions = config.get('clip_actions', True)
         self.network_path = self.nn_dir 
         
+        # humanoid model
         net_config = self._build_net_config(params)  # 构建网络配置
         net_config['input_shape'] = self.obs_num_humanoid
-        # self.network: srl_models.ModelSRLContinuous
         self.model = self.network.build(net_config,role='humanoid')
         self.model.to(self.ppo_device)
+
+        # srl model
+        self.network.network_builder.params['mlp']['units'] = params['network']['mlp']['srl_units']
+        net_config = self._build_net_config(params)
         net_config['input_shape'] = self.obs_num_srl
+        net_config['normalize_input'] = self.normalize_srl_input
         self.model_srl = self.network.build(net_config,role='srl')
         self.model_srl.to(self.ppo_device)
         # teacher model
@@ -76,6 +82,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         self.network.network_builder.params['mlp']['units']=[512,256,128]
         self.network.network_builder.params['mlp']['activation']='elu'
         net_config['input_shape'] = self.vec_env.env.get_teacher_srl_obs_size()
+        net_config['priv_obs_num_srl'] = (self.vec_env.env.get_teacher_srl_obs_size(),)
         net_config['obs_num_srl'] = (self.vec_env.env.get_teacher_srl_obs_size(),)
         net_config['actions_num_srl'] = self.vec_env.env.get_teacher_srl_action_size()
         self.model_teacher_srl = self.network.build(net_config,role='srl')
@@ -155,6 +162,17 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         self.experience_buffer_srl.tensor_dict['next_obses'] = torch.zeros_like(self.experience_buffer_srl.tensor_dict['obses'])
         self.experience_buffer_srl.tensor_dict['next_values'] = torch.zeros_like(self.experience_buffer_srl.tensor_dict['values'])
         self.experience_buffer_srl.tensor_dict['obs_mirrored'] = torch.zeros_like(self.experience_buffer_srl.tensor_dict['obses'])
+        obs_shape = self.experience_buffer_srl.tensor_dict['obses'].shape
+        self.experience_buffer_srl.tensor_dict['teacher_actions'] = torch.zeros(
+            obs_shape[0], obs_shape[1], 6, 
+            device=self.ppo_device,
+            dtype=self.experience_buffer_srl.tensor_dict['obses'].dtype
+        )
+        self.experience_buffer_srl.tensor_dict['priv_obses'] = torch.zeros(
+            obs_shape[0], obs_shape[1], self.vec_env.env.get_srl_priv_obs_size(), 
+            device=self.ppo_device,
+            dtype=self.experience_buffer_srl.tensor_dict['obses'].dtype
+        )
 
         self._build_amp_buffers() # 构建 AMP 缓冲区  
 
@@ -209,7 +227,9 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         self.model.eval() # humanoid policy
         self.model_srl.eval() # srl policy
         humanoid_obs = processed_obs[:, :self.obs_num_humanoid[0]]
-        srl_obs = processed_obs[:, self.obs_num_humanoid[0]:]
+        srl_obs = processed_obs[:, -self.obs_num_srl[0]:]
+        priv_srl_obs = processed_obs[:, -self.priv_obs_num_srl[0]:]
+
         humanoid_input_dict = {
             'is_train': False,
             'prev_actions': None, 
@@ -220,7 +240,8 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             'is_train': False,
             'prev_actions': None, 
             'obs' : srl_obs,
-            'rnn_states' : self.rnn_states
+            'rnn_states' : self.rnn_states,
+            'priv_obs': priv_srl_obs,
         }
 
         with torch.no_grad():
@@ -260,7 +281,8 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             'is_train': False,
             'prev_actions': None, 
             'obs' : processed_obs,
-            'rnn_states' : self.rnn_states
+            'rnn_states' : self.rnn_states,
+            'priv_obs': obs['priv_obs'],
         }
 
         with torch.no_grad():
@@ -287,10 +309,11 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             self.obs, done_env_ids = self._env_reset_done() # 重置环境
             total_obs = self.obs['obs']
             humanoid_obs = total_obs[:, :self.obs_num_humanoid[0]]
-            srl_obs = total_obs[:, self.obs_num_humanoid[0]:]
+            srl_obs = total_obs[:, -self.obs_num_srl[0]:]
+            priv_srl_obs = total_obs[:, -self.priv_obs_num_srl[0]:]
             self.experience_buffer.update_data('obses', n, humanoid_obs)
             self.experience_buffer_srl.update_data('obses', n, srl_obs)
-            
+            self.experience_buffer_srl.update_data('priv_obses', n, priv_srl_obs)       
 
             res_dict, res_dict_srl = self.get_action_values(self.obs) # 获取动作值
             
@@ -305,7 +328,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
 
             if self._srl_teacher_checkpoint:
                 res_dict_teacher_srl = self.get_teacher_srl_action_values(self.obs)
-
+                self.experience_buffer_srl.update_data('teacher_actions', n, res_dict_teacher_srl['actions'])
             
             # if self.has_central_value:
             #     self.experience_buffer.update_data('states', n, self.obs['states'])
@@ -360,16 +383,11 @@ class SRL_MultiAgent(common_agent.CommonAgent):
 
             # calculate AMP reward 
             _amp_rewards = self._calc_amp_rewards(infos['amp_obs']) 
-            if self._srl_teacher_checkpoint:
-                teacher_rewards = self.calc_teacher_rewards(res_dict_teacher_srl['actions'], res_dict_srl['actions'])
-            else:
-                teacher_rewards = None
             # calculate total reward
             _total_rewards = self._combine_humanoid_rewards(rewards,_amp_rewards)
-            _total_srl_rewards = self._combine_srl_rewards(rewards_srl, teacher_rewards )
             # store reward
             self.current_rewards_task += rewards     # task reward
-            self.current_rewards_srl  += _total_srl_rewards
+            self.current_rewards_srl  += rewards_srl
             self.current_rewards      += _total_rewards  # task reward + amp reward
             self.current_rewards_amp  += _amp_rewards['disc_rewards']
 
@@ -435,9 +453,11 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         batch_dict['played_frames'] = self.batch_size
 
         # srl batch
-        batch_dict_srl = self.experience_buffer_srl.get_transformed_list(a2c_common.swap_and_flatten01, self.tensor_list) # 获取转换后的批次字典
+        srl_tensor_dict = self.tensor_list + ['teacher_actions']
+        batch_dict_srl = self.experience_buffer_srl.get_transformed_list(a2c_common.swap_and_flatten01, srl_tensor_dict) # 获取转换后的批次字典
         batch_dict_srl['returns'] = a2c_common.swap_and_flatten01(mb_returns_srl) # 设置返回值
         batch_dict_srl['obs_mirrored'] = a2c_common.swap_and_flatten01(self.experience_buffer_srl.tensor_dict['obs_mirrored'] ) # 设置返回值
+        batch_dict_srl['priv_obses'] = a2c_common.swap_and_flatten01(self.experience_buffer_srl.tensor_dict['priv_obses'] ) # 设置返回值
         batch_dict_srl['played_frames'] = self.batch_size
 
         # humanoid AMP batch
@@ -459,6 +479,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         sigmas = batch_dict['sigmas']
         rnn_states = batch_dict.get('rnn_states', None)
         rnn_masks = batch_dict.get('rnn_masks', None)
+        priv_obses = batch_dict['priv_obses']
 
         advantages = returns - values
 
@@ -494,8 +515,11 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         dataset_dict['rnn_masks'] = rnn_masks
         dataset_dict['mu'] = mus
         dataset_dict['sigma'] = sigmas
+        dataset_dict['priv_obses'] = priv_obses
         if self.mirror_loss:
             dataset_dict['obs_mirrored'] = batch_dict['obs_mirrored']
+        if self._srl_teacher_checkpoint:
+            dataset_dict['teacher_actions'] = batch_dict['teacher_actions']
 
         self.dataset_srl.update_values_dict(dataset_dict)
 
@@ -595,135 +619,139 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             self.update_counter += 1
             if self.update_counter % self._train_humanoid_freq == 0:
                 self.calc_gradients(input_dict)
+                if self.update_counter%5 == 0:
+                    self._train_humanoid_freq += 1
         self.calc_gradients_srl(input_dict_srl)
         
         return self.train_result
 
     def calc_gradients_srl(self, input_dict):
-        value_preds_batch = input_dict['old_values'] # 获取旧的值函数预测
-        old_action_log_probs_batch = input_dict['old_logp_actions'] # 获取旧的动作对数概率
-        advantage = input_dict['advantages'] # 获取优势
-        old_mu_batch = input_dict['mu'] # 获取旧的均值
-        old_sigma_batch = input_dict['sigma'] # 获取旧的标准差
-        return_batch = input_dict['returns']  # 获取返回值
-        actions_batch = input_dict['actions']  # 获取动作
-        obs_batch = input_dict['obs'] # 获取观测
-        obs_batch = self._preproc_obs(obs_batch) # 预处理观测
+        value_preds_batch = input_dict['old_values']
+        old_action_log_probs_batch = input_dict['old_logp_actions']
+        advantage = input_dict['advantages']
+        old_mu_batch = input_dict['mu']
+        old_sigma_batch = input_dict['sigma']
+        return_batch = input_dict['returns']
+        actions_batch = input_dict['actions']
+        obs_batch = self._preproc_obs(input_dict['obs'])
+        priv_obses = input_dict['priv_obses']
 
         lr = self.last_lr 
-        kl = 1.0  # 初始化 KL 散度
-        lr_mul = 1.0 # 初始化学习率倍乘因子
-        curr_e_clip = lr_mul * self.e_clip # 计算当前的裁剪阈值
+        kl = 1.0  
+        lr_mul = 1.0 
+        curr_e_clip = lr_mul * self.e_clip  
 
         batch_dict = {
-            'is_train' : True,
-            'prev_actions' : actions_batch, 
-            'obs' : obs_batch,
+            'is_train': True,
+            'prev_actions': actions_batch,
+            'obs': obs_batch,
+            'priv_obs': priv_obses,
         }
 
+        # Mirrored loss
+        mu_mirrored = None
         if self.mirror_loss:
-            obs_mirrored_batch = input_dict['obs_mirrored']
-            obs_mirrored_batch = self._preproc_obs(obs_mirrored_batch) # 预处理观测
-            batch_mirrored_dict = {}
-            batch_mirrored_dict['obs'] = obs_mirrored_batch
-            res_dict_srl_mirrored =  self.get_srl_mirrored_action_values(batch_mirrored_dict)
+            obs_mirrored_batch = self._preproc_obs(input_dict['obs_mirrored'])
+            batch_mirrored_dict = {'obs': obs_mirrored_batch,
+                                   'priv_obs': priv_obses,}
+            res_dict_srl_mirrored = self.get_srl_mirrored_action_values(batch_mirrored_dict)
             mu_mirrored = res_dict_srl_mirrored['mus']
-        rnn_masks = None
-        
+
         self.model_srl.train()
         if self.normalize_rms_advantage:
             self.advantage_mean_std.train()
 
         with torch.cuda.amp.autocast(enabled=self.mixed_precision):
-            res_dict = self.model_srl(batch_dict) # 通过模型计算结果
-            action_log_probs = res_dict['prev_neglogp']  # 获取动作的对数概率
-            values = res_dict['values'] # 获取值函数输出
-            entropy = res_dict['entropy'] # 获取熵
-            mu = res_dict['mus'] # 获取动作均值
-            sigma = res_dict['sigmas'] # 获取动作标准差
-            
-            # 计算 actor 损失
+            res_dict = self.model_srl(batch_dict)
+            action_log_probs = res_dict['prev_neglogp']
+            values = res_dict['values']
+            entropy = res_dict['entropy']
+            mu = res_dict['mus']
+            sigma = res_dict['sigmas']
+
+            # Actor Loss
             a_info = self._actor_loss(old_action_log_probs_batch, action_log_probs, advantage, curr_e_clip)
-            a_info['actor_loss_srl'] = a_info['actor_loss']
-            del a_info['actor_loss']
-            a_loss = a_info['actor_loss_srl']
+            a_loss = a_info.pop('actor_loss')
+            a_info['actor_loss_srl'] = a_loss
+            a_loss = a_loss.unsqueeze(1).mean()
 
-            # 计算 critic 损失
+            # Critic Loss
             c_info = self._critic_loss(value_preds_batch, values, curr_e_clip, return_batch, self.clip_value)
-            c_info['critic_loss_srl'] = c_info['critic_loss']
-            del c_info['critic_loss']
-            c_loss = c_info['critic_loss_srl']
+            c_loss = c_info.pop('critic_loss')
+            c_info['critic_loss_srl'] = c_loss
+            c_loss = c_loss.mean()
 
-            # 计算边界损失
+            # entropy
+            entropy = entropy.mean()
+
+            # Bounds Loss
             b_loss = self.bound_loss(mu)
+            b_loss = b_loss.unsqueeze(1).mean()
 
-            if self.mirror_loss:
-                # 计算对称损失
-                sym_info = self.sym_loss(mu,mu_mirrored)
+            # Symmetry Loss
+            sym_loss = 0.0
+            if self.mirror_loss and mu_mirrored is not None:
+                sym_info = self.sym_loss(mu, mu_mirrored)
                 sym_loss = sym_info['sym_loss']
-                losses, sum_mask = torch_ext.apply_masks([a_loss.unsqueeze(1), c_loss, entropy.unsqueeze(1), b_loss.unsqueeze(1), sym_loss.unsqueeze(1)], rnn_masks)
-                a_loss, c_loss, entropy, b_loss, sym_loss = losses[0], losses[1], losses[2], losses[3], losses[4]
-                # 计算总损失
-                loss = a_loss + self.critic_coef * c_loss - self.entropy_coef * entropy + self.bounds_loss_coef * b_loss + self.sym_loss_coef * sym_loss
-
+                sym_loss = sym_loss.unsqueeze(1).mean()
             else:
-                # 应用掩码并计算损失
-                losses, sum_mask = torch_ext.apply_masks([a_loss.unsqueeze(1), c_loss, entropy.unsqueeze(1), b_loss.unsqueeze(1)], rnn_masks)
-                a_loss, c_loss, entropy, b_loss = losses[0], losses[1], losses[2], losses[3]
-                
-                # 计算总损失
-                loss = a_loss + self.critic_coef * c_loss - self.entropy_coef * entropy + self.bounds_loss_coef * b_loss 
-                 
-            
-            # 梯度清零
+                sym_info = {}
+
+            # DAgger loss
+            dagger_loss = 0.0
+            if self._srl_teacher_checkpoint:
+                teacher_actions_batch = input_dict['teacher_actions']  # [batch, 6]
+                student_actions_trim = mu[:, 1:]                       # [batch, 6]
+                dagger_loss = torch.mean((student_actions_trim - teacher_actions_batch) ** 2)
+
+            # ====== 总损失 ======
+            loss = (a_loss
+                    + self.critic_coef * c_loss
+                    - self.entropy_coef * entropy
+                    + self.bounds_loss_coef * b_loss
+                    + self.sym_loss_coef * sym_loss
+                    + self.dagger_loss_coef * dagger_loss)
+
+            # ====== 反向传播 ======
             if self.multi_gpu:
                 self.optimizer_srl.zero_grad()
             else:
-                for param in self.model_srl.parameters():
-                    param.grad = None
-
-        # 反向传播和梯度裁剪
-        # 缩放损失值，以提高计算精度。然后调用 .backward() 方法进行反向传播，计算每个参数的梯度。
-        # self.scaler.scale(loss).backward()  # 1. 缩放损失并进行反向传播，计算梯度
-        # self.scaler.step(self.optimizer)    # 2. 调用优化器的 step 方法，更新模型参数，并处理梯度的取消缩放
-        # self.scaler.update()                # 3. 更新缩放因子，根据训练情况调整缩放因子以适应下一次迭代
+                for p in self.model_srl.parameters():
+                    p.grad = None
 
         self.scaler_srl.scale(loss).backward()
-         
+
         if self.truncate_grads:
-            # multiGPU 相关代码已删除
             self.scaler_srl.unscale_(self.optimizer_srl)
             nn.utils.clip_grad_norm_(self.model_srl.parameters(), self.grad_norm)
             if self._train_srl:
                 self.scaler_srl.step(self.optimizer_srl)
-                self.scaler_srl.update()    
+                self.scaler_srl.update()
         else:
             if self._train_srl:
                 self.scaler_srl.step(self.optimizer_srl)
                 self.scaler_srl.update()
-        
-        # 计算 KL 散度
+
+        # KL
         with torch.no_grad():
-            reduce_kl = not self.is_rnn
-            kl_dist = torch_ext.policy_kl(mu.detach(), sigma.detach(), old_mu_batch, old_sigma_batch, reduce_kl)
-            if self.is_rnn:
-                kl_dist = (kl_dist * rnn_masks).sum() / rnn_masks.numel()  #/ sum_mask
-                    
+            kl_dist = torch_ext.policy_kl(mu.detach(), sigma.detach(), old_mu_batch, old_sigma_batch, reduce=True)
+
         srl_train_result = {
             'entropy_srl': entropy,
             'kl_srl': kl_dist,
-            'last_lr_srl': self.last_lr, 
-            'lr_mul_srl': lr_mul, 
-            'b_loss_srl': b_loss
+            'last_lr_srl': self.last_lr,
+            'lr_mul_srl': lr_mul,
+            'b_loss_srl': b_loss,
+            'dagger_loss': dagger_loss,
         }
-
         self.train_result.update(srl_train_result)
         self.train_result.update(a_info)
         self.train_result.update(c_info)
         if self.mirror_loss:
             self.train_result.update(sym_info)
 
-        return        
+        return
+  
 
     def sym_loss(self, mus, mus_mirrored):
          
@@ -944,6 +972,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
 
         self.mirror_loss = config.get('mirror_loss', False)
 
+        self.normalize_srl_input = config['normalize_srl_input']
         return
 
     def _build_net_config(self, params):
@@ -955,11 +984,14 @@ class SRL_MultiAgent(common_agent.CommonAgent):
 
         config['obs_num_humanoid'] = (self.vec_env.env.get_humanoid_obs_size(),)
         config['obs_num_srl'] = (self.vec_env.env.get_srl_obs_size(),)
+        config['priv_obs_num_srl'] = (self.vec_env.env.get_srl_priv_obs_size(),)
 
         self.actions_num_humanoid = config['actions_num_humanoid']
         self.actions_num_srl = config['actions_num_srl']
         self.obs_num_humanoid = config['obs_num_humanoid']
         self.obs_num_srl = config['obs_num_srl']
+        self.priv_obs_num_srl = config['priv_obs_num_srl'] 
+
         return config
 
     def _init_train(self):
@@ -1076,6 +1108,11 @@ class SRL_MultiAgent(common_agent.CommonAgent):
                     
                     if self.has_self_play_config:
                         self.self_play_manager.update(self)
+
+                    if mean_rewards_srl[0] > self.last_mean_rewards and epoch_num >= self.save_best_after:
+                        print('saving next best rewards: ', mean_rewards_srl)
+                        self.last_mean_rewards = mean_rewards_srl[0]
+                        self.save(self.model_output_file + "_best")
 
                 if self.save_freq > 0:
                     if (epoch_num % self.save_freq == 0):
@@ -1255,9 +1292,11 @@ class SRL_MultiAgent(common_agent.CommonAgent):
 
         self.writer.add_scalar('losses/a_loss_srl', torch_ext.mean_list(train_info['actor_loss_srl']).item(), frame)
         self.writer.add_scalar('losses/c_loss_srl', torch_ext.mean_list(train_info['critic_loss_srl']).item(), frame)
-        
         self.writer.add_scalar('losses/bounds_loss_srl', torch_ext.mean_list(train_info['b_loss_srl']).item(), frame)
         self.writer.add_scalar('losses/entropy_srl', torch_ext.mean_list(train_info['entropy_srl']).item(), frame)
+        if self._srl_teacher_checkpoint:
+            self.writer.add_scalar('losses/dagger_loss', torch_ext.mean_list(train_info['dagger_loss']).item(), frame)
+
         # self.writer.add_scalar('info/last_lr', train_info['last_lr'][-1] * train_info['lr_mul'][-1], frame)
         # self.writer.add_scalar('info/lr_mul', train_info['lr_mul'][-1], frame)
         # self.writer.add_scalar('info/e_clip', self.e_clip * train_info['lr_mul'][-1], frame)
@@ -1300,11 +1339,12 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         obs = obs_dict['obs']
         
         processed_obs = self._preproc_obs(obs)
-        srl_obs = processed_obs[:, -self.obs_num_srl[0]:]
+        priv_srl_obs = processed_obs[:, -self.priv_obs_num_srl[0]:]
 
-        if self.normalize_input:
-            srl_obs = self.model_srl.norm_obs(srl_obs)
-        value = self.model_srl.a2c_network.eval_critic(srl_obs)
+        # norm_obs 尺寸与priv obs不匹配
+        # if self.normalize_input:
+        #     priv_srl_obs = self.model_srl.norm_obs(priv_srl_obs)
+        value = self.model_srl.a2c_network.eval_critic(priv_srl_obs)
 
         if self.normalize_value:
             value = self.value_mean_std_srl(value, True)

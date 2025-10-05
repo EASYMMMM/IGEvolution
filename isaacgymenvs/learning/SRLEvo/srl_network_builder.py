@@ -256,6 +256,7 @@ class SRLBuilder(network_builder.A2CBuilder):
                 input_shape = srl_obs_shape  
             self.value_size = kwargs.pop('value_size', 1) # 获取价值输出的大小，默认为1
             self.num_seqs  = kwargs.pop('num_seqs', 1)
+            priv_obs_shape = kwargs.pop('priv_obs_num_srl', None)
 
             NetworkBuilder.BaseNetwork.__init__(self)
             self.load(params) # 载入参数设置
@@ -274,7 +275,7 @@ class SRLBuilder(network_builder.A2CBuilder):
                 out_size = self.units[-1]
 
             # 设置MLP层参数
-            mlp_args = {
+            actor_mlp_args = {
                 'input_size' : in_mlp_shape, 
                 'units' : self.units, 
                 'activation' : self.activation, 
@@ -283,9 +284,22 @@ class SRLBuilder(network_builder.A2CBuilder):
                 'd2rl' : self.is_d2rl,
                 'norm_only_first_layer' : self.norm_only_first_layer
             }
-            self.actor_mlp = self._build_mlp(**mlp_args)
-            if self.separate:
-                self.critic_mlp = self._build_mlp(**mlp_args)
+            self.actor_mlp = self._build_mlp(**actor_mlp_args)
+
+            if priv_obs_shape is not None:
+                priv_in_mlp_shape = priv_obs_shape[0]
+            else:
+                priv_in_mlp_shape = in_mlp_shape  # fallback：没有就还是 obs
+            critic_mlp_args = {
+                'input_size' : priv_in_mlp_shape, 
+                'units' : self.units, 
+                'activation' : self.activation, 
+                'norm_func_name' : self.normalization,
+                'dense_func' : torch.nn.Linear,
+                'd2rl' : self.is_d2rl,
+                'norm_only_first_layer' : self.norm_only_first_layer
+            }   
+            self.critic_mlp = self._build_mlp(**critic_mlp_args)
             
             # 创建值输出层
             self.value = self._build_value_layer(out_size, self.value_size)
@@ -324,11 +338,15 @@ class SRLBuilder(network_builder.A2CBuilder):
         def forward(self, obs_dict):
             obs = obs_dict['obs']
             states = obs_dict.get('rnn_states', None)
+            priv_obs = obs_dict.get('priv_obs', None)  
             dones = obs_dict.get('dones', None)
             bptt_len = obs_dict.get('bptt_len', 0)
+            if priv_obs is None:
+                priv_obs = obs
+
 
             a_out = self.actor_mlp(obs)
-            c_out = self.critic_mlp(obs)
+            c_out = self.critic_mlp(priv_obs)
                         
             value = self.value_act(self.value(c_out))
             
@@ -341,10 +359,8 @@ class SRLBuilder(network_builder.A2CBuilder):
 
             return mu, sigma, value, states
 
-        def eval_critic(self, obs):
-            #c_out = self.critic_cnn(obs)
-            #c_out = c_out.contiguous().view(c_out.size(0), -1)
-            c_out = self.critic_mlp(obs)              
+        def eval_critic(self, priv_obs):
+            c_out = self.critic_mlp(priv_obs)              
             value = self.value_act(self.value(c_out))
             return value
                 

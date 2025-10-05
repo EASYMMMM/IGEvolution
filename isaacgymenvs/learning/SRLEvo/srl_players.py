@@ -67,10 +67,17 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
         self._save_data = config.get('save_data', False)
         self._save_load_cell_data = config.get('save_load_cell_data', False)
         self._humanoid_obs_masked = config.get('humanoid_obs_masked', False)
+        self.normalize_srl_input = config.get('normalize_srl_input', False)
+        self.srl_units = params['network']['mlp']['srl_units']
+        
         super().__init__(params)
         self.obs_log = []
         self.target_yaw_log = []
+        self.obs_num_humanoid = self.env.get_humanoid_obs_size()
+        self.obs_num_srl = self.env.get_srl_obs_size()
+        self.priv_obs_num_srl = self.env.get_srl_priv_obs_size()
 
+        self.play_deterministic = config.get('play_deterministic', False)
         
         return
 
@@ -96,16 +103,13 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
     def _build_net(self, config):
         #super()._build_net(config)
 
-        if self.obs_num_humanoid:
-            config['input_shape'] = self.obs_num_humanoid
-        else:
-            config['input_shape'] = self.env.get_humanoid_obs_size()
+        config['input_shape'] = self.env.get_humanoid_obs_size()
         self.model = self.network.build(config,role='humanoid')
         self.model.to(self.device)
-        if self.obs_num_humanoid:
-            config['input_shape'] = self.obs_num_srl
-        else:
-            config['input_shape'] = self.env.get_srl_obs_size()
+        
+        self.network.network_builder.params['mlp']['units'] = self.srl_units
+        config['input_shape'] = self.env.get_srl_obs_size()
+        config['normalize_input'] = self.normalize_srl_input 
         self.model_srl = self.network.build(config,role='srl')
         self.model_srl.to(self.device)
 
@@ -126,9 +130,11 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
         self.model.eval() # humanoid policy
         self.model_srl.eval() # srl policy
         processed_obs = self._preproc_obs(obs)
-        self.obs_num_humanoid = self.env.get_humanoid_obs_size()
+        if not self.obs_num_humanoid+self.obs_num_srl == processed_obs.shape[1]:
+            raise ValueError
         humanoid_obs = processed_obs[:, :self.obs_num_humanoid]
-        srl_obs = processed_obs[:, self.obs_num_humanoid:]
+        srl_obs = processed_obs[:, -self.obs_num_srl:]
+        priv_srl_obs = processed_obs[:, -self.priv_obs_num_srl:]
         input_dict = {
             'is_train': False,
             'prev_actions': None, 
@@ -139,7 +145,8 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
             'is_train': False,
             'prev_actions': None, 
             'obs' : srl_obs,
-            'rnn_states' : self.states
+            'rnn_states' : self.states,
+            'priv_obs': priv_srl_obs 
         }
 
  
@@ -165,59 +172,13 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
         else:
             return current_action
         
-    def get_action_ma(self, obs_dict, is_deterministic = False):
-        # used for multi agents
-        # The obs spaces of SRL & Humanoid are seperated.
-        obs = obs_dict['obs']
-        if self.has_batch_dimension == False:
-            obs = unsqueeze_obs(obs)
-        processed_obs = self._preproc_obs(obs)
-        self.model.eval()
-        self.model_srl.eval()
-        humanoid_obs = processed_obs[:, :self.obs_num_humanoid]
-        srl_obs = processed_obs[:, -self.obs_num_srl:]   # SRL obs拼接在humanoid后面
-        humanoid_input_dict = {
-            'is_train': False,
-            'prev_actions': None, 
-            'obs' : humanoid_obs,
-            'rnn_states' : self.states
-        }
-        srl_input_dict = {
-            'is_train': False,
-            'prev_actions': None, 
-            'obs' : srl_obs,
-            'rnn_states' : self.states
-        }
-
-        with torch.no_grad():
-            res_dict = self.model(humanoid_input_dict)
-            res_dict_srl = self.model_srl(srl_input_dict)
- 
-        mu_humanoid = res_dict['mus']
-        action_humanoid = res_dict['actions']
-        mu_srl = res_dict_srl['mus']
-        action_srl = res_dict_srl['actions']
-        mu = torch.cat((mu_humanoid,mu_srl),1)
-        action = torch.cat((action_humanoid, action_srl),1)
-        self.states = res_dict['rnn_states']
-        if is_deterministic:
-            current_action = mu
-        else:
-            current_action = action
-        if self.has_batch_dimension == False:
-            current_action = torch.squeeze(current_action.detach())
-
-        if self.clip_actions:
-            return rescale_actions(self.actions_low, self.actions_high, torch.clamp(current_action, -1.0, 1.0))
-        else:
-            return current_action
         
     def run(self):
         with torch.no_grad():
             n_games = self.games_num
             render = self.render_env
             n_game_life = self.n_game_life
-            is_determenistic = self.is_deterministic
+            is_determenistic = self.play_deterministic
             sum_rewards = 0
             sum_steps = 0
             sum_game_res = 0
@@ -264,6 +225,7 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                     need_init_rnn = False
 
                 cr = torch.zeros(batch_size, dtype=torch.float32)
+                cr_srl = torch.zeros(batch_size, dtype=torch.float32)
                 steps = torch.zeros(batch_size, dtype=torch.float32)
 
                 print_game_res = False
@@ -283,6 +245,9 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                     obs_dict, r, done, info =  self.env_step(self.env, action)
                     cr += r
                     steps += 1
+                    rewards_srl = info["srl_rewards"].cpu()
+                    cr_srl += rewards_srl
+
                     obs = obs_dict['obs']  # shape: [num_envs, obs_dim]
                     if isinstance(obs, torch.Tensor):
                         obs_np = obs.detach().cpu().numpy()[0, self.env.get_humanoid_obs_size():]  # 取第一个环境
@@ -537,8 +502,10 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
 
                         cur_rewards = cr[done_indices].sum().item()
                         cur_steps = steps[done_indices].sum().item()
+                        cur_srl_rewards = cr_srl[done_indices].sum().item()
 
                         cr = cr * (1.0 - done.float())
+                        cr_srl = cr_srl * (1.0 - done.float())
                         steps = steps * (1.0 - done.float())
                         sum_rewards += cur_rewards
                         sum_steps += cur_steps
@@ -549,6 +516,7 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                                 print('reward:', cur_rewards/done_count, 'steps:', cur_steps/done_count, 'w:', game_res)
                             else:
                                 print('reward:', cur_rewards/done_count, 'steps:', cur_steps/done_count)
+                                print('SRL reward:', cur_srl_rewards/done_count, 'steps:', cur_steps/done_count)
 
                         sum_game_res += game_res
                         if batch_size//self.num_agents == 1 or games_played >= n_games:
@@ -627,6 +595,7 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
         config['actions_num_srl'] = self.env.get_srl_action_size()
         config['obs_num_humanoid'] =[self.env.get_humanoid_obs_size(),]
         config['obs_num_srl'] =  [self.env.get_srl_obs_size(),]
+        config['priv_obs_num_srl'] = (self.env.get_srl_priv_obs_size(),)
         return config
 
     def _amp_debug(self, info):

@@ -178,7 +178,7 @@ class SRL_bot(VecTask):
         self.target_yaw = torch.zeros(self.num_envs, device=self.device)
         self.target_ang_vel_z = torch.zeros(self.num_envs, device=self.device)
         self.target_pelvis_height = torch.full((self.num_envs,), 0.84, device=self.device)  # 0.84
-        self.target_vel_x = torch.full((self.num_envs,), 0.0, device=self.device)  # 1.0
+        self.target_vel_x = torch.full((self.num_envs,), 1.0, device=self.device)  # 1.0
 
         self._terminate_buf = torch.ones(self.num_envs, device=self.device, dtype=torch.long)
 
