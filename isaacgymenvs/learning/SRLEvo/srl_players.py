@@ -304,7 +304,7 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                             self.obs_log.clear()
                             self.target_yaw_log.clear()
 
-                            num_dims = 32
+                            num_dims = 36
                             mid = num_dims // 2
 
                             # 前半维度

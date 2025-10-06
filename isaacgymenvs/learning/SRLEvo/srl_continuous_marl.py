@@ -619,7 +619,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             self.update_counter += 1
             if self.update_counter % self._train_humanoid_freq == 0:
                 self.calc_gradients(input_dict)
-                if self.update_counter%5 == 0:
+                if self.update_counter%15 == 0:
                     self._train_humanoid_freq += 1
         self.calc_gradients_srl(input_dict_srl)
         
@@ -701,7 +701,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             dagger_loss = 0.0
             if self._srl_teacher_checkpoint:
                 teacher_actions_batch = input_dict['teacher_actions']  # [batch, 6]
-                student_actions_trim = mu[:, 1:]                       # [batch, 6]
+                student_actions_trim = mu                    # [batch, 6]
                 dagger_loss = torch.mean((student_actions_trim - teacher_actions_batch) ** 2)
 
             # ====== 总损失 ======

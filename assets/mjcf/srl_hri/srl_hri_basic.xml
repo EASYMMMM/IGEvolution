@@ -124,8 +124,8 @@
 			</body>
 			<body name="SRL" pos="-0.25 0 0.05" > <!-- <body name="SRL" pos="-0.20 0 0.05" > -->
                 <geom name="board" pos="0 0 0" size="0.0005 0.1 0.1 " type="box" density='100'/> 
-				<joint armature="0.00" axis="1 0 0" damping="10" stiffness="100"  type="slide" name="SRL_damping_x" pos="0 0 0" range="-0.025 0.025" />
-				<joint armature="0.00" axis="0 0 1" damping="10" stiffness="100"  type="slide" name="SRL_damping_z" pos="0 0 0" range="-0.025 0.025" />
+				<joint armature="0.00" axis="1 0 0" damping="2" stiffness="100"  type="slide" name="SRL_damping_x" pos="0 0 0" range="-0.025 0.025" />
+				<!-- <joint armature="0.00" axis="0 0 1" damping="10" stiffness="100"  type="slide" name="SRL_damping_z" pos="0 0 0" range="-0.025 0.025" /> -->
 				<body name="SRL_root" pos="-0.30 0 0" quat="0.0 0.0 0.0 1.0">
                     <joint armature="0.00" axis="0 1 0" damping="0" name="SRL_freejoint_y" pos="-0.30 0 0" range="-20 20" stiffness="0"/>
 					<geom density="1000" name="SRL_geom_root" pos="0 0 0" size="0.2 0.095 0.05" type="box" contype="1" conaffinity="1"/>

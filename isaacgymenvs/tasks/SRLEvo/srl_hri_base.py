@@ -172,7 +172,7 @@ class SRL_HRIBase(VecTask):
         self.target_yaw = torch.zeros(self.num_envs, device=self.device)
         self.target_ang_vel_z = torch.zeros(self.num_envs, device=self.device)
         self.target_pelvis_height = torch.full((self.num_envs,), 0.83, device=self.device)
-        self.target_vel_x = torch.full((self.num_envs,), 0.0, device=self.device)
+        self.target_vel_x = torch.full((self.num_envs,), 1.0, device=self.device)
 
         self._initial_dof_pos = torch.zeros_like(self._dof_pos, device=self.device, dtype=torch.float)
         right_shoulder_x_handle = self.gym.find_actor_dof_handle(self.envs[0], self.humanoid_handles[0], "right_shoulder_x")
@@ -271,7 +271,7 @@ class SRL_HRIBase(VecTask):
         return self.srl_free_actions_num
 
     def get_teacher_srl_action_size(self):
-        return self.srl_actions_num - 1
+        return self.srl_actions_num 
 
     def get_humanoid_obs_size(self):
         return self.humanoid_obs_num
@@ -280,7 +280,7 @@ class SRL_HRIBase(VecTask):
         return self.srl_obs_num*self.srl_obs_frame_stack + self.srl_command_num
 
     def get_srl_priv_obs_size(self):
-        return self.humanoid_obs_num + self.srl_obs_num*self.srl_obs_frame_stack + self.srl_command_num
+        return 12 + self.srl_obs_num*self.srl_obs_frame_stack + self.srl_command_num
 
     def get_teacher_srl_obs_size(self):
         return 153
@@ -361,7 +361,7 @@ class SRL_HRIBase(VecTask):
         
         srl_free_joint_idx = self.gym.find_asset_dof_index(humanoid_asset, 'SRL_freejoint_y')
         srl_damping_x_idx = self.gym.find_asset_dof_index(humanoid_asset, 'SRL_damping_x')
-        srl_damping_z_idx = self.gym.find_asset_dof_index(humanoid_asset, 'SRL_damping_z')
+        # srl_damping_z_idx = self.gym.find_asset_dof_index(humanoid_asset, 'SRL_damping_z')
 
 
         # create force sensors at the feet
@@ -431,7 +431,7 @@ class SRL_HRIBase(VecTask):
                 dof_prop = self.gym.get_asset_dof_properties(humanoid_asset)
                 dof_prop["driveMode"] = gymapi.DOF_MODE_POS
             if self._force_control:
-                srl_start_id = self.get_srl_action_size() - self.get_srl_free_action_size()
+                srl_start_id = self.get_srl_action_size() -2 
                 dof_prop[-srl_start_id:]["stiffness"].fill(0.0)
                 dof_prop[-srl_start_id:]["damping"].fill(0.0)
                 dof_prop[-srl_start_id:]["velocity"].fill(14.0)
@@ -439,7 +439,7 @@ class SRL_HRIBase(VecTask):
                 dof_prop[-srl_start_id:]["driveMode"] = gymapi.DOF_MODE_EFFORT
                 dof_prop[srl_free_joint_idx]["driveMode"] = gymapi.DOF_MODE_POS
                 dof_prop[srl_damping_x_idx]["driveMode"] = gymapi.DOF_MODE_POS
-                dof_prop[srl_damping_z_idx]["driveMode"] = gymapi.DOF_MODE_POS
+                # dof_prop[srl_damping_z_idx]["driveMode"] = gymapi.DOF_MODE_POS
             self.gym.set_actor_dof_properties(env_ptr, handle, dof_prop)
 
         dof_props = self.gym.get_asset_dof_properties(humanoid_asset)
@@ -458,7 +458,7 @@ class SRL_HRIBase(VecTask):
                 self.dof_limits_upper.append(dof_prop['upper'][j])
         #FIXME: srl dof range
         if self._force_control:
-            srl_start_id = self.get_srl_action_size() - self.get_srl_free_action_size()
+            srl_start_id = self.get_srl_action_size()  -2
             self.dof_limits_lower[-srl_start_id+1] = self.default_srl_joint_angles[1] - 45/180*np.pi
             self.dof_limits_lower[-srl_start_id+2] = self.default_srl_joint_angles[2] - 45/180*np.pi
             self.dof_limits_lower[-srl_start_id+4] = self.default_srl_joint_angles[4] - 45/180*np.pi
@@ -516,7 +516,7 @@ class SRL_HRIBase(VecTask):
                 curr_scale = 0.7 * (curr_high - curr_low)
                 if dof_offset >= self.get_humanoid_action_size():  # srl
                     # FIXME: Limited Range (previous value: 0.45)
-                    curr_scale = 0.25 * (curr_high - curr_low)
+                    curr_scale = 0.45 * (curr_high - curr_low)
                 curr_low = curr_mid - curr_scale
                 curr_high = curr_mid + curr_scale
 
@@ -724,15 +724,15 @@ class SRL_HRIBase(VecTask):
         humanoid_obs = compute_humanoid_observations(root_states, dof_pos, dof_vel,
                                             key_body_pos, self._local_root_obs,
                                             load_cell_sensor, self._humanoid_load_cell_obs)
-        
+        srl_dof_num = self.srl_actions_num + self.srl_free_actions_num
         srl_obs, potentials, prev_potentials,  = compute_srl_observations(phase_buf, initial_dof_pos, srl_root_states, 
-                                                                          dof_pos[:, -(self.srl_actions_num):], dof_vel[:, -(self.srl_actions_num):],
-                                                                          load_cell_sensor, target_yaw, dof_force_tensor[:, -(self.srl_actions_num):], 
+                                                                          dof_pos[:, -srl_dof_num:], dof_vel[:, -srl_dof_num:],
+                                                                          load_cell_sensor, target_yaw, dof_force_tensor[:, -srl_dof_num:], 
                                                                           actions[:, -(self.srl_actions_num):], self.obs_scales_tensor, 
                                                                           targets, potentials, self.dt, target_vel_x, self.gait_period )
         srl_obs_mirrored = compute_srl_observations_mirrored(phase_buf, self.mirror_act_srl_mat, initial_dof_pos, srl_root_states, 
-                                                             dof_pos[:, -(self.srl_actions_num):], dof_vel[:, -(self.srl_actions_num):],
-                                                            load_cell_sensor,  target_yaw, dof_force_tensor[:, -(self.srl_actions_num):], 
+                                                             dof_pos[:, -srl_dof_num:], dof_vel[:, -srl_dof_num:],
+                                                            load_cell_sensor,  target_yaw, dof_force_tensor[:, -srl_dof_num:], 
                                                             actions[:, -(self.srl_actions_num):], self.obs_scales_tensor, 
                                                             targets, target_vel_x, self.gait_period )
         if self._design_param_obs:
@@ -784,6 +784,7 @@ class SRL_HRIBase(VecTask):
 
     def post_physics_step(self):
         self.progress_buf += 1
+        self.phase_buf += 1
 
         self._refresh_sim_tensors()
         self._compute_observations()
@@ -1104,10 +1105,10 @@ def compute_srl_observations(
 
     # 主体关节位置编码（humanoid + SRL）
     # dof_obs = dof_to_obs(dof_pos)  
-    srl_dof_obs   = dof_pos 
-    srl_dof_obs[:,-6:] = srl_dof_obs[:,-6:] - default_joint_pos
-    srl_dof_vel   = dof_vel
-    srl_dof_force = dof_force_tensor 
+    srl_dof_obs   = dof_pos[:,-6:] 
+    srl_dof_obs   = srl_dof_obs - default_joint_pos
+    srl_dof_vel   = dof_vel[:,-6:]
+    srl_dof_force = dof_force_tensor[:,-6:] 
 
     torso_position = root_states[:, 0:3]
     to_target = targets - torso_position
@@ -1132,12 +1133,12 @@ def compute_srl_observations(
                      local_root_vel ,                    # 3    1:3
                      local_root_ang_vel ,                # 3    4:6
                      euler_err,                          # 3    7:9
-                     srl_dof_obs[:,-6:] * obs_scales[2],  # 6    10:15
-                     srl_dof_vel[:,-6:] * obs_scales[3],  # 6    16:21
-                     actions[:,-6:] ,                     # 6    22:27
+                     srl_dof_obs  * obs_scales[2],       # 6    10:15
+                     srl_dof_vel  * obs_scales[3],       # 6    16:21
+                     actions  ,                          # 6    22:27
                      sin_phase,                          # 1    28
                      cos_phase,                          # 1    29
-                     srl_dof_obs[:,2:3],                 # 1    30
+                     dof_pos[:,1:2],                 # 1    30
                      load_cell_force * obs_scales[4],    # 6    31:36
                     ), dim=-1)
     return obs , potentials, prev_potentials_new
@@ -1180,10 +1181,10 @@ def compute_srl_observations_mirrored(
 
     # 主体关节位置编码（humanoid + SRL）
     # dof_obs = dof_to_obs(dof_pos)  
-    srl_dof_obs   = dof_pos 
-    srl_dof_obs[:,-6:] = srl_dof_obs[:,-6:] - default_joint_pos
-    srl_dof_vel   = dof_vel
-    srl_dof_force = dof_force_tensor
+    srl_dof_obs   = dof_pos[:,-6:] 
+    srl_dof_obs   = srl_dof_obs - default_joint_pos
+    srl_dof_vel   = dof_vel[:,-6:]
+    srl_dof_force = dof_force_tensor[:,-6:]
 
 
 
@@ -1233,7 +1234,7 @@ def compute_srl_observations_mirrored(
                      actions[:,-6:] ,
                      sin_phase,    
                      cos_phase,     
-                     srl_dof_obs[:,2:3],                  
+                     dof_pos[:,1:2],                  
                      load_cell_force * obs_scales[4],       # 6    31:36                   
                     ), dim=-1)
     return obs  
@@ -1251,6 +1252,9 @@ def compute_humanoid_reward(obs_buf, dof_pos):
     # --- Standing Pose ---
     humanoid_dof_pos = dof_pos[:,0:28]
     dof_pos_cost = 0.5*torch.sum(humanoid_dof_pos ** 2, dim=-1)
+    # standing
+    gait_phase_penalty_coef = torch.where(target_vel_x > 0.1, torch.zeros_like(target_vel_x), torch.ones_like(target_vel_x))
+    dof_pos_cost = gait_phase_penalty_coef * dof_pos_cost
 
     total_reward = vel_tracking_reward \
                    - dof_pos_cost
