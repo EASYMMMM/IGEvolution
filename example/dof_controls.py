@@ -142,14 +142,13 @@ cartpole3 = gym.create_actor(env3, cartpole_asset, initial_pose, 'cartpole', 3, 
 # Configure DOF properties
 props = gym.get_actor_dof_properties(env3, cartpole3)
 props["driveMode"] = (gymapi.DOF_MODE_POS, gymapi.DOF_MODE_EFFORT)
-props["stiffness"] = (5000.0, 0.0)
-props["damping"] = (100.0, 0.0)
+props["stiffness"] = (200.0, 0.0)
+props["damping"] = (4.0, 0.0)
 gym.set_actor_dof_properties(env3, cartpole3, props)
 # Set DOF drive targets
 cart_dof_handle3 = gym.find_actor_dof_handle(env3, cartpole3, 'slider_to_cart')
 pole_dof_handle3 = gym.find_actor_dof_handle(env3, cartpole3, 'cart_to_pole')
 gym.set_dof_target_position(env3, cart_dof_handle3, 0.0)
-# gym.apply_dof_effort(env3, pole_dof_handle3, 200)
 
 # Look at the first env
 cam_pos = gymapi.Vec3(8, 4, 1.5)
@@ -167,7 +166,7 @@ while not gym.query_viewer_has_closed(viewer):
     gym.step_graphics(sim)
     gym.draw_viewer(viewer, sim, True)
 
-    pd_tar = 0.5*torch.ones([4,2])
+    pd_tar = -10*torch.ones([4,2])
     pd_tar_tensor = gymtorch.unwrap_tensor(pd_tar)
 
     # Nothing to be done for env 0
@@ -183,13 +182,16 @@ while not gym.query_viewer_has_closed(viewer):
 
     # Update env 3: apply an effort to the pole to keep it upright
     pos = gym.get_dof_position(env3, pole_dof_handle3)
-    gym.apply_dof_effort(env3, pole_dof_handle3, -pos * 50)
+    # gym.apply_dof_effort(env3, pole_dof_handle3, -  50)
+    pd_tar = -100*torch.ones([4,2])
+    pd_tar_tensor = gymtorch.unwrap_tensor(pd_tar)
+    gym.set_dof_actuation_force_tensor(sim, (pd_tar_tensor))
+    pd_tar = 0*torch.ones([4,2])
+    pd_tar_tensor = gymtorch.unwrap_tensor(pd_tar)
+    # gym.set_dof_position_target_tensor(sim, pd_tar_tensor)
 
-    a = gym.set_dof_position_target_tensor(sim, pd_tar_tensor)
-    print('a:',a)
-    b = gym.set_dof_actuation_force_tensor(sim, (pd_tar_tensor))
-    print('b:',b)
 
+ 
     # Wait for dt to elapse in real time.
     # This synchronizes the physics simulation with the rendering rate.
     gym.sync_frame_time(sim)
