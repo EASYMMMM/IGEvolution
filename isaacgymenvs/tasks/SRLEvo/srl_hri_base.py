@@ -176,7 +176,7 @@ class SRL_HRIBase(VecTask):
 
         self.target_yaw = torch.zeros(self.num_envs, device=self.device)
         self.target_ang_vel_z = torch.zeros(self.num_envs, device=self.device)
-        self.target_pelvis_height = torch.full((self.num_envs,), 0.83, device=self.device)
+        self.target_pelvis_height = torch.full((self.num_envs,), 0.86, device=self.device)
         self.target_vel_x = torch.full((self.num_envs,), 1.0, device=self.device)
 
         self._initial_dof_pos = torch.zeros_like(self._dof_pos, device=self.device, dtype=torch.float)
@@ -436,7 +436,7 @@ class SRL_HRIBase(VecTask):
                 dof_prop = self.gym.get_asset_dof_properties(humanoid_asset)
                 dof_prop["driveMode"] = gymapi.DOF_MODE_POS
             if self._force_control:
-                srl_start_id = self.get_srl_action_size() -2
+                srl_start_id = self.get_srl_action_size() 
                 dof_prop[-srl_start_id:]["stiffness"].fill(0.0)
                 dof_prop[-srl_start_id:]["damping"].fill(0.0)
                 dof_prop[-srl_start_id:]["velocity"].fill(14.0)
@@ -463,7 +463,7 @@ class SRL_HRIBase(VecTask):
                 self.dof_limits_upper.append(dof_prop['upper'][j])
         #FIXME: srl dof range
         if self._force_control:
-            srl_start_id = self.get_srl_action_size() -2
+            srl_start_id = self.get_srl_action_size() 
             self.dof_limits_lower[-srl_start_id+1] = self.default_srl_joint_angles[1] - 45/180*np.pi
             self.dof_limits_lower[-srl_start_id+2] = self.default_srl_joint_angles[2] - 45/180*np.pi
             self.dof_limits_lower[-srl_start_id+4] = self.default_srl_joint_angles[4] - 45/180*np.pi
@@ -1380,10 +1380,11 @@ def compute_srl_reward(
     cos_angle = torch.cos(2 * angle_diff)
     ori_error = 1 - torch.mean(cos_angle, dim=-1)
     orientation_reward = torch.exp(-20 * ori_error   ) 
+    # ori_error = 3 - torch.sum(cos_angle, dim=-1)
+    # orientation_reward = torch.exp(-8 * ori_error   ) 
 
     # --- Pelvis height ---
     pelvis_height = obs_buf[:,0]
-    # target_pelvis_height = torch.full((pelvis_height.shape[0],), 0.88, device=pelvis_height.device)
     pelvis_height_error = pelvis_height - target_pelvis_height
     pelvis_height_reward =  torch.exp(-12 * (10* pelvis_height_error) **2 ) 
     pelvis_height_penalty =  (10* pelvis_height_error) **2 
@@ -1509,83 +1510,4 @@ def compute_humanoid_reset(reset_buf, progress_buf, srl_obs_buf, srl_freejoint_p
 
     return reset, terminated
 
-# # 计算任务奖励函数
-# @torch.jit.script
-# def compute_humanoid_reward(obs_buf, 
-#                             dof_force_tensor, 
-#                             contact_buf,  # body net contact force
-#                             action, 
-#                             _torque_threshold, 
-#                             upper_body_pos, 
-#                             upper_reward_w, 
-#                             srl_joint_ids,
-#                             srl_load_cell_sensor,
-#                             srl_feet_slip,
-#                             srl_torque_w = 0.0,
-#                             srl_load_cell_w  = 0.0 ,
-#                             srl_feet_slip_w = 0.0):
-#     # type: (Tensor, Tensor, Tensor, Tensor, int, Tensor, int, Tensor, Tensor, Tensor, float, float , float ) -> Tuple[Tensor, Tensor, Tensor, Tensor]
-    
-#     # TODO: 目标速度跟随
-#     velocity_threshold = 1.4
-    
-#     velocity  = obs_buf[:,7]  # vx
-#     vy  = obs_buf[:,8]  # vy
-#     velocity_penalty = - 20 * (vy**2) - torch.where(velocity < velocity_threshold, (velocity_threshold - velocity)**2, torch.zeros_like(velocity))
-
-    
-    
-#     # v1.5.12 比例惩罚，humanoid力矩绝对值超过100
-#     torque_threshold = _torque_threshold
-#     torque_usage   = dof_force_tensor[:, 14:28]
-#     torque_penalty = torch.where(torch.abs(torque_usage) > torque_threshold, 
-#                                  (torch.abs(torque_usage) - torque_threshold) / torque_threshold, 
-#                                  torch.zeros_like(torque_usage))
-#     torque_reward  = - torch.sum(torque_penalty, dim=1)
-#     # MLY: 暂时关闭HUMANOID受力惩罚
-#     torque_reward = torque_reward * 0
-
-#     # 外肢体水平奖励项
-#     board_pos = upper_body_pos[:, 0, :]  # (4096, 3)
-#     root_pos = upper_body_pos[:, 1, :]  # (4096, 3)
-#     upper_body_direction = board_pos - root_pos  # 维度 (4096, 3)
-#     norm_upper_body_direction = upper_body_direction / torch.norm(upper_body_direction, dim=1, keepdim=True)
-#     # upper_reward = upper_reward_w * (norm_upper_body_direction[:,2] - 1 )
-#     upper_reward = - upper_reward_w * (torch.abs(norm_upper_body_direction[:,2]) )
-
-#     # SRL 关节力矩惩罚
-#     srl_joint_forces = dof_force_tensor[:,  srl_joint_ids]
-#     srl_torque_sum = - torch.sum((srl_joint_forces/100) ** 2, dim=1)
-#     srl_torque_reward = srl_torque_sum * srl_torque_w
-#     # MLY: 暂时关闭SRL受力惩罚
-#     srl_torque_reward = 0
-
-
-#     # SRL Root受力惩罚
-#     load_cell_z = srl_load_cell_sensor[:,2] # 原始数据为正
-#     load_cell_y = srl_load_cell_sensor[:,1]
-#     load_cell_x = srl_load_cell_sensor[:,0] 
-#     scaled_z    = torch.clamp(torch.abs(load_cell_z), min=50, max=2500)  # 限制受力范围
-#     scaled_y    = torch.clamp(torch.abs(load_cell_y), min=50, max=2500) 
-#     scaled_x    = torch.clamp(torch.abs(load_cell_x), min=50, max=2500)
-#     z_penalty   = ((scaled_z - 50) / 50) ** 2 # 平方
-#     y_penalty   = ((scaled_y - 50) / 50) ** 2  
-#     x_penalty   = ((scaled_x - 50) / 50) ** 2  
-#     # z_penalty =  torch.log(1.0 + (scaled_z - 100) / 100.0) / 3.0  # 对数
-#     srl_load_cell_reward = -srl_load_cell_w * (z_penalty + y_penalty + x_penalty)
-
-#     # 末端滑动惩罚 feet slip
-#     srl_feet_slip_reward = - srl_feet_slip_w * srl_feet_slip.squeeze(1)
-
-
-#     # scaled_x = torch.clamp(load_cell_x ,min=0)
-#     # x_penalty = scaled_x / 1000.0  # ~1 if x=1000
-#     # load_cell_penalty =  z_penalty    
-#     # srl_load_cell_reward = -load_cell_penalty * srl_load_cell_w       
-
-#     # reward = -velocity_penalty + torque_reward
-#     reward = velocity_penalty + torque_reward + upper_reward + srl_torque_reward + srl_load_cell_reward + srl_feet_slip_reward
-    
-#     # return reward, velocity_penalty, torque_reward, upper_reward
-#     return reward, velocity_penalty, srl_load_cell_reward, upper_reward
 
