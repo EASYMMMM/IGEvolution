@@ -104,11 +104,12 @@ params:
     hsrl_checkpoint: False
     srl_teacher_checkpoint: False
     mirror_loss: True
-    sym_loss_coef: 0.0
+    sym_loss_coef: 0.0     # 1.0
     train_srl: True
     train_humanoid: True
     train_humanoid_freq: 10
-    dagger_loss_coef: 0.0
+    dagger_loss_coef: 0.0  # 0.5
+    dagger_anneal_k: 5e-5  # 0.0001
 
     # project settings
     start_frame: 0  # 训练帧数对齐

@@ -177,7 +177,7 @@ class SRL_HRIBase(VecTask):
         self.target_yaw = torch.zeros(self.num_envs, device=self.device)
         self.target_ang_vel_z = torch.zeros(self.num_envs, device=self.device)
         self.target_pelvis_height = torch.full((self.num_envs,), 0.86, device=self.device)
-        self.target_vel_x = torch.full((self.num_envs,), 1.0, device=self.device)
+        self.target_vel_x = torch.full((self.num_envs,), 0.0, device=self.device)
 
         self._initial_dof_pos = torch.zeros_like(self._dof_pos, device=self.device, dtype=torch.float)
         right_shoulder_x_handle = self.gym.find_actor_dof_handle(self.envs[0], self.humanoid_handles[0], "right_shoulder_x")
@@ -348,7 +348,7 @@ class SRL_HRIBase(VecTask):
         if "asset" in self.cfg["env"]:
             #asset_root = self.cfg["env"]["asset"].get("assetRoot", asset_root)
             asset_file = self.cfg["env"]["asset"].get("assetFileName", asset_file)
-            print('Asset file name:'+asset_file)
+            print('Asset file name: '+asset_file)
         asset_options = gymapi.AssetOptions()
         asset_options.angular_damping = 0.01
         asset_options.max_angular_velocity = 100.0
@@ -1153,7 +1153,7 @@ def compute_srl_observations(
                      actions  ,                          # 6    22:27
                      sin_phase,                          # 1    28
                      cos_phase,                          # 1    29
-                     dof_pos[:,1:2],                 # 1    30
+                     dof_pos[:,1:2],                     # 1    30
                      load_cell_force * obs_scales[4],    # 6    31:36
                     ), dim=-1)
     return obs , potentials, prev_potentials_new
@@ -1273,7 +1273,7 @@ def compute_humanoid_reward(obs_buf, dof_pos):
 
     # --- Standing Pose ---
     humanoid_dof_pos = dof_pos[:,0:28]
-    dof_pos_cost = 0.5*torch.sum(humanoid_dof_pos ** 2, dim=-1)
+    dof_pos_cost = 0.25*torch.sum(humanoid_dof_pos ** 2, dim=-1)
     # standing
     gait_phase_penalty_coef = torch.where(target_vel_x > 0.1, torch.zeros_like(target_vel_x), torch.ones_like(target_vel_x))
     dof_pos_cost = gait_phase_penalty_coef * dof_pos_cost

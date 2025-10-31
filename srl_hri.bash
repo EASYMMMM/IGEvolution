@@ -3,8 +3,10 @@ export WANDB_API_KEY=95d44e5266d5325cb6a1b4dda1b8d100de903ace
 export http_proxy=http://127.0.0.1:7890
 export https_proxy=http://127.0.0.1:7890
 # =============================== Nice Work ======================================
-# train SRLHRI 1m/s行走  dagger_loss=0.1  sym_loss=0.1
-python SRL_Evo_train.py task=SRL_HRI headless=True wandb_project=SRL_Evo wandb_activate=True experiment=SRL_HRI   max_iterations=3000   train.params.config.humanoid_checkpoint=runs/AMP_Pretrain_Hybrid_19-17-13-54/nn/AMP_Pretrain_Hybrid_19-17-14-05.pth    train.params.config.srl_teacher_checkpoint=runs/SRL_bot_v5_s2_05-16-59-52/nn/SRL_bot_v5_s2.pth  train.params.config.dagger_loss_coef=0.1 train.params.config.sym_loss_coef=0.1 task.env.progress_reward_scale=2.0   ;   
+# train SRLHRI 1m/s   dagger_anneal_k=1e-4 dagger_loss=0.5 sym_loss=1.0
+python SRL_Evo_train.py task=SRL_HRI headless=True wandb_project=SRL_Evo wandb_activate=True experiment=SRL_HRI   max_iterations=3000   train.params.config.humanoid_checkpoint=runs/AMP_Pretrain_Hybrid_19-17-13-54/nn/AMP_Pretrain_Hybrid_19-17-14-05.pth    train.params.config.srl_teacher_checkpoint=runs/SRL_bot_v5_s2_05-16-59-52/nn/SRL_bot_v5_s2.pth  train.params.config.dagger_loss_coef=0.5 train.params.config.sym_loss_coef=1.0 task.env.progress_reward_scale=2.0 train.params.config.dagger_anneal_k=1e-4; 
+# train srl hri Teacher-Student 静止站立
+python SRL_Evo_train.py task=SRL_HRI headless=True wandb_project=SRL_Evo wandb_activate=True experiment=SRL_HRI   max_iterations=1000   train.params.config.humanoid_checkpoint=runs/AMP_Pretrain_Default_19-15-17-44/nn/AMP_Pretrain_Default_19-15-17-54.pth   train.params.config.srl_teacher_checkpoint=runs/SRL_teacher_standing_20-18-08-20/nn/SRL_teacher_standing.pth    train.params.config.dagger_loss_coef=0.5 train.params.config.sym_loss_coef=1.0 task.env.progress_reward_scale=2.0 train.params.config.dagger_anneal_k=1e-4;   
 # ================================================================================
 
 
@@ -24,7 +26,7 @@ python SRL_Evo_train.py task=SRLBot test=True  num_envs=4 checkpoint=runs/SRL_HR
 # train srl hri 静止站立
 python SRL_Evo_train.py task=SRL_HRI headless=True wandb_project=SRL_Evo wandb_activate=True experiment=SRL_HRI   max_iterations=1000   train.params.config.humanoid_checkpoint=runs/AMP_Pretrain_Default_19-15-17-44/nn/AMP_Pretrain_Default_19-15-17-54.pth  task.env.orientation_reward_scale=8.0  train.params.config.disc_reward_w=0.0 train.params.config.sym_loss_coef=0.0 ;  
 # check srl hri 
-python SRL_Evo_train.py test=True task=SRL_HRI  num_envs=4   checkpoint=runs/SRL_HRI_05-17-20-23/nn/SRL_HRI_05-17-20-33_best.pth
+python SRL_Evo_train.py test=True task=SRL_HRI  num_envs=4   checkpoint=runs/SRL_HRI_30-20-20-57/nn/SRL_HRI_30-20-21-06_best.pth
 
 # train srl hri 1m/s 行走
 python SRL_Evo_train.py task=SRL_HRI headless=True wandb_project=SRL_Evo wandb_activate=True experiment=SRL_HRI max_iterations=1000   train.params.config.humanoid_checkpoint=runs/AMP_Pretrain_Hybrid_19-17-13-54/nn/AMP_Pretrain_Hybrid_19-17-14-05.pth  train.params.config.sym_loss_coef=0.0 ;  
@@ -38,25 +40,25 @@ python SRL_Evo_train.py test=True task=SRL_HRI  num_envs=4   checkpoint=runs/SRL
 
 
 # train srl hri Teacher-Student 静止站立
-python SRL_Evo_train.py task=SRL_HRI headless=True wandb_project=SRL_Evo wandb_activate=True experiment=SRL_HRI   max_iterations=1000   train.params.config.humanoid_checkpoint=runs/AMP_Pretrain_Default_19-15-17-44/nn/AMP_Pretrain_Default_19-15-17-54.pth   train.params.config.srl_teacher_checkpoint=runs/SRL_teacher_standing_20-18-08-20/nn/SRL_teacher_standing.pth    train.params.config.sym_loss_coef=0.0 ;  
+python SRL_Evo_train.py task=SRL_HRI headless=True wandb_project=SRL_Evo wandb_activate=True experiment=SRL_HRI   max_iterations=1000   train.params.config.humanoid_checkpoint=runs/AMP_Pretrain_Default_19-15-17-44/nn/AMP_Pretrain_Default_19-15-17-54.pth   train.params.config.srl_teacher_checkpoint=runs/SRL_teacher_standing_20-18-08-20/nn/SRL_teacher_standing.pth    train.params.config.dagger_loss_coef=0.5 train.params.config.sym_loss_coef=1.0 task.env.progress_reward_scale=2.0 train.params.config.dagger_anneal_k=1e-4;   
+# check srl hri Teacher-Student 静止站立
+python SRL_Evo_train.py test=True task=SRL_HRI  num_envs=4   checkpoint=runs/SRL_HRI_30-20-43-29/nn/SRL_HRI_30-20-43-39.pth
 
 
 # srl hri test
 python SRL_Evo_train.py test=True task=SRL_HRI  num_envs=4   checkpoint=runs/SRL_HRI_24-16-57-48/nn/SRL_HRI_24-16-58-00_250.pth
 
-
 python SRL_Evo_train.py test=True task=SRL_HRI  num_envs=4   checkpoint=runs/SRL_HRI_17-17-40-01/nn/SRL_HRI_17-17-40-16.pth  task.env.asset.assetFileName=mjcf/srl_hri/srl_hri_amp_pretrain.xml
 
-
-######### 10.14 ###################
+######### 10.16 ###################
 # train SRLHRI 1m/s行走
-# dagger 0.1/0.0 * sym 1.0/0.1/0.0  共6组
-python SRL_Evo_train.py task=SRL_HRI headless=True wandb_project=SRL_Evo wandb_activate=True experiment=SRL_HRI_nightTest   max_iterations=3000   train.params.config.humanoid_checkpoint=runs/AMP_Pretrain_Hybrid_19-17-13-54/nn/AMP_Pretrain_Hybrid_19-17-14-05.pth    train.params.config.srl_teacher_checkpoint=runs/SRL_bot_v5_s2_05-16-59-52/nn/SRL_bot_v5_s2.pth  train.params.config.dagger_loss_coef=0.0 train.params.config.sym_loss_coef=0.0 task.env.progress_reward_scale=2.0;   
-python SRL_Evo_train.py task=SRL_HRI headless=True wandb_project=SRL_Evo wandb_activate=True experiment=SRL_HRI_nightTest   max_iterations=3000   train.params.config.humanoid_checkpoint=runs/AMP_Pretrain_Hybrid_19-17-13-54/nn/AMP_Pretrain_Hybrid_19-17-14-05.pth    train.params.config.srl_teacher_checkpoint=runs/SRL_bot_v5_s2_05-16-59-52/nn/SRL_bot_v5_s2.pth  train.params.config.dagger_loss_coef=0.0 train.params.config.sym_loss_coef=0.1 task.env.progress_reward_scale=2.0;   
-python SRL_Evo_train.py task=SRL_HRI headless=True wandb_project=SRL_Evo wandb_activate=True experiment=SRL_HRI_nightTest   max_iterations=3000   train.params.config.humanoid_checkpoint=runs/AMP_Pretrain_Hybrid_19-17-13-54/nn/AMP_Pretrain_Hybrid_19-17-14-05.pth    train.params.config.srl_teacher_checkpoint=runs/SRL_bot_v5_s2_05-16-59-52/nn/SRL_bot_v5_s2.pth  train.params.config.dagger_loss_coef=0.0 train.params.config.sym_loss_coef=1.0 task.env.progress_reward_scale=2.0;   
-python SRL_Evo_train.py task=SRL_HRI headless=True wandb_project=SRL_Evo wandb_activate=True experiment=SRL_HRI_nightTest   max_iterations=3000   train.params.config.humanoid_checkpoint=runs/AMP_Pretrain_Hybrid_19-17-13-54/nn/AMP_Pretrain_Hybrid_19-17-14-05.pth    train.params.config.srl_teacher_checkpoint=runs/SRL_bot_v5_s2_05-16-59-52/nn/SRL_bot_v5_s2.pth  train.params.config.dagger_loss_coef=0.1 train.params.config.sym_loss_coef=0.0 task.env.progress_reward_scale=2.0;   
-python SRL_Evo_train.py task=SRL_HRI headless=True wandb_project=SRL_Evo wandb_activate=True experiment=SRL_HRI_nightTest   max_iterations=3000   train.params.config.humanoid_checkpoint=runs/AMP_Pretrain_Hybrid_19-17-13-54/nn/AMP_Pretrain_Hybrid_19-17-14-05.pth    train.params.config.srl_teacher_checkpoint=runs/SRL_bot_v5_s2_05-16-59-52/nn/SRL_bot_v5_s2.pth  train.params.config.dagger_loss_coef=0.1 train.params.config.sym_loss_coef=0.1 task.env.progress_reward_scale=2.0;   
-python SRL_Evo_train.py task=SRL_HRI headless=True wandb_project=SRL_Evo wandb_activate=True experiment=SRL_HRI_nightTest   max_iterations=3000   train.params.config.humanoid_checkpoint=runs/AMP_Pretrain_Hybrid_19-17-13-54/nn/AMP_Pretrain_Hybrid_19-17-14-05.pth    train.params.config.srl_teacher_checkpoint=runs/SRL_bot_v5_s2_05-16-59-52/nn/SRL_bot_v5_s2.pth  train.params.config.dagger_loss_coef=0.1 train.params.config.sym_loss_coef=1.0 task.env.progress_reward_scale=2.0;   
+# dagger 0.5/1.0  anneal 5e-5/1e-4/5e-4
+python SRL_Evo_train.py task=SRL_HRI headless=True wandb_project=SRL_Evo wandb_activate=True experiment=SRL_HRI_nightTest   max_iterations=3000   train.params.config.humanoid_checkpoint=runs/AMP_Pretrain_Hybrid_19-17-13-54/nn/AMP_Pretrain_Hybrid_19-17-14-05.pth    train.params.config.srl_teacher_checkpoint=runs/SRL_bot_v5_s2_05-16-59-52/nn/SRL_bot_v5_s2.pth  train.params.config.dagger_loss_coef=0.5 train.params.config.sym_loss_coef=1.0 task.env.progress_reward_scale=2.0 train.params.config.dagger_anneal_k=5e-5;   
+python SRL_Evo_train.py task=SRL_HRI headless=True wandb_project=SRL_Evo wandb_activate=True experiment=SRL_HRI_nightTest   max_iterations=3000   train.params.config.humanoid_checkpoint=runs/AMP_Pretrain_Hybrid_19-17-13-54/nn/AMP_Pretrain_Hybrid_19-17-14-05.pth    train.params.config.srl_teacher_checkpoint=runs/SRL_bot_v5_s2_05-16-59-52/nn/SRL_bot_v5_s2.pth  train.params.config.dagger_loss_coef=0.5 train.params.config.sym_loss_coef=1.0 task.env.progress_reward_scale=2.0 train.params.config.dagger_anneal_k=1e-4;   
+python SRL_Evo_train.py task=SRL_HRI headless=True wandb_project=SRL_Evo wandb_activate=True experiment=SRL_HRI_nightTest   max_iterations=3000   train.params.config.humanoid_checkpoint=runs/AMP_Pretrain_Hybrid_19-17-13-54/nn/AMP_Pretrain_Hybrid_19-17-14-05.pth    train.params.config.srl_teacher_checkpoint=runs/SRL_bot_v5_s2_05-16-59-52/nn/SRL_bot_v5_s2.pth  train.params.config.dagger_loss_coef=0.5 train.params.config.sym_loss_coef=1.0 task.env.progress_reward_scale=2.0 train.params.config.dagger_anneal_k=5e-4;   
+python SRL_Evo_train.py task=SRL_HRI headless=True wandb_project=SRL_Evo wandb_activate=True experiment=SRL_HRI_nightTest   max_iterations=3000   train.params.config.humanoid_checkpoint=runs/AMP_Pretrain_Hybrid_19-17-13-54/nn/AMP_Pretrain_Hybrid_19-17-14-05.pth    train.params.config.srl_teacher_checkpoint=runs/SRL_bot_v5_s2_05-16-59-52/nn/SRL_bot_v5_s2.pth  train.params.config.dagger_loss_coef=1.0 train.params.config.sym_loss_coef=1.0 task.env.progress_reward_scale=2.0 train.params.config.dagger_anneal_k=5e-5;   
+python SRL_Evo_train.py task=SRL_HRI headless=True wandb_project=SRL_Evo wandb_activate=True experiment=SRL_HRI_nightTest   max_iterations=3000   train.params.config.humanoid_checkpoint=runs/AMP_Pretrain_Hybrid_19-17-13-54/nn/AMP_Pretrain_Hybrid_19-17-14-05.pth    train.params.config.srl_teacher_checkpoint=runs/SRL_bot_v5_s2_05-16-59-52/nn/SRL_bot_v5_s2.pth  train.params.config.dagger_loss_coef=1.0 train.params.config.sym_loss_coef=1.0 task.env.progress_reward_scale=2.0 train.params.config.dagger_anneal_k=1e-4;   
+python SRL_Evo_train.py task=SRL_HRI headless=True wandb_project=SRL_Evo wandb_activate=True experiment=SRL_HRI_nightTest   max_iterations=3000   train.params.config.humanoid_checkpoint=runs/AMP_Pretrain_Hybrid_19-17-13-54/nn/AMP_Pretrain_Hybrid_19-17-14-05.pth    train.params.config.srl_teacher_checkpoint=runs/SRL_bot_v5_s2_05-16-59-52/nn/SRL_bot_v5_s2.pth  train.params.config.dagger_loss_coef=1.0 train.params.config.sym_loss_coef=1.0 task.env.progress_reward_scale=2.0 train.params.config.dagger_anneal_k=5e-4;   
 
 # check
-python SRL_Evo_train.py test=True task=SRL_HRI  num_envs=4   checkpoint=runs/SRL_HRI_14-20-51-27/nn/SRL_HRI_14-20-51-37_best.pth
+python SRL_Evo_train.py test=True task=SRL_HRI  num_envs=4   checkpoint=runs/SRL_HRI_15-16-29-21/nn/SRL_HRI_15-16-29-30.pth

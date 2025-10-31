@@ -61,6 +61,8 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         self.bounds_loss_coef = config.get('bounds_loss_coef', None)
         self.sym_loss_coef = config.get('sym_loss_coef',0)
         self.dagger_loss_coef = config.get('dagger_loss_coef',0)
+        self.dagger_loss_coef_init = self.dagger_loss_coef
+        self.dagger_anneal_k = config.get('dagger_anneal_k', 5e-5)  # 衰减速率
         self.clip_actions = config.get('clip_actions', True)
         self.network_path = self.nn_dir 
         
@@ -615,8 +617,8 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         return train_info
 
     def train_actor_critic(self, input_dict, input_dict_srl):
+        self.update_counter += 1
         if self._train_humanoid:
-            self.update_counter += 1
             if self.update_counter % self._train_humanoid_freq == 0:
                 self.calc_gradients(input_dict)
                 if self.update_counter%15 == 0:
@@ -700,6 +702,9 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             # DAgger loss
             dagger_loss = 0.0
             if self._srl_teacher_checkpoint:
+                # Dagger loss Annealing
+                # β(t) = β₀ * exp(-k * t)
+                self.dagger_loss_coef = max(0.01, self.dagger_loss_coef_init * np.exp(-self.dagger_anneal_k * self.update_counter))
                 teacher_actions_batch = input_dict['teacher_actions']  # [batch, 6]
                 student_actions_trim = mu                    # [batch, 6]
                 dagger_loss = torch.mean((student_actions_trim - teacher_actions_batch) ** 2)
@@ -1302,6 +1307,9 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         # self.writer.add_scalar('info/e_clip', self.e_clip * train_info['lr_mul'][-1], frame)
         # self.writer.add_scalar('info/clip_frac', torch_ext.mean_list(train_info['actor_clip_frac']).item(), frame)
         # self.writer.add_scalar('info/kl', torch_ext.mean_list(train_info['kl']).item(), frame)
+        if self._srl_teacher_checkpoint:
+            self.writer.add_scalar('losses/dagger_coef', self.dagger_loss_coef, frame)
+        
         if self.mirror_loss:
             self.writer.add_scalar('losses/sym_loss_srl', torch_ext.mean_list(train_info['sym_loss']).item(), frame)
         return
