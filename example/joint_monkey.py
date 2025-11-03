@@ -189,14 +189,14 @@ actor_handles = []
 
 
 # =============== user define ===================
-srl_joint_r1 = gym.find_asset_dof_index(asset,'SRL_joint_right_hipjoint_y')
-srl_joint_r3 = gym.find_asset_dof_index(asset,'SRL_joint_right_kneejoint')
-dof_positions[srl_joint_r1] = 0.15*np.pi
-dof_positions[srl_joint_r3] = 0.25*np.pi
-srl_joint_l1 = gym.find_asset_dof_index(asset,'SRL_joint_left_hip_y')
-srl_joint_l3 = gym.find_asset_dof_index(asset,'SRL_joint_left_kneejoint')
-dof_positions[srl_joint_l1] = 0.15*np.pi
-dof_positions[srl_joint_l3] = 0.25*np.pi
+# srl_joint_r1 = gym.find_asset_dof_index(asset,'SRL_joint_right_hipjoint_y')
+# srl_joint_r3 = gym.find_asset_dof_index(asset,'SRL_joint_right_kneejoint')
+# dof_positions[srl_joint_r1] = 0.15*np.pi
+# dof_positions[srl_joint_r3] = 0.25*np.pi
+# srl_joint_l1 = gym.find_asset_dof_index(asset,'SRL_joint_left_hip_y')
+# srl_joint_l3 = gym.find_asset_dof_index(asset,'SRL_joint_left_kneejoint')
+# dof_positions[srl_joint_l1] = 0.15*np.pi
+# dof_positions[srl_joint_l3] = 0.25*np.pi
 
 
 print("Creating %d environments" % num_envs)

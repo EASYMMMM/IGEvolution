@@ -135,7 +135,7 @@ class SRL_HRIBase(VecTask):
         self.mirror_mat = torch.zeros((obs_dim, obs_dim), dtype=torch.float32, device=self.device)
         for i, perm in enumerate(self.mirror_idx):
             self.mirror_mat[i, int(abs(perm))] = np.sign(perm)
-        self.mirror_idx_act_srl = np.array([-3, 4, 5, -0.01, 1, 2,  ])
+        self.mirror_idx_act_srl = np.array([3, 4, 5, 0.01, 1, 2,  ])
         self.mirror_act_srl_mat = torch.zeros((self.mirror_idx_act_srl.shape[0], self.mirror_idx_act_srl.shape[0]), dtype=torch.float32, device=self.device)
         for i, perm in enumerate(self.mirror_idx_act_srl):
             self.mirror_act_srl_mat[i, int(abs(perm))] = np.sign(perm)
@@ -177,7 +177,7 @@ class SRL_HRIBase(VecTask):
         self.target_yaw = torch.zeros(self.num_envs, device=self.device)
         self.target_ang_vel_z = torch.zeros(self.num_envs, device=self.device)
         self.target_pelvis_height = torch.full((self.num_envs,), 0.86, device=self.device)
-        self.target_vel_x = torch.full((self.num_envs,), 0.0, device=self.device)
+        self.target_vel_x = torch.full((self.num_envs,), 1.0, device=self.device)
 
         self._initial_dof_pos = torch.zeros_like(self._dof_pos, device=self.device, dtype=torch.float)
         right_shoulder_x_handle = self.gym.find_actor_dof_handle(self.envs[0], self.humanoid_handles[0], "right_shoulder_x")
@@ -796,6 +796,9 @@ class SRL_HRIBase(VecTask):
         self._compute_reward(self.actions)
         self._compute_reset()
         
+        # TODO: Task Randomization
+        # self.set_task_target()
+
         self.extras["terminate"] = self._terminate_buf
 
         # SRL reward
@@ -833,6 +836,14 @@ class SRL_HRIBase(VecTask):
                 masked_idx[i * obs_dim + idx] = 0.0
         return masked_idx.bool()
 
+    def set_task_target(self):
+        self.target_vel_x[:], self.target_pelvis_height[:], self.target_ang_vel_z[:], self.target_yaw[:] = set_task_target(self.target_vel_x,
+                                                                                                       self.target_pelvis_height,
+                                                                                                       self.target_ang_vel_z,
+                                                                                                       self.target_yaw,
+                                                                                                       self.progress_buf,
+                                                                                                       max_episode_length=self.max_episode_length)
+        
     def SRL_joint_torque_cost(self):
         joint_forces = self.dof_force_tensor[:, self._srl_joint_ids]
         torque_sum = - torch.sum((joint_forces/100) ** 2, dim=1).to(self.rl_device)
@@ -1057,14 +1068,15 @@ def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, l
     humanoid_dof_obs = dof_to_obs(dof_pos[:,0:28]) # 仅保留humanoid关节位置
     humanoid_dof_vel = dof_vel[:,0:28]
     # root_h 1; root_rot_obs 6; local_root_vel 3 ; local_root_ang_vel 3 ; dof_obs 58; dof_vel 36 ; load_cell_force 6, flat_local_key_pos 12
-    obs = torch.cat((root_h, 
-                     root_rot_obs, 
-                     local_root_vel,
-                     local_root_ang_vel, 
-                     humanoid_dof_obs, 
-                     humanoid_dof_vel, 
-                     load_cell_force,
-                     flat_local_key_pos), dim=-1)
+    obs = torch.cat((root_h,              # 1
+                     root_rot_obs,        # 6
+                     local_root_vel,      # 3
+                     local_root_ang_vel,  # 3
+                     humanoid_dof_obs,    # 52
+                     humanoid_dof_vel,    # 28
+                     load_cell_force,     # 6
+                     flat_local_key_pos   # 12
+                     ), dim=-1)
     return obs
 
 
@@ -1278,8 +1290,13 @@ def compute_humanoid_reward(obs_buf, dof_pos):
     gait_phase_penalty_coef = torch.where(target_vel_x > 0.1, torch.zeros_like(target_vel_x), torch.ones_like(target_vel_x))
     dof_pos_cost = gait_phase_penalty_coef * dof_pos_cost
 
+    # --- DOF velocity cost ---
+    dof_vel = obs_buf[:, 64:64+28]
+    dof_vel_cost = 0.00 * torch.sum(dof_vel ** 2, dim=-1)
+
     total_reward = vel_tracking_reward \
-                   - dof_pos_cost
+                   - dof_pos_cost \
+                   - dof_vel_cost
     return total_reward
 
 
@@ -1321,15 +1338,18 @@ def compute_srl_reward(
 ):
     # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, int, float, float, float, float, float, float, float, float,  float, float, float, float, float, float, float, float, float, float, float, float, float) -> Tuple[Tensor, ]
 
-    # obs = root_h,                             # 1    0
-    #       local_root_vel ,                    # 3    1:3
-    #       local_root_ang_vel ,                # 3    4:6
-    #       euler_err,                          # 3    7:9
-    #       srl_dof_obs * obs_scales[2],        # 6    10:15
-    #       srl_dof_vel * obs_scales[3],        # 6    16:21
-    #       actions ,                           # 6    22:28
-    #       sin_phase,                          # 1    29
-    #       cos_phase,                          # 1    30   total: 31
+    # obs = torch.cat((root_h,                             # 1    0
+    #                  local_root_vel ,                    # 3    1:3
+    #                  local_root_ang_vel ,                # 3    4:6
+    #                  euler_err,                          # 3    7:9
+    #                  srl_dof_obs  * obs_scales[2],       # 6    10:15
+    #                  srl_dof_vel  * obs_scales[3],       # 6    16:21
+    #                  actions  ,                          # 6    22:27
+    #                  sin_phase,                          # 1    28
+    #                  cos_phase,                          # 1    29
+    #                  dof_pos[:,1:2],                     # 1    30
+    #                  load_cell_force * obs_scales[4],    # 6    31:36
+    #                 ), dim=-1)
 
     # --- Task Command ---
     target_pelvis_height = obs_buf[:, -1] 
@@ -1359,11 +1379,11 @@ def compute_srl_reward(
     dof_pos_cost = torch.sum(dof_pos ** 2, dim=-1)
 
     # --- DOF velocity cost ---
-    dof_vel = obs_buf[:, 16:16+(actions.shape[1]-1)]
+    dof_vel = obs_buf[:, 16:16+(actions.shape[1])]
     dof_vel_cost = torch.sum(dof_vel ** 2, dim=-1)
 
     # --- DOF acceleration cost ---
-    dof_vel_prev = obs_buf[:, 16+srl_obs_num:16+srl_obs_num+(actions.shape[1]-1)]  # 前一帧速度
+    dof_vel_prev = obs_buf[:, 16+srl_obs_num:16+srl_obs_num+actions.shape[1]]  # 前一帧速度
     dof_acc = dof_vel - dof_vel_prev  # 关节加速度
     dof_acc_magnitude_sq = torch.sum(dof_acc ** 2, dim=-1)
     dof_acc_reward = torch.exp(- 2 * dof_acc_magnitude_sq)
@@ -1397,6 +1417,11 @@ def compute_srl_reward(
     ang_vel_error_vec = root_ang_vel - root_target_ang_vel
     ang_vel_tracking_reward = tracking_ang_vel_reward_scale * torch.exp(-3 * torch.norm(ang_vel_error_vec, dim=-1))   
    
+    # --- Interaction Force ---
+    load_cell_force = obs_buf[:, 31:37]
+    contact_force_magnitude_sq = torch.sum(load_cell_force ** 2, dim=-1)
+    contact_force_cost = 0.1 * contact_force_magnitude_sq
+
     # --- No fly --- 
     contact_threshold = 0.095  
     left_foot_height = srl_end_body_pos[:, 0, 2]  # 获取左脚的位置 
@@ -1411,12 +1436,6 @@ def compute_srl_reward(
     no_fly_penalty = torch.where(fly_idx, torch.ones_like(no_feet_on_ground) * no_fly_penalty_scale, torch.zeros_like(no_feet_on_ground))
     standing_reward = torch.where(standing_idx, -0.5*torch.ones_like(no_feet_on_ground) * no_fly_penalty_scale, torch.zeros_like(no_feet_on_ground))
     no_fly_penalty = no_fly_penalty + standing_reward
-
-    # --- Contact force cost ---
-    # Assuming contact force encoded in obs_buf at some index e.g. 36+num_dof+num_dof: adjust as needed
-    contact_force = obs_buf[:, 21:21+actions.shape[1]]  # You may need to adjust slice
-    contact_force_magnitude = torch.norm(contact_force, dim=-1)
-    contact_force_cost = contact_force_cost_scale * contact_force_magnitude
 
     # --- Feet Lateral Distance ---
     local_srl_end_body_pos = srl_end_body_pos - srl_root_pos.unsqueeze(-2)
@@ -1509,5 +1528,98 @@ def compute_humanoid_reset(reset_buf, progress_buf, srl_obs_buf, srl_freejoint_p
     reset = torch.where(progress_buf >= max_episode_length - 1, torch.ones_like(reset_buf), terminated)
 
     return reset, terminated
+
+# TODO: Task Setting
+@torch.jit.script
+def set_task_target(
+    cur_target_vel_x,
+    cur_target_pelvis_height,
+    cur_target_ang_vel_z,
+    cur_target_yaw,
+    progress_buf,
+    max_episode_length=1000,
+)  :
+# type: (Tensor, Tensor, Tensor, Tensor, Tensor, int) -> Tuple[Tensor, Tensor, Tensor, Tensor]
+
+    step_period = 240
+    velocity_change_period = 200
+    height_change_period = 180
+
+    target_vel_x = cur_target_vel_x.clone().float() 
+    target_pelvis_height = cur_target_pelvis_height.clone().float() 
+    target_ang_vel_z = cur_target_ang_vel_z.clone().float() 
+    target_yaw = cur_target_yaw.clone().float()
+
+    # 候选集
+    unit_vel_x = torch.ones_like(target_vel_x, device=target_vel_x.device)
+    ang_vel_choices = torch.tensor([0.0, -0.785/2,  0.785/2], device=cur_target_vel_x.device)
+    yaw_choices = torch.tensor([0.0,-0.785, 0.785],device=cur_target_vel_x.device)
+    height_choices = torch.tensor([ 0.81, 0.83, 0.85, 0.87,], device=cur_target_vel_x.device)
+    vel_x_choices = torch.tensor([0.0, 0.8, 1.0, 1.2, 1.4, 1.6], device=cur_target_vel_x.device)
+
+    # 高度变化
+    # for i in range(max_episode_length//height_change_period):
+    #     mask = progress_buf == height_change_period * i+1
+    #     height_indices = torch.randint(0, len(height_choices), (len(target_pelvis_height),), device=target_pelvis_height.device)
+    #     target_pelvis_height =  torch.where(mask, unit_vel_x*height_choices[height_indices], target_pelvis_height)
+    # mask = progress_buf == 1  # reset
+    # target_pelvis_height =  torch.where(mask, unit_vel_x*height_choices[2], target_pelvis_height)
+
+    # # 单纯速度变化
+    vel_x_choices = torch.tensor([0.6, 0.8, 1.0, 1.2], device=cur_target_vel_x.device)
+    for i in range(max_episode_length//velocity_change_period):
+        mask = progress_buf == velocity_change_period * i+1
+        vel_indices = torch.randint(0, len(vel_x_choices), (len(target_vel_x),), device=target_vel_x.device)
+        target_vel_x =  torch.where(mask, unit_vel_x*vel_x_choices[vel_indices], target_vel_x)
+
+    # 速度变化 Delta Vx
+    # delta_vel_x_choices = torch.tensor([-0.2, 0.0, 0.2], device=cur_target_vel_x.device)
+    # delta_vel_x = torch.zeros_like(target_vel_x)
+    # for i in range(max_episode_length//velocity_change_period):
+    #     mask = progress_buf == velocity_change_period * i+1
+    #     vel_indices =  torch.randint(0, len(delta_vel_x_choices), (len(target_vel_x),), device=delta_vel_x_choices.device)
+    #     delta_vel_x =  torch.where(mask, unit_vel_x*delta_vel_x_choices[vel_indices], delta_vel_x)
+    # target_vel_x =  target_vel_x + delta_vel_x
+    # target_vel_x =  target_vel_x.clamp(min=0.8, max=1.6)
+
+    # # progress buf 小于velocity_change_period时，固定站立
+    # mask = progress_buf <= velocity_change_period
+    # target_vel_x =  torch.where(mask, unit_vel_x*0.0, target_vel_x)
+
+    # 速度变化+站立交替进行
+    # for i in range(max_episode_length//step_period):
+    #     mask = progress_buf == step_period * i+1
+    #     vel_indices = torch.randint(1, len(vel_x_choices), (len(target_vel_x),), device=target_vel_x.device)
+    #     if i%2 == 1:
+    #         vel_indices = vel_indices * 0
+    #     target_vel_x =  torch.where(mask, unit_vel_x*vel_x_choices[vel_indices], target_vel_x)
+
+    # 随机朝向变化 以45为单位量
+    # delta_yaw = torch.zeros_like(target_yaw)
+    # ang_vel_indices = torch.randint(0, len(ang_vel_choices), (len(target_ang_vel_z),), device=target_vel_x.device)
+    # yaw_indices = torch.randint(0, len(yaw_choices), (len(target_yaw),), device=target_vel_x.device)
+    # for i in range(max_episode_length//step_period ):
+    #     mask = progress_buf == step_period * i+1
+    #     if i%2 == 0:
+    #         ang_vel_indices = torch.full_like(ang_vel_indices, 0)
+    #         yaw_indices = torch.full_like(yaw_indices, 0)
+    #         if i  == 0:
+    #             target_yaw = torch.where(mask, unit_vel_x*yaw_choices[yaw_indices], target_yaw)
+    #     # turn left
+    #     elif i%2 == 1:
+    #         ang_vel_indices = torch.randint(1, len(ang_vel_choices), (len(target_ang_vel_z),), device=target_vel_x.device)
+    #         yaw_indices = ang_vel_indices
+    #     # set angular rate
+    #     target_ang_vel_z =  torch.where(mask, unit_vel_x*ang_vel_choices[ang_vel_indices], target_ang_vel_z)
+    #     # set yaw
+    #     delta_yaw  = torch.where(mask, unit_vel_x*yaw_choices[yaw_indices], delta_yaw)
+    #     # reset angular rate
+    #     reset_mask = progress_buf == step_period * i+61
+    #     ang_vel_indices = torch.full_like(ang_vel_indices, 0)
+    #     target_ang_vel_z =  torch.where(reset_mask, unit_vel_x*ang_vel_choices[ang_vel_indices], target_ang_vel_z)
+    # target_yaw = target_yaw + delta_yaw
+
+    return target_vel_x, target_pelvis_height, target_ang_vel_z, target_yaw
+
 
 
