@@ -73,6 +73,8 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
         super().__init__(params)
         self.obs_log = []
         self.target_yaw_log = []
+        self.load_cell_fd_log = []
+        self.load_cell_log = []
         self.obs_num_humanoid = self.env.get_humanoid_obs_size()
         self.obs_num_srl = self.env.get_srl_obs_size()
         self.priv_obs_num_srl = self.env.get_srl_priv_obs_size()
@@ -255,6 +257,8 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                         obs_np = np.array(obs[0, :])
                     self.obs_log.append(obs_np)
                     self.target_yaw_log.append(info['target_yaw'].cpu().numpy())
+                    self.load_cell_fd_log.append(info['load_cell_fd'].cpu().numpy())
+                    self.load_cell_log.append(info['load_cell'].cpu().numpy())
                     self._post_step(info)
                     
                     # 只记录第一个环境的动作
@@ -301,9 +305,12 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                             target_yaw = []
                             obs_array = np.stack(self.obs_log, axis=0)
                             target_yaw = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.target_yaw_log], axis=0)
+                            load_cell_fd_array = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.load_cell_fd_log], axis=0)
+                            load_cell_array = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.load_cell_log], axis=0)
                             self.obs_log.clear()
                             self.target_yaw_log.clear()
-
+                            self.load_cell_fd_log.clear()
+                            self.load_cell_log.clear()
                             num_dims = 38
                             mid = num_dims // 2
 
@@ -311,7 +318,6 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                             fig1, axs1 = plt.subplots(mid, 1, figsize=(10, mid * 1.5), sharex=True)
                             if mid == 1:
                                 axs1 = [axs1]
-
                             for i in range(mid):
                                 axs1[i].plot(obs_array[:, i])
                                 axs1[i].set_ylabel(f"D{i}")
@@ -325,7 +331,6 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                             fig2, axs2 = plt.subplots(num_dims - mid, 1, figsize=(10, (num_dims - mid) * 1.5), sharex=True)
                             if (num_dims - mid) == 1:
                                 axs2 = [axs2]
-
                             for i in range(mid, num_dims):
                                 axs2[i - mid].plot(obs_array[:, i])
                                 axs2[i - mid].set_ylabel(f"D{i}")
@@ -337,7 +342,7 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                             self.obs_log = []
 
                             # Target Tracking
-                            fig3, axs3 = plt.subplots(4, 1, figsize=(10, 4 * 2.5), sharex=True)
+                            fig3, axs3 = plt.subplots(5, 1, figsize=(10, 4 * 2.5), sharex=True)
                             axs3[0].plot(obs_array[:, 0], label='Actual Value')
                             axs3[0].plot(obs_array[:, -1], label='Target Value', linestyle='--')
                             axs3[0].set_ylabel('Pel H')
@@ -359,15 +364,48 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                             axs3[2].set_ylabel('AngVel Z')
                             axs3[2].legend()
                             axs3[2].grid(True)
-
                             axs3[3].plot(target_yaw[:, 0]-obs_array[:, 7], label='Actual Value')
                             axs3[3].plot(target_yaw[:, 0], label='Target Value', linestyle='--')
-                            axs3[3].set_ylabel('AngVel Z')
+                            axs3[3].set_ylabel('Ang Z')
                             axs3[3].legend()
                             axs3[3].grid(True)
-
-
+                            axs3[4].plot(obs_array[:, 8], label='Actual Value')
+                            axs3[4].set_ylabel('Ang Y')
+                            axs3[4].legend()
+                            axs3[4].grid(True)
                             plt.suptitle("Target Tracking")
+                            plt.tight_layout()
+                            plt.show()
+
+                            # Load Cell Forces
+                            fig4, axs4 = plt.subplots(4, 1, figsize=(10, 4 * 2.5), sharex=True)
+                            axs4[0].plot(load_cell_fd_array[:, 0], label='Force X')
+                            axs4[0].plot(load_cell_fd_array[:, 1], label='Force Y')
+                            axs4[0].plot(load_cell_fd_array[:, 2], label='Force Z')                          
+                            axs4[0].set_ylabel('Load Cell FD Forces')
+                            axs4[0].legend()
+                            axs4[0].grid(True)
+                            axs4[0].set_ylim([-400, 400])
+                            axs4[1].plot(load_cell_fd_array[:, 3], label='Torque X')
+                            axs4[1].plot(load_cell_fd_array[:, 4], label='Torque Y')
+                            axs4[1].plot(load_cell_fd_array[:, 5], label='Torque Z')
+                            axs4[1].set_ylabel('Load Cell FD Torques')
+                            axs4[1].legend()
+                            axs4[1].grid(True)
+                            axs4[2].plot(load_cell_array[:, 0], label='Force X')
+                            axs4[2].plot(load_cell_array[:, 1], label='Force Y')
+                            axs4[2].plot(load_cell_array[:, 2], label='Force Z')
+                            axs4[2].set_ylabel('Load Cell Forces')
+                            axs4[2].legend()
+                            axs4[2].grid(True)
+                            axs4[2].set_ylim([-400, 400])
+                            axs4[3].plot(load_cell_array[:, 3], label='Torque X')
+                            axs4[3].plot(load_cell_array[:, 4], label='Torque Y')
+                            axs4[3].plot(load_cell_array[:, 5], label='Torque Z')
+                            axs4[3].set_ylabel('Load Cell Torques')
+                            axs4[3].legend()
+                            axs4[3].grid(True)
+                            plt.suptitle("Load Cell Data")
                             plt.tight_layout()
                             plt.show()
 

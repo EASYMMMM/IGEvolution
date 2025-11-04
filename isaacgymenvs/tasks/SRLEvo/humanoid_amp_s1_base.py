@@ -518,7 +518,14 @@ def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, l
     
     dof_obs = dof_to_obs(dof_pos)
 
-    obs = torch.cat((root_h, root_rot_obs, local_root_vel, local_root_ang_vel, dof_obs, dof_vel, load_cell_force, flat_local_key_pos), dim=-1)
+    obs = torch.cat((root_h, 
+                     root_rot_obs, 
+                     local_root_vel,
+                     local_root_ang_vel, 
+                     dof_obs, 
+                     dof_vel, 
+                     load_cell_force, 
+                     flat_local_key_pos), dim=-1)
     return obs
 
 @torch.jit.script

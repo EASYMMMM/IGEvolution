@@ -148,7 +148,7 @@ class SRL_HRIBase(VecTask):
         rigid_body_state = self.gym.acquire_rigid_body_state_tensor(self.sim) #  State for each rigid body contains position([0:3]), rotation([3:7]), linear velocity([7:10]), and angular velocity([10:13])
         contact_force_tensor = self.gym.acquire_net_contact_force_tensor(self.sim)
 
-        sensors_per_env = 4
+        sensors_per_env = 5
         if self._load_cell_activate:
             sensors_per_env += 1
         self.vec_sensor_tensor = gymtorch.wrap_tensor(sensor_tensor).view(self.num_envs, sensors_per_env, 6)
@@ -387,7 +387,13 @@ class SRL_HRIBase(VecTask):
             sensor_props.use_world_frame = False
             load_cell_idx = self.gym.find_asset_rigid_body_index(humanoid_asset, "SRL")
             self.load_cell_ssidx = self.gym.create_asset_force_sensor(humanoid_asset, load_cell_idx, sensor_pose, sensor_props)
-        
+            # forward dynamics
+            sensor_props = gymapi.ForceSensorProperties()
+            sensor_props.enable_forward_dynamics_forces = True
+            sensor_props.enable_constraint_solver_forces = False
+            sensor_props.use_world_frame = False
+            load_cell_idx = self.gym.find_asset_rigid_body_index(humanoid_asset, "SRL")
+            self.load_cell_ssidx_fd = self.gym.create_asset_force_sensor(humanoid_asset, load_cell_idx, sensor_pose, sensor_props)      
         srl_end_sensor_props = gymapi.ForceSensorProperties()
         srl_end_sensor_props.enable_forward_dynamics_forces = True
         srl_end_sensor_props.enable_constraint_solver_forces = True
@@ -815,6 +821,7 @@ class SRL_HRIBase(VecTask):
         self.extras['key_body_pos'] = key_body_pos
         self.extras['dof_pos'] = self._dof_pos[0].to(self.rl_device)
         self.extras['load_cell'] = self.vec_sensor_tensor[0,self.load_cell_ssidx,:].to(self.rl_device)
+        self.extras['load_cell_fd'] = self.vec_sensor_tensor[0,self.load_cell_ssidx_fd,:].to(self.rl_device)
         self.extras['right_srl_end_sensor'] = self.vec_sensor_tensor[0,self.right_srl_end_ssidx,:].to(self.rl_device)
         self.extras["target_yaw"] = self.target_yaw
         
@@ -1075,7 +1082,8 @@ def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, l
                      humanoid_dof_obs,    # 52
                      humanoid_dof_vel,    # 28
                      load_cell_force,     # 6
-                     flat_local_key_pos   # 12
+                     flat_local_key_pos,  # 12
+                     # command, 
                      ), dim=-1)
     return obs
 
@@ -1274,6 +1282,9 @@ def compute_srl_observations_mirrored(
     return obs  
 
 def compute_humanoid_reward(obs_buf, dof_pos):
+    # --- Task Command ---
+    target_pelvis_height = obs_buf[:, -1] 
+    target_ang_vel_z = obs_buf[:, -2]
     target_vel_x = obs_buf[:, -3]
 
     # --- Target Velocity ---
@@ -1400,6 +1411,8 @@ def compute_srl_reward(
     cos_angle = torch.cos(2 * angle_diff)
     ori_error = 1 - torch.mean(cos_angle, dim=-1)
     orientation_reward = torch.exp(-20 * ori_error   ) 
+    # TODO: 将朝向奖励改为惩罚
+    orientation_reward = - 3*torch.sum((angle_diff) ** 2, dim=-1)
     # ori_error = 3 - torch.sum(cos_angle, dim=-1)
     # orientation_reward = torch.exp(-8 * ori_error   ) 
 
