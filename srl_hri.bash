@@ -63,5 +63,9 @@ python SRL_Evo_train.py test=True task=SRL_HRI  num_envs=4   checkpoint=runs/SRL
 
 # 使用SRL距离躯干更远的模型训练，目的：测试是否能够平衡
 python SRL_Evo_train.py task=SRL_HRI headless=True wandb_project=SRL_Evo wandb_activate=True experiment=SRL_HRI   max_iterations=2000  task.env.asset.assetFileName=mjcf/srl_hri/srl_hri_basic_longdis.xml train.params.config.humanoid_checkpoint=runs/AMP_Pretrain_Hybrid_19-17-13-54/nn/AMP_Pretrain_Hybrid_19-17-14-05.pth    train.params.config.srl_teacher_checkpoint=runs/SRL_bot_v5_s2_05-16-59-52/nn/SRL_bot_v5_s2.pth  train.params.config.dagger_loss_coef=0.5 train.params.config.sym_loss_coef=1.0 task.env.progress_reward_scale=2.0 train.params.config.dagger_anneal_k=1e-4; 
-python SRL_Evo_train.py test=True task=SRL_HRI  num_envs=4  task.env.asset.assetFileName=mjcf/srl_hri/srl_hri_basic_longdis.xml checkpoint=runs/SRL_HRI_03-20-03-41/nn/SRL_HRI_03-20-03-51.pth
+python SRL_Evo_train.py test=True task=SRL_HRI  num_envs=4  task.env.asset.assetFileName=mjcf/srl_hri/srl_hri_basic_longdis.xml checkpoint=runs/SRL_HRI_05-11-29-24/nn/SRL_HRI_05-11-29-33.pth
 
+
+# 使用SRL距离躯干更远的模型训练 + 单个free joint，去掉弹簧阻尼
+python SRL_Evo_train.py task=SRL_HRI headless=True wandb_project=SRL_Evo wandb_activate=True experiment=SRL_HRI   max_iterations=2000  task.env.asset.assetFileName=mjcf/srl_hri/srl_hri_basic_1free.xml train.params.config.humanoid_checkpoint=runs/AMP_Pretrain_Hybrid_19-17-13-54/nn/AMP_Pretrain_Hybrid_19-17-14-05.pth    train.params.config.srl_teacher_checkpoint=runs/SRL_bot_v5_s2_05-16-59-52/nn/SRL_bot_v5_s2.pth  train.params.config.dagger_loss_coef=0.5 train.params.config.sym_loss_coef=1.0 task.env.progress_reward_scale=2.0 train.params.config.dagger_anneal_k=1e-4  task.env.srl_free_actions_num=1; 
+python SRL_Evo_train.py test=True task=SRL_HRI  num_envs=4  task.env.asset.assetFileName=mjcf/srl_hri/srl_hri_basic_1free.xml checkpoint=runs/SRL_HRI_05-17-32-37/nn/SRL_HRI_05-17-32-49.pth   task.env.srl_free_actions_num=1; 

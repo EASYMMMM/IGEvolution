@@ -366,7 +366,7 @@ class SRL_HRIBase(VecTask):
         
         srl_free_joint_idx = self.gym.find_asset_dof_index(humanoid_asset, 'SRL_freejoint_y')
         srl_damping_x_idx = self.gym.find_asset_dof_index(humanoid_asset, 'SRL_damping_x')
-        # srl_damping_z_idx = self.gym.find_asset_dof_index(humanoid_asset, 'SRL_damping_z')
+        srl_damping_z_idx = self.gym.find_asset_dof_index(humanoid_asset, 'SRL_damping_z')
 
 
         # create force sensors at the feet
@@ -449,8 +449,10 @@ class SRL_HRIBase(VecTask):
                 dof_prop[-srl_start_id:]["effort"].fill(200.0)
                 dof_prop[-srl_start_id:]["driveMode"] = gymapi.DOF_MODE_EFFORT
                 dof_prop[srl_free_joint_idx]["driveMode"] = gymapi.DOF_MODE_POS
-                dof_prop[srl_damping_x_idx]["driveMode"] = gymapi.DOF_MODE_POS
-                # dof_prop[srl_damping_z_idx]["driveMode"] = gymapi.DOF_MODE_POS
+                if not srl_damping_x_idx == -1:
+                    dof_prop[srl_damping_x_idx]["driveMode"] = gymapi.DOF_MODE_POS
+                if not srl_damping_z_idx == -1:
+                    dof_prop[srl_damping_z_idx]["driveMode"] = gymapi.DOF_MODE_POS
             self.gym.set_actor_dof_properties(env_ptr, handle, dof_prop)
 
         dof_props = self.gym.get_asset_dof_properties(humanoid_asset)
@@ -500,7 +502,7 @@ class SRL_HRIBase(VecTask):
         return self.obs_dict, done_env_ids
         
     def _build_pd_action_offset_scale(self):
-        Dof_offsets = DOF_OFFSETS
+        Dof_offsets = DOF_OFFSETS.copy()
         for i in range(DOF_OFFSETS[-1], self.dof_limits_lower.shape[0]):  # 补齐
             Dof_offsets.append(i+1)
             
@@ -1173,7 +1175,7 @@ def compute_srl_observations(
                      actions  ,                          # 6    22:27
                      sin_phase,                          # 1    28
                      cos_phase,                          # 1    29
-                     dof_pos[:,1:2],                     # 1    30
+                     0*dof_pos[:,1:2],                     # 1    30
                      load_cell_force * obs_scales[4],    # 6    31:36
                     ), dim=-1)
     return obs , potentials, prev_potentials_new
@@ -1276,7 +1278,7 @@ def compute_srl_observations_mirrored(
                      actions[:,-6:] ,
                      sin_phase,    
                      cos_phase,     
-                     dof_pos[:,1:2],                  
+                     0*dof_pos[:,1:2],                  
                      load_cell_force * obs_scales[4],       # 6    31:36                   
                     ), dim=-1)
     return obs  
@@ -1294,7 +1296,12 @@ def compute_humanoid_reward(obs_buf, dof_pos):
     vel_error_vec = root_vel - root_target_vel
     vel_tracking_reward =  1 *  torch.exp(-4 * torch.norm(vel_error_vec, dim=-1))  # α = 1.5
 
-    # --- Standing Pose ---
+    # --- Pelvis Orientation ---
+    pelvis_upright_z = obs_buf[:,6]
+    pelvis_penalty = (1.0 - pelvis_upright_z).clamp(min=0.0)
+    pelvis_penalty = 20 * pelvis_penalty
+
+    # --- Standing Joint Pose ---
     humanoid_dof_pos = dof_pos[:,0:28]
     dof_pos_cost = 0.25*torch.sum(humanoid_dof_pos ** 2, dim=-1)
     # standing
@@ -1307,7 +1314,8 @@ def compute_humanoid_reward(obs_buf, dof_pos):
 
     total_reward = vel_tracking_reward \
                    - dof_pos_cost \
-                   - dof_vel_cost
+                   - dof_vel_cost \
+                   - pelvis_penalty
     return total_reward
 
 
@@ -1386,7 +1394,7 @@ def compute_srl_reward(
     # --- DOF deviation cost ---
     dof_pos = obs_buf[:, 10:16]
     dof_pos[:,0] = dof_pos[:,0] * 3 # 
-    dof_pos[:,3] = dof_pos[:,0] * 3
+    dof_pos[:,3] = dof_pos[:,3] * 3
     dof_pos_cost = torch.sum(dof_pos ** 2, dim=-1)
 
     # --- DOF velocity cost ---
@@ -1431,9 +1439,9 @@ def compute_srl_reward(
     ang_vel_tracking_reward = tracking_ang_vel_reward_scale * torch.exp(-3 * torch.norm(ang_vel_error_vec, dim=-1))   
    
     # --- Interaction Force ---
-    load_cell_force = obs_buf[:, 31:37]
+    load_cell_force = obs_buf[:, 31:34]
     contact_force_magnitude_sq = torch.sum(load_cell_force ** 2, dim=-1)
-    contact_force_cost = 0.1 * contact_force_magnitude_sq
+    contact_force_cost = 1 * contact_force_magnitude_sq
 
     # --- No fly --- 
     contact_threshold = 0.095  
@@ -1497,7 +1505,8 @@ def compute_srl_reward(
         - no_fly_penalty \
         - gait_phase_penalty \
         - clearance_penalty * clearance_penalty_scale \
-        - lateral_distance_penalty_scale * feet_lateral_penalty 
+        - lateral_distance_penalty_scale * feet_lateral_penalty \
+        - contact_force_cost
 
     # --- Handle termination ---
     total_reward = torch.where(obs_buf[:, 0] < termination_height, torch.ones_like(total_reward) * death_cost, total_reward)

@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <mujoco model="XMLModel">
     <!-- 增长外肢体到躯干的距离 -->
+    <!-- 同时仅保留一个俯仰角自由度 -->
 	<statistic center="0 0 1" extent="2"/>
 	<option timestep="0.00555"/>
 	<default>
@@ -21,7 +22,8 @@
 	<worldbody>
 		<geom conaffinity="1" name="floor" size="100 100 0.2" type="plane"/>
 		<body childclass="body" name="pelvis" pos="0 0 1">
-			<freejoint name="root"/>
+			<!-- <freejoint name="root"/> -->
+            <light name="ttop" pos="2 0 3" mode="trackcom"/>
 			<site class="force-torque" name="root"/>
 			<geom density="2226" name="pelvis" pos="0 0 0.07" size="0.09" type="sphere"/>
 			<geom density="2226" name="upper_waist" pos="0 0 0.205" size="0.07" type="sphere"/>
@@ -125,7 +127,7 @@
 			</body>
 			<body name="SRL" pos="-0.15 0 0.05" > <!-- <body name="SRL" pos="-0.20 0 0.05" > -->
                 <geom name="board" pos="0 0 0" size="0.0005 0.1 0.1 " type="box" density='100'/> 
-				<joint armature="0.00" axis="1 0 0" damping="400" stiffness="10000"  type="slide" name="SRL_damping_x" pos="0 0 0" range="-0.005 0.0015" />
+				<!-- <joint armature="0.00" axis="1 0 0" damping="4" stiffness="100"  type="slide" name="SRL_damping_x" pos="0 0 0" range="-0.025 0.025" /> -->
 				<!-- <joint armature="0.00" axis="0 0 1" damping="10" stiffness="100"  type="slide" name="SRL_damping_z" pos="0 0 0" range="-0.025 0.025" /> -->
 				<body name="SRL_root" pos="-0.60 0 0" quat="0.0 0.0 0.0 1.0">
                     <joint armature="0.00" axis="0 1 0" damping="0" name="SRL_freejoint_y" pos="-0.60 0 0" range="-20 20" stiffness="0"/>
@@ -133,11 +135,11 @@
 					<geom density="500" name="SRL_geom_load" pos="0 0 0.22" size="0.13 0.13 0.11" type="box" contype="1" conaffinity="1"/>
 					<body name="SRL_right_leg1" pos="0.02 0.13 0"  quat="1.0 0.0 0.0 0.0">
 						<geom density="1000" fromto="0 0 0 0.65 0 0" name="SRL_geom_right_leg1" size="0.03" type="capsule"/>
-						<joint armature="0.00" axis="1 0 0" damping="4" name="SRL_joint_right_hipjoint_x" pos="0 0 0" range="0 40" stiffness="200" actuatorfrcrange="-300 300"/>
-						<joint armature="0.00" axis="0 1 0" damping="4" name="SRL_joint_right_hipjoint_y" pos="0 0 0" range="-170 170" stiffness="200" actuatorfrcrange="-300 300"/>
+						<joint armature="0.00" axis="1 0 0" damping="4" name="SRL_joint_right_hipjoint_x" pos="0 0 0" range="0 40" stiffness="200" actuatorfrcrange="-3 3"/>
+						<joint armature="0.00" axis="0 1 0" damping="4" name="SRL_joint_right_hipjoint_y" pos="0 0 0" range="-170 170" stiffness="200" actuatorfrcrange="-3 3"/>
 						<body name="SRL_right_leg2" pos="0.65 0 0" quat="0.70711 0.0 0.70711 0.0">
 							<geom density="1000" fromto="0 0 0 0.55 0 0" name="SRL_geom_right_leg2" size="0.03" type="capsule"/>
-							<joint armature="0.00" axis="0 1 0" damping="4" name="SRL_joint_right_kneejoint" pos="0 0 0" range="-170 170" stiffness="200" actuatorfrcrange="-300 300"/>
+							<joint armature="0.00" axis="0 1 0" damping="4" name="SRL_joint_right_kneejoint" pos="0 0 0" range="-170 170" stiffness="200" actuatorfrcrange="-3 3"/>
 							<body name="SRL_right_end" pos="0.55 0 0" quat="0.70711 0.0 -0.70711 0.0">
 								<geom density="1000" friction="5.0 0.05 0.05" name="SRL_geom_right_end" pos="0 0 -0.045" size="0.05" type="sphere"  contype="1" conaffinity="1"/>
 								<!-- <joint armature="0.02" axis="0 1 0" damping="30" name="SRL_joint_right_ankle" pos="0 0 0" range="-5 5" stiffness="300"/> -->
