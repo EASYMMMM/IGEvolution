@@ -104,7 +104,8 @@ params:
     hsrl_checkpoint: False
     srl_teacher_checkpoint: False
     mirror_loss: True
-    sym_loss_coef: 0.0     # 1.0
+    sym_a_loss_coef: 0.0     # 1.0
+    sym_c_loss_coef: 0.0     # 1.0
     train_srl: True
     train_humanoid: True
     train_humanoid_freq: 10

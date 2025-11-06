@@ -211,6 +211,13 @@ class SRL_HRIBase(VecTask):
 
         self.srl_obs_buf = torch.zeros(
             (self.num_envs, self.get_srl_obs_size()), device=self.device, dtype=torch.float)
+        self.srl_obs_mirrored_buf = torch.zeros(
+            (self.num_envs, self.get_srl_obs_size()), device=self.device, dtype=torch.float)
+
+        self.srl_priv_extra_obs_buf = torch.zeros(
+            (self.num_envs, self.get_srl_priv_obs_size()-self.get_srl_obs_size()), device=self.device, dtype=torch.float)
+        self.srl_priv_extra_mirrored_obs_buf = torch.zeros(
+            (self.num_envs, self.get_srl_priv_obs_size()-self.get_srl_obs_size()), device=self.device, dtype=torch.float)
 
         self.srl_rew_buf = torch.zeros(
             self.num_envs, device=self.device, dtype=torch.float)
@@ -220,8 +227,6 @@ class SRL_HRIBase(VecTask):
             self.num_envs, device=self.device, dtype=torch.float)
         self.rew_upper_buf = torch.zeros(           # 直立惩罚
             self.num_envs, device=self.device, dtype=torch.float)
-        self.srl_obs_mirrored_buf = torch.zeros(
-            (self.num_envs, self.get_srl_obs_size()), device=self.device, dtype=torch.float)
         if self._design_param_obs:
             design_param = self._get_design_param()
 
@@ -499,6 +504,8 @@ class SRL_HRIBase(VecTask):
         _, done_env_ids = super().reset_done()
         # 添加镜像OBS
         self.obs_dict["obs_mirrored"] = torch.clamp(self.srl_obs_mirrored_buf, -self.clip_obs, self.clip_obs).to(self.rl_device)
+        self.obs_dict["srl_priv_extra_obs"] = self.srl_priv_extra_obs_buf.to(self.rl_device)
+        self.obs_dict["srl_priv_extra_mirrored_obs"] = self.srl_priv_extra_mirrored_obs_buf.to(self.rl_device)
         return self.obs_dict, done_env_ids
         
     def _build_pd_action_offset_scale(self):
@@ -626,7 +633,8 @@ class SRL_HRIBase(VecTask):
         return
 
     def _compute_observations(self, env_ids=None):
-        humanoid_obs, srl_obs, srl_obs_mirrored, potentials, prev_potentials, = self._compute_env_obs(env_ids)
+        humanoid_obs, srl_obs, srl_obs_mirrored, priv_extra_obs, priv_extra_obs_mirrored, potentials, prev_potentials, = self._compute_env_obs(env_ids)
+        
 
         if (env_ids is None):
             self.srl_obs_buffer[:, 1:, :] = self.srl_obs_buffer[:, :-1, :]  # 向后移动数据
@@ -654,6 +662,8 @@ class SRL_HRIBase(VecTask):
             self.obs_buf[:] = total_obs
             self.srl_obs_buf[:] = srl_stacked_obs
             self.srl_obs_mirrored_buf[:] = srl_mirrored_stacked_obs      
+            self.srl_priv_extra_obs_buf[:] = priv_extra_obs
+            self.srl_priv_extra_mirrored_obs_buf[:] = priv_extra_obs_mirrored
 
             self.potentials[:] = potentials
             self.prev_potentials[:] = prev_potentials
@@ -685,6 +695,8 @@ class SRL_HRIBase(VecTask):
             self.obs_buf[env_ids] = total_obs
             self.srl_obs_buf[env_ids] = srl_stacked_obs
             self.srl_obs_mirrored_buf[env_ids] = srl_mirrored_stacked_obs
+            self.srl_priv_extra_obs_buf[env_ids] = priv_extra_obs
+            self.srl_priv_extra_mirrored_obs_buf[env_ids] = priv_extra_obs_mirrored
 
             self.potentials[env_ids] = potentials
             self.prev_potentials[env_ids] = prev_potentials
@@ -748,12 +760,17 @@ class SRL_HRIBase(VecTask):
                                                             load_cell_sensor,  target_yaw, dof_force_tensor[:, -srl_dof_num:], 
                                                             actions[:, -(self.srl_actions_num):], self.obs_scales_tensor, 
                                                             targets, target_vel_x, self.gait_period )
+        priv_extra_obs = compute_priv_extra_observations(root_states, dof_pos, dof_vel,
+                                            key_body_pos, self._local_root_obs,)
+        priv_extra_obs_mirrored = compute_priv_extra_observations_mirrored(root_states, dof_pos, dof_vel,
+                                            key_body_pos, self._local_root_obs,)
+        
         if self._design_param_obs:
             design_param = self.design_param
             design_param = design_param.unsqueeze(0).repeat(obs.shape[0], 1)
             obs = torch.cat([obs, design_param], dim=1)
             obs_mirrored = torch.cat([obs_mirrored, design_param], dim=1)
-        return humanoid_obs, srl_obs, srl_obs_mirrored, potentials, prev_potentials,
+        return humanoid_obs, srl_obs, srl_obs_mirrored, priv_extra_obs, priv_extra_obs_mirrored, potentials, prev_potentials,
 
     def _reset_actors(self, env_ids):
         self._dof_pos[env_ids] = self._initial_dof_pos[env_ids]
@@ -809,10 +826,12 @@ class SRL_HRIBase(VecTask):
 
         self.extras["terminate"] = self._terminate_buf
 
-        # SRL reward
+        # SRL reward & Obs
         self.extras["srl_rewards"] = self.srl_rew_buf.to(self.rl_device)
         self.extras["x_velocity"] = self.obs_buf[:,7]                            
         self.extras["obs_mirrored"] = self.srl_obs_mirrored_buf.to(self.rl_device)  # 镜像观测
+        self.extras["srl_priv_extra_obs"] = self.srl_priv_extra_obs_buf.to(self.rl_device)
+        self.extras["srl_priv_extra_obs_mirrored"] = self.srl_priv_extra_mirrored_obs_buf.to(self.rl_device)
         # plotting
         self.extras["root_pos"] = self._root_states[0, 0:3].to(self.rl_device)
         srl_end_body_pos = self._rigid_body_pos[0, self._srl_end_ids, :]
@@ -1283,6 +1302,72 @@ def compute_srl_observations_mirrored(
                     ), dim=-1)
     return obs  
 
+
+def compute_priv_extra_observations(root_states, dof_pos, dof_vel, key_body_pos, local_root_obs):
+    # type: (Tensor, Tensor, Tensor, Tensor, bool, Tensor, bool) -> Tensor
+    root_pos = root_states[:, 0:3]
+    root_rot = root_states[:, 3:7]
+
+    heading_rot = calc_heading_quat_inv(root_rot)
+
+    if (local_root_obs):
+        root_rot_obs = quat_mul(heading_rot, root_rot)
+    else:
+        root_rot_obs = root_rot
+    root_rot_obs = quat_to_tan_norm(root_rot_obs) # root朝向
+
+    root_pos_expand = root_pos.unsqueeze(-2)
+    local_key_body_pos = key_body_pos - root_pos_expand
+    
+    heading_rot_expand = heading_rot.unsqueeze(-2)
+    heading_rot_expand = heading_rot_expand.repeat((1, local_key_body_pos.shape[1], 1))
+    flat_end_pos = local_key_body_pos.view(local_key_body_pos.shape[0] * local_key_body_pos.shape[1], local_key_body_pos.shape[2])
+    flat_heading_rot = heading_rot_expand.view(heading_rot_expand.shape[0] * heading_rot_expand.shape[1], 
+                                               heading_rot_expand.shape[2])
+    local_end_pos = my_quat_rotate(flat_heading_rot, flat_end_pos)
+    flat_local_key_pos = local_end_pos.view(local_key_body_pos.shape[0], local_key_body_pos.shape[1] * local_key_body_pos.shape[2])
+
+    # root_h 1; root_rot_obs 6; local_root_vel 3 ; local_root_ang_vel 3 ; dof_obs 58; dof_vel 36 ; load_cell_force 6, flat_local_key_pos 12
+    obs = torch.cat((flat_local_key_pos,  # 12
+                     ), dim=-1)
+    return obs
+
+def compute_priv_extra_observations_mirrored(root_states, dof_pos, dof_vel, key_body_pos, local_root_obs):
+    # type: (Tensor, Tensor, Tensor, Tensor, bool, Tensor, bool) -> Tensor
+    root_pos = root_states[:, 0:3]
+    root_rot = root_states[:, 3:7]
+
+    heading_rot = calc_heading_quat_inv(root_rot)
+
+    if (local_root_obs):
+        root_rot_obs = quat_mul(heading_rot, root_rot)
+    else:
+        root_rot_obs = root_rot
+    root_rot_obs = quat_to_tan_norm(root_rot_obs) # root朝向
+
+    root_pos_expand = root_pos.unsqueeze(-2)
+    local_key_body_pos = key_body_pos - root_pos_expand
+    
+    heading_rot_expand = heading_rot.unsqueeze(-2)
+    heading_rot_expand = heading_rot_expand.repeat((1, local_key_body_pos.shape[1], 1))
+    flat_end_pos = local_key_body_pos.view(local_key_body_pos.shape[0] * local_key_body_pos.shape[1], local_key_body_pos.shape[2])
+    flat_heading_rot = heading_rot_expand.view(heading_rot_expand.shape[0] * heading_rot_expand.shape[1], 
+                                               heading_rot_expand.shape[2])
+    local_end_pos = my_quat_rotate(flat_heading_rot, flat_end_pos)
+    flat_local_key_pos = local_end_pos.view(local_key_body_pos.shape[0], local_key_body_pos.shape[1] * local_key_body_pos.shape[2])
+
+    # Mirrored
+    flat_local_key_pos_mirrored = flat_local_key_pos.clone()
+    flat_local_key_pos_mirrored[:,0:3] = flat_local_key_pos[:,3:6]
+    flat_local_key_pos_mirrored[:,3:6] = flat_local_key_pos[:,0:3]
+    flat_local_key_pos_mirrored[:,6:9] = flat_local_key_pos[:,9:12]
+    flat_local_key_pos_mirrored[:,9:12] = flat_local_key_pos[:,6:9]
+
+    # root_h 1; root_rot_obs 6; local_root_vel 3 ; local_root_ang_vel 3 ; dof_obs 58; dof_vel 36 ; load_cell_force 6, flat_local_key_pos 12
+    obs = torch.cat((flat_local_key_pos_mirrored,  # 12
+                     ), dim=-1)
+    return obs
+    
 def compute_humanoid_reward(obs_buf, dof_pos):
     # --- Task Command ---
     target_pelvis_height = obs_buf[:, -1] 

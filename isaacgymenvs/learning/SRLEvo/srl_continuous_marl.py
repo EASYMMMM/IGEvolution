@@ -58,8 +58,9 @@ class SRL_MultiAgent(common_agent.CommonAgent):
 
         self.is_discrete = False
         self._setup_action_space()
-        self.bounds_loss_coef = config.get('bounds_loss_coef', None)
-        self.sym_loss_coef = config.get('sym_loss_coef',0)
+        self.bounds_loss_coef = config.get('bounds_loss_coef', 0)
+        self.sym_actor_loss_coef = config.get('sym_a_loss_coef',0)
+        self.sym_critic_loss_coef = config.get('sym_c_loss_coef',0)
         self.dagger_loss_coef = config.get('dagger_loss_coef',0)
         self.dagger_loss_coef_init = self.dagger_loss_coef
         self.dagger_anneal_k = config.get('dagger_anneal_k', 5e-5)  # 衰减速率
@@ -171,6 +172,11 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             dtype=self.experience_buffer_srl.tensor_dict['obses'].dtype
         )
         self.experience_buffer_srl.tensor_dict['priv_obses'] = torch.zeros(
+            obs_shape[0], obs_shape[1], self.vec_env.env.get_srl_priv_obs_size(), 
+            device=self.ppo_device,
+            dtype=self.experience_buffer_srl.tensor_dict['obses'].dtype
+        )
+        self.experience_buffer_srl.tensor_dict['priv_obses_mirrored'] = torch.zeros(
             obs_shape[0], obs_shape[1], self.vec_env.env.get_srl_priv_obs_size(), 
             device=self.ppo_device,
             dtype=self.experience_buffer_srl.tensor_dict['obses'].dtype
@@ -312,7 +318,8 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             total_obs = self.obs['obs']
             humanoid_obs = total_obs[:, :self.obs_num_humanoid[0]]
             srl_obs = total_obs[:, -self.obs_num_srl[0]:]
-            priv_srl_obs = total_obs[:, -self.priv_obs_num_srl[0]:]
+            srl_priv_extra_obs = self.obs['srl_priv_extra_obs']
+            priv_srl_obs = torch.cat((srl_priv_extra_obs, srl_obs), dim=-1)
             self.experience_buffer.update_data('obses', n, humanoid_obs)
             self.experience_buffer_srl.update_data('obses', n, srl_obs)
             self.experience_buffer_srl.update_data('priv_obses', n, priv_srl_obs)       
@@ -320,7 +327,10 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             res_dict, res_dict_srl = self.get_action_values(self.obs) # 获取动作值
             
             if self.mirror_loss: # 镜像损失
+                srl_priv_extra_mirrored_obs = self.obs['srl_priv_extra_mirrored_obs']
+                priv_srl_obs_mirrored = torch.cat((srl_priv_extra_mirrored_obs, self.obs['obs_mirrored']), dim=-1)
                 self.experience_buffer_srl.update_data('obs_mirrored', n, self.obs['obs_mirrored']) # 镜像观测
+                self.experience_buffer_srl.update_data('priv_obses_mirrored', n, priv_srl_obs_mirrored) # 镜像观测
                 mirrored_obs = {}
                 mirrored_obs['obs']  =  self.obs['obs_mirrored']
                 
@@ -361,8 +371,8 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             self.experience_buffer_srl.update_data('rewards', n, rewards_srl)
             self.experience_buffer_srl.update_data('next_obses', n, srl_obs['obs'])
             self.experience_buffer_srl.update_data('dones', n, self.dones)
-            if self.mirror_loss:
-                self.experience_buffer_srl.update_data('obs_mirrored', n, mirrored_obs['obs'])
+            # if self.mirror_loss:
+            #     self.experience_buffer_srl.update_data('obs_mirrored', n, mirrored_obs['obs'])
 
 
             terminated = infos['terminate'].float()
@@ -458,8 +468,9 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         srl_tensor_dict = self.tensor_list + ['teacher_actions']
         batch_dict_srl = self.experience_buffer_srl.get_transformed_list(a2c_common.swap_and_flatten01, srl_tensor_dict) # 获取转换后的批次字典
         batch_dict_srl['returns'] = a2c_common.swap_and_flatten01(mb_returns_srl) # 设置返回值
-        batch_dict_srl['obs_mirrored'] = a2c_common.swap_and_flatten01(self.experience_buffer_srl.tensor_dict['obs_mirrored'] ) # 设置返回值
-        batch_dict_srl['priv_obses'] = a2c_common.swap_and_flatten01(self.experience_buffer_srl.tensor_dict['priv_obses'] ) # 设置返回值
+        batch_dict_srl['obs_mirrored'] = a2c_common.swap_and_flatten01(self.experience_buffer_srl.tensor_dict['obs_mirrored'] )  
+        batch_dict_srl['priv_obses'] = a2c_common.swap_and_flatten01(self.experience_buffer_srl.tensor_dict['priv_obses'] )  
+        batch_dict_srl['priv_obses_mirrored'] = a2c_common.swap_and_flatten01(self.experience_buffer_srl.tensor_dict['priv_obses_mirrored'] )  
         batch_dict_srl['played_frames'] = self.batch_size
 
         # humanoid AMP batch
@@ -482,6 +493,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         rnn_states = batch_dict.get('rnn_states', None)
         rnn_masks = batch_dict.get('rnn_masks', None)
         priv_obses = batch_dict['priv_obses']
+        priv_obses_mirrored = batch_dict['priv_obses_mirrored']
 
         advantages = returns - values
 
@@ -518,6 +530,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         dataset_dict['mu'] = mus
         dataset_dict['sigma'] = sigmas
         dataset_dict['priv_obses'] = priv_obses
+        dataset_dict['priv_obses_mirrored'] = priv_obses_mirrored
         if self.mirror_loss:
             dataset_dict['obs_mirrored'] = batch_dict['obs_mirrored']
         if self._srl_teacher_checkpoint:
@@ -637,6 +650,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         actions_batch = input_dict['actions']
         obs_batch = self._preproc_obs(input_dict['obs'])
         priv_obses = input_dict['priv_obses']
+        priv_obses_mirrored = input_dict['priv_obses_mirrored']
 
         lr = self.last_lr 
         kl = 1.0  
@@ -655,7 +669,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         if self.mirror_loss:
             obs_mirrored_batch = self._preproc_obs(input_dict['obs_mirrored'])
             batch_mirrored_dict = {'obs': obs_mirrored_batch,
-                                   'priv_obs': priv_obses,}
+                                   'priv_obs': priv_obses_mirrored,}
             res_dict_srl_mirrored = self.get_srl_mirrored_action_values(batch_mirrored_dict)
             mu_mirrored = res_dict_srl_mirrored['mus']
 
@@ -690,7 +704,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             b_loss = self.bound_loss(mu)
             b_loss = b_loss.unsqueeze(1).mean()
 
-            # Symmetry Loss
+            # Actor Symmetry Loss
             sym_loss = 0.0
             if self.mirror_loss and mu_mirrored is not None:
                 sym_info = self.sym_loss(mu, mu_mirrored)
@@ -698,6 +712,13 @@ class SRL_MultiAgent(common_agent.CommonAgent):
                 sym_loss = sym_loss.unsqueeze(1).mean()
             else:
                 sym_info = {}
+
+            # Critic Symmetry Loss
+            sym_value_loss = 0.0
+            if self.mirror_loss:
+                values_mirrored = self.model_srl.a2c_network.eval_critic(priv_obses_mirrored)
+                sym_value_loss = torch.mean((values - values_mirrored) ** 2)
+                sym_info['sym_value_loss'] = sym_value_loss
 
             # DAgger loss
             dagger_loss = 0.0
@@ -714,7 +735,8 @@ class SRL_MultiAgent(common_agent.CommonAgent):
                     + self.critic_coef * c_loss
                     - self.entropy_coef * entropy
                     + self.bounds_loss_coef * b_loss
-                    + self.sym_loss_coef * sym_loss
+                    + self.sym_actor_loss_coef * sym_loss
+                    + self.sym_critic_loss_coef * sym_value_loss
                     + self.dagger_loss_coef * dagger_loss)
 
             # ====== 反向传播 ======
@@ -1312,6 +1334,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         
         if self.mirror_loss:
             self.writer.add_scalar('losses/sym_loss_srl', torch_ext.mean_list(train_info['sym_loss']).item(), frame)
+            self.writer.add_scalar('losses/sym_value_loss_srl', torch_ext.mean_list(train_info['sym_value_loss']).item(), frame)
         return
 
     def _amp_debug(self, info):
