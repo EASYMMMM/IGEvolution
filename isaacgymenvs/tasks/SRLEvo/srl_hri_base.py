@@ -1537,10 +1537,10 @@ def compute_humanoid_reset(reset_buf, progress_buf, srl_obs_buf, srl_freejoint_p
         # srl fallen        
         srl_fallen = torch.where(srl_obs_buf[:, 0] < srl_termination_height, torch.ones_like(reset_buf), terminated)
         # srl unstable
-        srl_unstable = torch.where(srl_freejoint_pos[:,0] > 0.260, torch.ones_like(reset_buf), terminated)
-        srl_failed = torch.logical_or(srl_fallen, srl_unstable)
+        # srl_unstable = torch.where(srl_freejoint_pos[:,0] > 0.260, torch.ones_like(reset_buf), terminated)
+        # srl_fallen = torch.logical_or(srl_fallen, srl_unstable)
 
-        has_fallen = torch.logical_or(has_fallen, srl_failed)
+        has_fallen = torch.logical_or(has_fallen, srl_fallen)
 
         # first timestep can sometimes still have nonzero contact forces
         # so only check after first couple of steps
