@@ -616,7 +616,7 @@ class SRL_bot(VecTask):
         self.compute_reward(self.actions)
 
         # TODO: Task Randomization
-        # self.set_task_target()
+        self.set_task_target()
         
         # mirrored info
         self.extras["obs_mirrored"] = self.obs_mirrored_buf.to(self.rl_device)  # 镜像观测
@@ -878,7 +878,7 @@ def compute_srl_reward(
     # --- DOF deviation cost ---
     dof_pos = obs_buf[:, 10:16]
     dof_pos[:,0] = dof_pos[:,0] * 3 # 
-    dof_pos[:,3] = dof_pos[:,0] * 3
+    dof_pos[:,3] = dof_pos[:,3] * 3
     dof_pos_cost = torch.sum(dof_pos ** 2, dim=-1)
 
     # --- DOF velocity cost ---
@@ -929,12 +929,6 @@ def compute_srl_reward(
     # 如果两只脚同时离地，给予惩罚
     no_fly_penalty = torch.where(no_feet_on_ground, torch.ones_like(no_feet_on_ground) * no_fly_penalty_scale, torch.zeros_like(no_feet_on_ground))
     
-
-    # --- Contact force cost ---
-    # Assuming contact force encoded in obs_buf at some index e.g. 36+num_dof+num_dof: adjust as needed
-    contact_force = obs_buf[:, 21:21+actions.shape[1]]  # You may need to adjust slice
-    contact_force_magnitude = torch.norm(contact_force, dim=-1)
-    contact_force_cost = contact_force_cost_scale * contact_force_magnitude
 
     # --- Feet Lateral Distance ---
     local_srl_end_body_pos = srl_end_body_pos - srl_root_pos.unsqueeze(-2)

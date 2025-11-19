@@ -21,9 +21,12 @@ KEY_BODY_NAMES = ["right_hand", "left_hand", "right_foot", "left_foot"]  # body 
 SRL_END_BODY_NAMES = ["SRL_right_end","SRL_left_end"] 
 SRL_CONTACT_BODY_NAMES = ['SRL_root', 'SRL_leg2', 'SRL_shin11', 'SRL_right_end', 'SRL_leg1', 'SRL_shin1', 'SRL_left_end']
 
-# ROT_Z_180 = torch.tensor([[-1.,  0.,  0.],
-#                             [ 0., -1.,  0.],
-#                             [ 0.,  0.,  1.]], device=root_rot.device, dtype=root_rot.dtype)
+USE_ROOT_QUAT_CORRECTION = False
+SRL_ROT_CORRECTION = [
+    [-1.0, 0.0, 0.0],   # X轴
+    [0.0, -1.0, 0.0],   # Y轴
+    [0.0, 0.0, 1.0],   # Z轴
+]
 
 
 class SRL_HRIBase(VecTask):
@@ -369,7 +372,9 @@ class SRL_HRIBase(VecTask):
         actuator_props = self.gym.get_asset_actuator_properties(humanoid_asset)
         motor_efforts = [prop.motor_effort for prop in actuator_props]
         
-        srl_free_joint_idx = self.gym.find_asset_dof_index(humanoid_asset, 'SRL_freejoint_y')
+        srl_free_joint_x_idx = self.gym.find_asset_dof_index(humanoid_asset, 'SRL_freejoint_x')
+        srl_free_joint_y_idx = self.gym.find_asset_dof_index(humanoid_asset, 'SRL_freejoint_y')
+        srl_free_joint_z_idx = self.gym.find_asset_dof_index(humanoid_asset, 'SRL_freejoint_z')
         srl_damping_x_idx = self.gym.find_asset_dof_index(humanoid_asset, 'SRL_damping_x')
         srl_damping_z_idx = self.gym.find_asset_dof_index(humanoid_asset, 'SRL_damping_z')
 
@@ -453,11 +458,21 @@ class SRL_HRIBase(VecTask):
                 dof_prop[-srl_start_id:]["velocity"].fill(14.0)
                 dof_prop[-srl_start_id:]["effort"].fill(200.0)
                 dof_prop[-srl_start_id:]["driveMode"] = gymapi.DOF_MODE_EFFORT
-                dof_prop[srl_free_joint_idx]["driveMode"] = gymapi.DOF_MODE_POS
+                if not srl_free_joint_x_idx == -1:
+                    dof_prop[srl_free_joint_x_idx]["effort"].fill(200.0)
+                    dof_prop[srl_free_joint_x_idx]["driveMode"] = gymapi.DOF_MODE_NONE
+                if not srl_free_joint_y_idx == -1:
+                    dof_prop[srl_free_joint_y_idx]["effort"].fill(200.0)
+                    dof_prop[srl_free_joint_y_idx]["driveMode"] = gymapi.DOF_MODE_NONE
+                if not srl_free_joint_z_idx == -1:
+                    dof_prop[srl_free_joint_z_idx]["effort"].fill(200.0)
+                    dof_prop[srl_free_joint_z_idx]["driveMode"] = gymapi.DOF_MODE_NONE
                 if not srl_damping_x_idx == -1:
-                    dof_prop[srl_damping_x_idx]["driveMode"] = gymapi.DOF_MODE_POS
+                    dof_prop[srl_damping_x_idx]["effort"].fill(200.0)
+                    dof_prop[srl_damping_x_idx]["driveMode"] = gymapi.DOF_MODE_NONE
                 if not srl_damping_z_idx == -1:
-                    dof_prop[srl_damping_z_idx]["driveMode"] = gymapi.DOF_MODE_POS
+                    dof_prop[srl_damping_z_idx]["effort"].fill(200.0)
+                    dof_prop[srl_damping_z_idx]["driveMode"] = gymapi.DOF_MODE_NONE
             self.gym.set_actor_dof_properties(env_ptr, handle, dof_prop)
 
         dof_props = self.gym.get_asset_dof_properties(humanoid_asset)
@@ -1129,6 +1144,8 @@ def compute_srl_observations(
 )  :
     # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, Tensor, float) -> Tuple[Tensor, Tensor, Tensor]
     # root state 分解
+    global SRL_ROT_CORRECTION, USE_ROOT_QUAT_CORRECTION  
+
     root_pos = root_states[:, 0:3]
     root_rot = root_states[:, 3:7]
     root_vel = root_states[:, 7:10]
@@ -1136,10 +1153,15 @@ def compute_srl_observations(
 
     # base 高度
     root_h = root_pos[:, 2:3]
+    euler = quat_to_euler_xyz(root_rot)
 
-    qz180 = torch.tensor([0., 0., 1., 0.], device=root_rot.device, dtype=root_rot.dtype).unsqueeze(0).repeat(root_rot.shape[0], 1)
-    root_rot_corr = quat_mul(qz180, root_rot)
-    euler = quat_to_euler_xyz(root_rot_corr)
+    if USE_ROOT_QUAT_CORRECTION:
+    # 针对SRL ROOT朝向的修正 
+        qz180 = torch.tensor([0., 0., 1., 0.], device=root_rot.device, dtype=root_rot.dtype).unsqueeze(0).repeat(root_rot.shape[0], 1)
+        root_rot_corr = quat_mul(qz180, root_rot)
+        euler = quat_to_euler_xyz(root_rot_corr)
+    
+    
     target_euler = torch.zeros_like(euler,device=euler.device)
     target_euler[:,0] = target_yaw
     euler_err = target_euler - euler
@@ -1150,11 +1172,14 @@ def compute_srl_observations(
     local_root_ang_vel = quat_rotate_inverse(root_rot, root_ang_vel)
 
     # 针对SRL ROOT朝向的修正 
-    rot_z_180 = torch.tensor([[-1.,  0.,  0.],
-                            [ 0., -1.,  0.],
-                            [ 0.,  0.,  1.]], device=root_rot.device, dtype=root_rot.dtype)
-    local_root_vel     = torch.matmul(local_root_vel, rot_z_180 .T)
-    local_root_ang_vel = torch.matmul(local_root_ang_vel, rot_z_180 .T)
+    if USE_ROOT_QUAT_CORRECTION:
+        rot_corr = torch.tensor(
+            SRL_ROT_CORRECTION,
+            device=root_rot.device,
+            dtype=root_rot.dtype,
+        )
+        local_root_vel     = torch.matmul(local_root_vel, rot_corr.T)
+        local_root_ang_vel = torch.matmul(local_root_ang_vel, rot_corr.T)
    
     # SRL loadcell 是负载力传感器（向下为正）
     load_cell_force = -load_cell
@@ -1218,7 +1243,8 @@ def compute_srl_observations_mirrored(
 )  :
     # type: ( Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float) ->  Tensor 
     
-    
+    global SRL_ROT_CORRECTION, USE_ROOT_QUAT_CORRECTION
+
     # root state 分解
     root_pos = root_states[:, 0:3]
     root_rot = root_states[:, 3:7]
@@ -1242,20 +1268,27 @@ def compute_srl_observations_mirrored(
     srl_dof_vel   = dof_vel[:,-6:]
     srl_dof_force = dof_force_tensor[:,-6:]
 
-    qz180 = torch.tensor([0., 0., 1., 0.], device=root_rot.device, dtype=root_rot.dtype).unsqueeze(0).repeat(root_rot.shape[0], 1)
-    root_rot_corr = quat_mul(qz180, root_rot)
-    euler = quat_to_euler_xyz(root_rot_corr)
+    euler = quat_to_euler_xyz(root_rot)
+    if USE_ROOT_QUAT_CORRECTION:
+    # 针对SRL ROOT朝向的修正 
+        qz180 = torch.tensor([0., 0., 1., 0.], device=root_rot.device, dtype=root_rot.dtype).unsqueeze(0).repeat(root_rot.shape[0], 1)
+        root_rot_corr = quat_mul(qz180, root_rot)
+        euler = quat_to_euler_xyz(root_rot_corr)
+
     target_euler = torch.zeros_like(euler,device=euler.device)
     target_euler[:,0] = target_yaw
     euler_err = target_euler - euler
     euler_err[:, 0] = torch.remainder(euler_err[:, 0] + math.pi, 2*math.pi) - math.pi
 
     # 针对SRL ROOT朝向的修正 
-    rot_z_180 = torch.tensor([[-1.,  0.,  0.],
-                            [ 0., -1.,  0.],
-                            [ 0.,  0.,  1.]], device=root_rot.device, dtype=root_rot.dtype)
-    local_root_vel     = torch.matmul(local_root_vel, rot_z_180 .T)
-    local_root_ang_vel = torch.matmul(local_root_ang_vel, rot_z_180 .T)
+    if USE_ROOT_QUAT_CORRECTION:
+        rot_corr = torch.tensor(
+            SRL_ROT_CORRECTION,
+            device=root_rot.device,
+            dtype=root_rot.dtype,
+        )
+        local_root_vel     = torch.matmul(local_root_vel, rot_corr.T)
+        local_root_ang_vel = torch.matmul(local_root_ang_vel, rot_corr.T)
 
     # Mirrored
     local_root_vel[:,1] = -local_root_vel[:,1] # y方向速度

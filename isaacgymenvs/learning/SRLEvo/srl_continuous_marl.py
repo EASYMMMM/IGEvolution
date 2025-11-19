@@ -236,7 +236,8 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         self.model_srl.eval() # srl policy
         humanoid_obs = processed_obs[:, :self.obs_num_humanoid[0]]
         srl_obs = processed_obs[:, -self.obs_num_srl[0]:]
-        priv_srl_obs = processed_obs[:, -self.priv_obs_num_srl[0]:]
+        srl_priv_extra_obs = obs['srl_priv_extra_obs']
+        priv_srl_obs = torch.cat((srl_priv_extra_obs, srl_obs), dim=-1)
 
         humanoid_input_dict = {
             'is_train': False,

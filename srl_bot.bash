@@ -20,3 +20,16 @@ python SRL_Evo_train.py task=SRLBot wandb_project=TRO_SRL_Evo experiment=SRL_bot
 # --- stage 2 --- vel+height+ori
 python SRL_Evo_train.py task=SRLBot wandb_project=TRO_SRL_Evo experiment=SRL_bot_v5_s2  headless=True wandb_activate=True max_iterations=3000  train.params.config.a_sym_loss_coef=1.0  checkpoint=runs/SRL_bot_v5_s1_05-13-44-04/nn/SRL_bot_v5_s1.pth  task.env.orientation_reward_scale=7 task.env.pelvis_height_reward_scale=5.0 task.env.progress_reward_scale=0.0 task.env.alive_reward_scale=0.0;  
 
+
+# 11.18
+# --- inversed v6 ---
+# 将root朝向正前方，而不是root坐标系沿z轴旋转180
+# stage 0 
+python SRL_Evo_train.py task=SRLBot wandb_project=TRO_SRL_Evo experiment=SRL_bot_v6_s0  headless=True wandb_activate=True max_iterations=1000  task.env.asset.assetFileName="mjcf/srl_bot/srl_bot_inversed_v6.xml"  train.params.config.a_sym_loss_coef=1.0   task.env.vel_tracking_reward_scale=8  task.env.progress_reward_scale=1.0 task.env.alive_reward_scale=1.0;  
+# stage 1
+python SRL_Evo_train.py task=SRLBot wandb_project=TRO_SRL_Evo experiment=SRL_bot_v6_s1  headless=True wandb_activate=True max_iterations=2000  task.env.asset.assetFileName="mjcf/srl_bot/srl_bot_inversed_v6.xml"  train.params.config.a_sym_loss_coef=1.0  checkpoint=runs/SRL_bot_v6_s0_18-15-26-47/nn/SRL_bot_v6_s0.pth  task.env.pelvis_height_reward_scale=8.0 task.env.vel_tracking_reward_scale=8.0  task.env.progress_reward_scale=0.0 ;  
+# stage 2
+python SRL_Evo_train.py task=SRLBot wandb_project=TRO_SRL_Evo experiment=SRL_bot_v6_s2  headless=True wandb_activate=True max_iterations=3000  task.env.asset.assetFileName="mjcf/srl_bot/srl_bot_inversed_v6.xml"  train.params.config.a_sym_loss_coef=1.0  checkpoint=runs/SRL_bot_v6_s1_18-17-07-52/nn/SRL_bot_v6_s1.pth  task.env.orientation_reward_scale=7 task.env.pelvis_height_reward_scale=5.0 task.env.progress_reward_scale=0.0 task.env.alive_reward_scale=0.0;  
+# --- check ---
+python SRL_Evo_train.py task=SRLBot test=True  num_envs=4 checkpoint=runs/SRL_bot_v6_s2_18-18-17-47/nn/SRL_bot_v6_s2.pth  sim_device=cuda:0 rl_device=cuda:0  task.env.asset.assetFileName="mjcf/srl_bot/srl_bot_inversed_v6.xml"
+

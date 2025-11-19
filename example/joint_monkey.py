@@ -34,7 +34,7 @@ class AssetDesc:
 
 
 asset_descriptors = [
-    AssetDesc("mjcf/srl_hri/srl_hri_basic_1free.xml", False),
+    AssetDesc("mjcf/srl_hri/srl_hri_basic_2free.xml", False),
     AssetDesc("mjcf/srl_bot/srl_bot_inversed_v2.xml", False),
     AssetDesc("mjcf/humanoid_srl_v3/hsrl_mode1_v3_2_lightweight.xml", False),
     AssetDesc("mjcf/nv_ant_test.xml", False),
@@ -197,15 +197,15 @@ actor_handles = []
 # srl_joint_l3 = gym.find_asset_dof_index(asset,'SRL_joint_left_kneejoint')
 # dof_positions[srl_joint_l1] = 0.15*np.pi
 # dof_positions[srl_joint_l3] = 0.25*np.pi
-dof_positions[:] = np.array([
-    -9.6858e-02, -1.0573e-01,  1.1840e-01,  1.6938e-02, -2.6556e-01,
-    -6.2515e-02, -2.1803e-01, -9.0874e-02,  1.9337e-01, -8.2566e-01,
-     1.2695e-01,  2.0093e-01,  4.0002e-01, -3.0000e-01,  1.6781e-02,
-    -4.2734e-01,  2.2995e-02,  1.0177e+00, -1.3876e-02, -9.7964e-02,
-     7.5380e-02,  3.7169e-03, -1.6494e-01,  4.0723e-02,  5.0073e-01,
-     2.7494e-02, -4.2475e-01,  8.9179e-02,  1.4202e-01,  7.8724e-04,
-     1.0362e+00,  4.5977e-02,  2.6454e-02,  7.9577e-01,  1.4793e-01
-])
+# dof_positions[:] = np.array([
+#     -9.6858e-02, -1.0573e-01,  1.1840e-01,  1.6938e-02, -2.6556e-01,
+#     -6.2515e-02, -2.1803e-01, -9.0874e-02,  1.9337e-01, -8.2566e-01,
+#      1.2695e-01,  2.0093e-01,  4.0002e-01, -3.0000e-01,  1.6781e-02,
+#     -4.2734e-01,  2.2995e-02,  1.0177e+00, -1.3876e-02, -9.7964e-02,
+#      7.5380e-02,  3.7169e-03, -1.6494e-01,  4.0723e-02,  5.0073e-01,
+#      2.7494e-02, -4.2475e-01,  8.9179e-02,  1.4202e-01,  7.8724e-04,
+#      1.0362e+00,  4.5977e-02,  2.6454e-02,  7.9577e-01,  1.4793e-01
+# ])
 
 
 print("Creating %d environments" % num_envs)
@@ -258,7 +258,7 @@ gym.refresh_dof_force_tensor(sim)
 while not gym.query_viewer_has_closed(viewer):
     
     # 检查某个特定关节
-    current_dof = 0
+    # current_dof = 0
 
     # step the physics
     gym.simulate(sim)
