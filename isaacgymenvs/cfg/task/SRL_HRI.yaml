@@ -45,9 +45,10 @@ env:
     restitution: 0.0
 
   humanoid_obs_num: 111
-  srl_obs_num: 37
+  srl_obs_num: 39
   srl_obs_frame_stack: 5  
   srl_command_num: 3
+  teacher_srl_obs_num: 30
   humanoid_actions_num: 28
   srl_actions_num: 6
   srl_free_actions_num: 2

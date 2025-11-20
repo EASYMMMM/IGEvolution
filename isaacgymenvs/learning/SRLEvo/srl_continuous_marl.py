@@ -267,10 +267,9 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         return res_dict, res_dict_srl
 
     def get_teacher_srl_action_values(self, obs):
-        processed_obs = self._preproc_obs(obs['obs'])
+        teacher_srl_obs = self._preproc_obs(obs['teacher_srl_obs'])
         self.model_teacher_srl.eval() # srl policy
-        srl_obs = processed_obs[:, self.obs_num_humanoid[0]:]
-        teacher_srl_obs = srl_obs[:, self.vec_env.env.get_srl_teacher_obs_mask()]
+
         srl_input_dict = {
             'is_train': False,
             'prev_actions': None, 

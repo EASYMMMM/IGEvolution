@@ -58,6 +58,7 @@ class SRL_HRIBase(VecTask):
         self.humanoid_actions_num = self.cfg["env"]["humanoid_actions_num"]
         self.srl_obs_num = self.cfg["env"]["srl_obs_num"]
         self.srl_actions_num = self.cfg["env"]["srl_actions_num"]
+        self.teacher_srl_obs_num = self.cfg["env"]["teacher_srl_obs_num"]
         self.srl_free_actions_num = self.cfg["env"]["srl_free_actions_num"]
         self.srl_obs_frame_stack = self.cfg["env"].get("srl_obs_frame_stack", 5)
         self.srl_command_num = self.cfg["env"]["srl_command_num"]
@@ -222,6 +223,15 @@ class SRL_HRIBase(VecTask):
         self.srl_priv_extra_mirrored_obs_buf = torch.zeros(
             (self.num_envs, self.get_srl_priv_obs_size()-self.get_srl_obs_size()), device=self.device, dtype=torch.float)
 
+        self.teacher_srl_obs_buf = torch.zeros(
+            (self.num_envs, self.get_teacher_srl_obs_size()), device=self.device, dtype=torch.float)
+
+        # frame stack buffer
+        self.srl_obs_buffer = torch.zeros((self.num_envs, self.srl_obs_frame_stack, self.srl_obs_num), device=self.device)
+        self.srl_obs_mirrored_buffer = torch.zeros((self.num_envs, self.srl_obs_frame_stack, self.srl_obs_num), device=self.device)
+        self.teacher_srl_obs_buffer = torch.zeros((self.num_envs, self.srl_obs_frame_stack, self.teacher_srl_obs_num), device=self.device)
+
+
         self.srl_rew_buf = torch.zeros(
             self.num_envs, device=self.device, dtype=torch.float)
         self.rew_joint_cost_buf = torch.zeros(      # 关节力矩惩罚
@@ -232,9 +242,6 @@ class SRL_HRIBase(VecTask):
             self.num_envs, device=self.device, dtype=torch.float)
         if self._design_param_obs:
             design_param = self._get_design_param()
-
-        self.srl_obs_buffer = torch.zeros((self.num_envs, self.srl_obs_frame_stack, self.srl_obs_num), device=self.device)
-        self.srl_obs_mirrored_buffer = torch.zeros((self.num_envs, self.srl_obs_frame_stack, self.srl_obs_num), device=self.device)
 
         # self.observation_space
         self.obs_scales_tensor = torch.tensor([
@@ -283,6 +290,9 @@ class SRL_HRIBase(VecTask):
     def get_srl_free_action_size(self):
         return self.srl_free_actions_num
 
+    def get_teacher_srl_obs_size(self):
+        return self.teacher_srl_obs_num*self.srl_obs_frame_stack + self.srl_command_num
+    
     def get_teacher_srl_action_size(self):
         return self.srl_actions_num 
 
@@ -294,9 +304,6 @@ class SRL_HRIBase(VecTask):
 
     def get_srl_priv_obs_size(self):
         return 12 + self.srl_obs_num*self.srl_obs_frame_stack + self.srl_command_num
-
-    def get_teacher_srl_obs_size(self):
-        return 153
 
     def create_sim(self):
         self.up_axis_idx = 2 # index of up axis: Y=1, Z=2
@@ -322,6 +329,7 @@ class SRL_HRIBase(VecTask):
         for env_id in env_ids:
             self.srl_obs_buffer[env_id] = 0
             self.srl_obs_mirrored_buffer[env_id] = 0
+            self.teacher_srl_obs_buffer[env_id] = 0
         self._refresh_sim_tensors()
         self._compute_observations(env_ids)
         return
@@ -521,6 +529,7 @@ class SRL_HRIBase(VecTask):
         self.obs_dict["obs_mirrored"] = torch.clamp(self.srl_obs_mirrored_buf, -self.clip_obs, self.clip_obs).to(self.rl_device)
         self.obs_dict["srl_priv_extra_obs"] = self.srl_priv_extra_obs_buf.to(self.rl_device)
         self.obs_dict["srl_priv_extra_mirrored_obs"] = self.srl_priv_extra_mirrored_obs_buf.to(self.rl_device)
+        self.obs_dict["teacher_srl_obs"] = torch.clamp(self.teacher_srl_obs_buf, -self.clip_obs, self.clip_obs).to(self.rl_device)
         return self.obs_dict, done_env_ids
         
     def _build_pd_action_offset_scale(self):
@@ -648,18 +657,21 @@ class SRL_HRIBase(VecTask):
         return
 
     def _compute_observations(self, env_ids=None):
-        humanoid_obs, srl_obs, srl_obs_mirrored, priv_extra_obs, priv_extra_obs_mirrored, potentials, prev_potentials, = self._compute_env_obs(env_ids)
-        
+        humanoid_obs, srl_obs, srl_obs_mirrored, priv_extra_obs, priv_extra_obs_mirrored, teacher_srl_obs, potentials, prev_potentials, = self._compute_env_obs(env_ids)
 
         if (env_ids is None):
-            self.srl_obs_buffer[:, 1:, :] = self.srl_obs_buffer[:, :-1, :]  # 向后移动数据
-            self.srl_obs_buffer[:, 0, :] = srl_obs  # 将新的观测数据放到队列的开头
-            self.srl_obs_mirrored_buffer[:, 1:, :] = self.srl_obs_mirrored_buffer[:, :-1, :]  # 向后移动数据
-            self.srl_obs_mirrored_buffer[:, 0, :] = srl_obs_mirrored  # 将新的观测数据放到队列的开头
+            # frame rolling
+            self.srl_obs_buffer = torch.roll(self.srl_obs_buffer, shifts=1, dims=1)  # 向后移动数据
+            self.srl_obs_buffer[:, 0, :] = srl_obs.clone()  # 将新的观测数据放到队列的开头
+            self.srl_obs_mirrored_buffer = torch.roll(self.srl_obs_mirrored_buffer, shifts=1, dims=1)  
+            self.srl_obs_mirrored_buffer[:, 0, :] = srl_obs_mirrored.clone()   
+            self.teacher_srl_obs_buffer = torch.roll(self.teacher_srl_obs_buffer, shifts=1, dims=1) 
+            self.teacher_srl_obs_buffer[:, 0, :] = teacher_srl_obs.clone()   
 
             srl_base_obs = self.srl_obs_buffer.reshape(self.num_envs, -1)  
             srl_base_mirrored_obs = self.srl_obs_mirrored_buffer.reshape(self.num_envs, -1)
-            
+            teacher_srl_base_obs = self.teacher_srl_obs_buffer.reshape(self.num_envs, -1)
+
             task_params = torch.stack((
                 self.target_vel_x,
                 self.target_ang_vel_z,
@@ -672,26 +684,31 @@ class SRL_HRIBase(VecTask):
             ), dim=-1)  # shape [num_envs, 3]
             srl_stacked_obs = torch.cat([srl_base_obs, task_params], dim=-1)
             srl_mirrored_stacked_obs = torch.cat([srl_base_mirrored_obs, mirrored_task_params], dim=-1)
-           
+            teacher_srl_stacked_obs = torch.cat([teacher_srl_base_obs, task_params], dim=-1)
+
             total_obs = torch.cat((humanoid_obs, srl_stacked_obs),dim=1)
             self.obs_buf[:] = total_obs
             self.srl_obs_buf[:] = srl_stacked_obs
             self.srl_obs_mirrored_buf[:] = srl_mirrored_stacked_obs      
             self.srl_priv_extra_obs_buf[:] = priv_extra_obs
             self.srl_priv_extra_mirrored_obs_buf[:] = priv_extra_obs_mirrored
+            self.teacher_srl_obs_buf[:] = teacher_srl_stacked_obs
 
             self.potentials[:] = potentials
             self.prev_potentials[:] = prev_potentials
 
         else:
             # 对指定环境进行更新 
-            self.srl_obs_buffer[env_ids, 1:, :] = self.srl_obs_buffer[env_ids, :-1, :]  
-            self.srl_obs_buffer[env_ids, 0, :] = srl_obs  
-            self.srl_obs_mirrored_buffer[env_ids, 1:, :] = self.srl_obs_mirrored_buffer[env_ids, :-1, :]  # 向后移动数据
-            self.srl_obs_mirrored_buffer[env_ids, 0, :] = srl_obs_mirrored  
+            self.srl_obs_buffer[env_ids] = torch.roll(self.srl_obs_buffer[env_ids], shifts=1, dims=1)  
+            self.srl_obs_buffer[env_ids, 0, :] = srl_obs.clone()  
+            self.srl_obs_mirrored_buffer[env_ids] = torch.roll(self.srl_obs_mirrored_buffer[env_ids], shifts=1, dims=1)  
+            self.srl_obs_mirrored_buffer[env_ids, 0, :] = srl_obs_mirrored.clone()  
+            self.teacher_srl_obs_buffer[env_ids] = torch.roll(self.teacher_srl_obs_buffer[env_ids], shifts=1, dims=1) 
+            self.teacher_srl_obs_buffer[env_ids, 0, :] = teacher_srl_obs.clone()   
 
             srl_base_obs = self.srl_obs_buffer[env_ids, :, :].reshape(len(env_ids), -1)  
             srl_base_mirrored_obs = self.srl_obs_mirrored_buffer[env_ids, :, :].reshape(len(env_ids), -1)
+            teacher_srl_base_obs = self.teacher_srl_obs_buffer[env_ids, :, :].reshape(len(env_ids), -1)
 
             task_params = torch.stack((
                 self.target_vel_x[env_ids],
@@ -705,6 +722,7 @@ class SRL_HRIBase(VecTask):
             ), dim=-1)  # shape [len(env_ids), 3]
             srl_stacked_obs = torch.cat([srl_base_obs, task_params], dim=-1)
             srl_mirrored_stacked_obs = torch.cat([srl_base_mirrored_obs, mirrored_task_params], dim=-1)
+            teacher_srl_stacked_obs = torch.cat([teacher_srl_base_obs, task_params], dim=-1)
 
             total_obs = torch.cat((humanoid_obs, srl_stacked_obs), dim=1)
             self.obs_buf[env_ids] = total_obs
@@ -712,6 +730,7 @@ class SRL_HRIBase(VecTask):
             self.srl_obs_mirrored_buf[env_ids] = srl_mirrored_stacked_obs
             self.srl_priv_extra_obs_buf[env_ids] = priv_extra_obs
             self.srl_priv_extra_mirrored_obs_buf[env_ids] = priv_extra_obs_mirrored
+            self.teacher_srl_obs_buf[env_ids] = teacher_srl_stacked_obs
 
             self.potentials[env_ids] = potentials
             self.prev_potentials[env_ids] = prev_potentials
@@ -729,8 +748,6 @@ class SRL_HRIBase(VecTask):
                 key_body_pos = torch.cat((key_body_pos, srl_end_body_pos), dim=1)
             dof_force_tensor = self.dof_force_tensor
             srl_root_states = self.srl_root_states.clone()
-            # srl_root_states[:,3:7]  = self.srl_rotate_root_states[:,3:7]
-            # srl_root_states[:,10:13]= self.srl_rotate_root_states[:,10:13]
             progress_buf = self.progress_buf
             phase_buf = self.phase_buf
             initial_dof_pos = self.initial_srl_dof_pos
@@ -750,8 +767,6 @@ class SRL_HRIBase(VecTask):
                 key_body_pos = torch.cat((key_body_pos, srl_end_body_pos), dim=1)
             dof_force_tensor = self.dof_force_tensor[env_ids]
             srl_root_states = self.srl_root_states[env_ids,:].clone()
-            # srl_root_states[:,3:7]  = self.srl_rotate_root_states[env_ids,3:7]
-            # srl_root_states[:,10:13]= self.srl_rotate_root_states[env_ids,10:13]
             progress_buf = self.progress_buf[env_ids]
             phase_buf = self.phase_buf[env_ids]
             initial_dof_pos = self.initial_srl_dof_pos[env_ids]
@@ -765,12 +780,12 @@ class SRL_HRIBase(VecTask):
                                             key_body_pos, self._local_root_obs,
                                             load_cell_sensor, self._humanoid_load_cell_obs)
         srl_dof_num = self.srl_actions_num + self.srl_free_actions_num
-        srl_obs, potentials, prev_potentials,  = compute_srl_observations(phase_buf, initial_dof_pos, srl_root_states, 
+        srl_obs, teacher_srl_obs, potentials, prev_potentials,  = compute_srl_observations(phase_buf, initial_dof_pos, srl_root_states, root_states,
                                                                           dof_pos[:, -srl_dof_num:], dof_vel[:, -srl_dof_num:],
                                                                           load_cell_sensor, target_yaw, dof_force_tensor[:, -srl_dof_num:], 
                                                                           actions[:, -(self.srl_actions_num):], self.obs_scales_tensor, 
                                                                           targets, potentials, self.dt, target_vel_x, self.gait_period )
-        srl_obs_mirrored = compute_srl_observations_mirrored(phase_buf, self.mirror_act_srl_mat, initial_dof_pos, srl_root_states, 
+        srl_obs_mirrored = compute_srl_observations_mirrored(phase_buf, self.mirror_act_srl_mat, initial_dof_pos, srl_root_states, root_states,
                                                              dof_pos[:, -srl_dof_num:], dof_vel[:, -srl_dof_num:],
                                                             load_cell_sensor,  target_yaw, dof_force_tensor[:, -srl_dof_num:], 
                                                             actions[:, -(self.srl_actions_num):], self.obs_scales_tensor, 
@@ -785,7 +800,7 @@ class SRL_HRIBase(VecTask):
             design_param = design_param.unsqueeze(0).repeat(obs.shape[0], 1)
             obs = torch.cat([obs, design_param], dim=1)
             obs_mirrored = torch.cat([obs_mirrored, design_param], dim=1)
-        return humanoid_obs, srl_obs, srl_obs_mirrored, priv_extra_obs, priv_extra_obs_mirrored, potentials, prev_potentials,
+        return humanoid_obs, srl_obs, srl_obs_mirrored, priv_extra_obs, priv_extra_obs_mirrored, teacher_srl_obs, potentials, prev_potentials,
 
     def _reset_actors(self, env_ids):
         self._dof_pos[env_ids] = self._initial_dof_pos[env_ids]
@@ -847,6 +862,7 @@ class SRL_HRIBase(VecTask):
         self.extras["obs_mirrored"] = self.srl_obs_mirrored_buf.to(self.rl_device)  # 镜像观测
         self.extras["srl_priv_extra_obs"] = self.srl_priv_extra_obs_buf.to(self.rl_device)
         self.extras["srl_priv_extra_obs_mirrored"] = self.srl_priv_extra_mirrored_obs_buf.to(self.rl_device)
+        self.extras["teacher_srl_obs"] = self.teacher_srl_obs_buf.to(self.rl_device)
         # plotting
         self.extras["root_pos"] = self._root_states[0, 0:3].to(self.rl_device)
         srl_end_body_pos = self._rigid_body_pos[0, self._srl_end_ids, :]
@@ -867,17 +883,6 @@ class SRL_HRIBase(VecTask):
 
         return
 
-    def get_srl_teacher_obs_mask(self):
-        obs_dim = self.srl_obs_num  # 单帧观测维度
-        frame_stack = self.srl_obs_frame_stack  # 堆叠帧数
-        cmd_dim = 3      # 命令输入维度
-        total_dim = obs_dim * frame_stack + cmd_dim
-        masked_idx = torch.ones(total_dim, dtype=torch.float32)
-        mask_num_list = [ 30, 31, 32, 33, 34, 35, 36]  # 需要mask的单帧观测索引，后续可直接修改
-        for i in range(frame_stack):
-            for idx in mask_num_list:
-                masked_idx[i * obs_dim + idx] = 0.0
-        return masked_idx.bool()
 
     def set_task_target(self):
         self.target_vel_x[:], self.target_pelvis_height[:], self.target_ang_vel_z[:], self.target_yaw[:] = set_task_target(self.target_vel_x,
@@ -1013,7 +1018,7 @@ class SRL_HRIBase(VecTask):
 ###=========================jit functions=========================###
 #####################################################################
 @torch.jit.script
-def quat_to_euler_xyz(q):
+def quat_to_euler_ypr(q):
      # type: (Tensor) ->  Tensor 
     # Assumes q shape [N, 4], returns [N, 3] (yaw, pitch, roll)
     qx = q[:, 0]
@@ -1129,6 +1134,7 @@ def compute_srl_observations(
     phase_buf,
     default_joint_pos,
     root_states ,
+    humanoid_root_states,
     dof_pos ,
     dof_vel ,
     load_cell,
@@ -1150,22 +1156,26 @@ def compute_srl_observations(
     root_rot = root_states[:, 3:7]
     root_vel = root_states[:, 7:10]
     root_ang_vel = root_states[:, 10:13]
+    humanoid_root_rot = humanoid_root_states[:, 3:7]
 
     # base 高度
     root_h = root_pos[:, 2:3]
-    euler = quat_to_euler_xyz(root_rot)
+    euler = quat_to_euler_ypr(root_rot)
+    humanoid_euler = quat_to_euler_ypr(humanoid_root_rot)
 
     if USE_ROOT_QUAT_CORRECTION:
     # 针对SRL ROOT朝向的修正 
         qz180 = torch.tensor([0., 0., 1., 0.], device=root_rot.device, dtype=root_rot.dtype).unsqueeze(0).repeat(root_rot.shape[0], 1)
         root_rot_corr = quat_mul(qz180, root_rot)
-        euler = quat_to_euler_xyz(root_rot_corr)
+        euler = quat_to_euler_ypr(root_rot_corr)
     
     
     target_euler = torch.zeros_like(euler,device=euler.device)
     target_euler[:,0] = target_yaw
     euler_err = target_euler - euler
     euler_err[:, 0] = torch.remainder(euler_err[:, 0] + math.pi, 2*math.pi) - math.pi
+    
+    humanoid_euler_err = humanoid_euler - euler
     
     # 将线速度/角速度旋转到局部坐标
     local_root_vel     = quat_rotate_inverse(root_rot, root_vel)
@@ -1219,10 +1229,21 @@ def compute_srl_observations(
                      actions  ,                          # 6    22:27
                      sin_phase,                          # 1    28
                      cos_phase,                          # 1    29
-                     0*dof_pos[:,1:2],                     # 1    30
-                     load_cell_force * obs_scales[4],    # 6    31:36
+                     humanoid_euler_err,                 # 3    30:32
+                     load_cell_force * obs_scales[4],    # 6    33:38
                     ), dim=-1)
-    return obs , potentials, prev_potentials_new
+    
+    teacher_obs = torch.cat((root_h,                             # 1    0
+                     local_root_vel ,                    # 3    1:3
+                     local_root_ang_vel ,                # 3    4:6
+                     euler_err,                          # 3    7:9
+                     srl_dof_obs  * obs_scales[2],       # 6    10:15
+                     srl_dof_vel  * obs_scales[3],       # 6    16:21
+                     actions  ,                          # 6    22:27
+                     sin_phase,                          # 1    28
+                     cos_phase,                          # 1    29
+                    ), dim=-1)
+    return obs , teacher_obs, potentials, prev_potentials_new
 
 # @torch.jit.script
 def compute_srl_observations_mirrored(
@@ -1230,6 +1251,7 @@ def compute_srl_observations_mirrored(
     mirror_mat,
     default_joint_pos,
     root_states ,
+    humanoid_root_states,
     dof_pos ,
     dof_vel ,
     load_cell ,
@@ -1250,6 +1272,7 @@ def compute_srl_observations_mirrored(
     root_rot = root_states[:, 3:7]
     root_vel = root_states[:, 7:10]
     root_ang_vel = root_states[:, 10:13]
+    humanoid_root_rot = humanoid_root_states[:, 3:7]
 
     # base 高度
     root_h = root_pos[:, 2:3]
@@ -1268,17 +1291,21 @@ def compute_srl_observations_mirrored(
     srl_dof_vel   = dof_vel[:,-6:]
     srl_dof_force = dof_force_tensor[:,-6:]
 
-    euler = quat_to_euler_xyz(root_rot)
+    euler = quat_to_euler_ypr(root_rot)
+    humanoid_euler = quat_to_euler_ypr(humanoid_root_rot)
+
     if USE_ROOT_QUAT_CORRECTION:
     # 针对SRL ROOT朝向的修正 
         qz180 = torch.tensor([0., 0., 1., 0.], device=root_rot.device, dtype=root_rot.dtype).unsqueeze(0).repeat(root_rot.shape[0], 1)
         root_rot_corr = quat_mul(qz180, root_rot)
-        euler = quat_to_euler_xyz(root_rot_corr)
+        euler = quat_to_euler_ypr(root_rot_corr)
 
     target_euler = torch.zeros_like(euler,device=euler.device)
     target_euler[:,0] = target_yaw
     euler_err = target_euler - euler
     euler_err[:, 0] = torch.remainder(euler_err[:, 0] + math.pi, 2*math.pi) - math.pi
+    humanoid_euler_err = humanoid_euler - euler
+
 
     # 针对SRL ROOT朝向的修正 
     if USE_ROOT_QUAT_CORRECTION:
@@ -1303,7 +1330,8 @@ def compute_srl_observations_mirrored(
     load_cell_force[:,1] =  -load_cell_force[:,1]
     load_cell_force[:,3] =  -load_cell_force[:,3]
     load_cell_force[:,5] =  -load_cell_force[:,5]
-
+    humanoid_euler_err[:,0] = -humanoid_euler_err[:,0]
+    humanoid_euler_err[:,2] = -humanoid_euler_err[:,2]
 
     # heading_proj[:,1] = -heading_proj[:,1]
 
@@ -1330,10 +1358,11 @@ def compute_srl_observations_mirrored(
                      actions[:,-6:] ,
                      sin_phase,    
                      cos_phase,     
-                     0*dof_pos[:,1:2],                  
-                     load_cell_force * obs_scales[4],       # 6    31:36                   
+                     humanoid_euler_err,                  
+                     load_cell_force * obs_scales[4],       # 6                     
                     ), dim=-1)
     return obs  
+
 
 
 def compute_priv_extra_observations(root_states, dof_pos, dof_vel, key_body_pos, local_root_obs):
@@ -1484,8 +1513,8 @@ def compute_srl_reward(
     #                  actions  ,                          # 6    22:27
     #                  sin_phase,                          # 1    28
     #                  cos_phase,                          # 1    29
-    #                  dof_pos[:,1:2],                     # 1    30
-    #                  load_cell_force * obs_scales[4],    # 6    31:36
+    #                  humanoid_euler_err,                 # 3    30:32
+    #                  load_cell_force * obs_scales[4],    # 6    33:38
     #                 ), dim=-1)
 
     # --- Task Command ---
@@ -1557,7 +1586,7 @@ def compute_srl_reward(
     ang_vel_tracking_reward = tracking_ang_vel_reward_scale * torch.exp(-3 * torch.norm(ang_vel_error_vec, dim=-1))   
    
     # --- Interaction Force ---
-    load_cell_force = obs_buf[:, 31:34]
+    load_cell_force = obs_buf[:, 33:36]
     contact_force_magnitude_sq = torch.sum(load_cell_force ** 2, dim=-1)
     contact_force_cost = 1 * contact_force_magnitude_sq
 

@@ -1159,7 +1159,7 @@ def compute_srl_bot_observations_mirrored(
                      srl_dof_obs * obs_scales[2],    # 6
                      srl_dof_vel * obs_scales[3],        # 6
                      actions ,
-                     sin_phase,    # TODO: mirrored
+                     sin_phase,    
                      cos_phase,     
                     ), dim=-1)
     return obs  
