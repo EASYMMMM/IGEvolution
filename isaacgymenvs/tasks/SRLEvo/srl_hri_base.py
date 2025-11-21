@@ -6,7 +6,7 @@ from isaacgym import gymtorch
 from isaacgym import gymapi
 import math
 from isaacgymenvs.utils.torch_jit_utils import quat_mul, to_torch, get_axis_params, calc_heading_quat_inv, \
-     exp_map_to_quat, quat_to_tan_norm, my_quat_rotate, calc_heading_quat_inv, quat_rotate_inverse
+     exp_map_to_quat, quat_to_tan_norm, my_quat_rotate, calc_heading_quat_inv, quat_rotate_inverse, quat_conjugate
 
 from ..base.vec_task import VecTask
 from isaacgymenvs.learning.SRLEvo.srl_models import ModelSRLContinuous 
@@ -205,6 +205,11 @@ class SRL_HRIBase(VecTask):
         self._rigid_body_vel = self._rigid_body_state.view(self.num_envs, self.num_bodies, 13)[..., 7:10]
         self._rigid_body_ang_vel = self._rigid_body_state.view(self.num_envs, self.num_bodies, 13)[..., 10:13]
         
+        
+        self.right_thigh_states = self._rigid_body_state.view(self.num_envs, self.num_bodies, 13)[:, self.right_thigh_index ,  :]
+        self.right_shin_states = self._rigid_body_state.view(self.num_envs, self.num_bodies, 13)[:, self.right_shin_index ,  :]
+        self.left_thigh_states = self._rigid_body_state.view(self.num_envs, self.num_bodies, 13)[:, self.left_thigh_index ,  :]
+        self.left_shin_states = self._rigid_body_state.view(self.num_envs, self.num_bodies, 13)[:, self.left_shin_index ,  :]
         self.srl_root_states = self._rigid_body_state.view(self.num_envs, self.num_bodies, 13)[:, self.srl_root_index ,  :]
         self.srl_rotate_root_states = self._rigid_body_state.view(self.num_envs, self.num_bodies, 13)[:, self.srl_rotate_root_index ,  :]
         self.prev_srl_end_body_pos = torch.zeros((self.num_envs,2,3), device=self.device)
@@ -374,6 +379,10 @@ class SRL_HRIBase(VecTask):
         self.srl_root_index = self.gym.find_asset_rigid_body_index(humanoid_asset, "SRL_root", )
         self.srl_rotate_root_index = self.gym.find_asset_rigid_body_index(humanoid_asset, "SRL", )
 
+        self.right_thigh_index = self.gym.find_asset_rigid_body_index(humanoid_asset, "right_thigh", )
+        self.right_shin_index = self.gym.find_asset_rigid_body_index(humanoid_asset, "right_shin", )
+        self.left_thigh_index = self.gym.find_asset_rigid_body_index(humanoid_asset, "left_thigh", )
+        self.left_shin_index = self.gym.find_asset_rigid_body_index(humanoid_asset, "left_shin", )
         # Add actuator list
         self._dof_names = self.gym.get_asset_dof_names(humanoid_asset)
 
@@ -756,6 +765,11 @@ class SRL_HRIBase(VecTask):
             potentials = self.potentials
             target_vel_x = self.target_vel_x
             target_yaw   = self.target_yaw
+            right_thigh_rot = self.right_thigh_states[:,3:7]
+            right_shin_rot = self.right_shin_states[:,3:7]
+            left_thigh_rot = self.left_thigh_states[:,3:7]
+            left_shin_rot = self.left_shin_states[:,3:7]
+            humanoid_legs_rot = torch.stack([right_thigh_rot, right_shin_rot, left_thigh_rot, left_shin_rot], dim=1)
         else:
             root_states = self._root_states[env_ids]
             dof_pos = self._dof_pos[env_ids]
@@ -775,18 +789,23 @@ class SRL_HRIBase(VecTask):
             potentials = self.potentials[env_ids]
             target_vel_x = self.target_vel_x[env_ids]
             target_yaw  = self.target_yaw[env_ids]
+            right_thigh_rot = self.right_thigh_states[env_ids][:,3:7]
+            right_shin_rot = self.right_shin_states[env_ids][:,3:7]
+            left_thigh_rot = self.left_thigh_states[env_ids][:,3:7]
+            left_shin_rot = self.left_shin_states[env_ids][:,3:7]
+            humanoid_legs_rot = torch.stack([right_thigh_rot, right_shin_rot, left_thigh_rot, left_shin_rot], dim=1)
  
         humanoid_obs = compute_humanoid_observations(root_states, dof_pos, dof_vel,
                                             key_body_pos, self._local_root_obs,
                                             load_cell_sensor, self._humanoid_load_cell_obs)
         srl_dof_num = self.srl_actions_num + self.srl_free_actions_num
         srl_obs, teacher_srl_obs, potentials, prev_potentials,  = compute_srl_observations(phase_buf, initial_dof_pos, srl_root_states, root_states,
-                                                                          dof_pos[:, -srl_dof_num:], dof_vel[:, -srl_dof_num:],
+                                                                          humanoid_legs_rot, dof_pos[:, -srl_dof_num:], dof_vel[:, -srl_dof_num:],
                                                                           load_cell_sensor, target_yaw, dof_force_tensor[:, -srl_dof_num:], 
                                                                           actions[:, -(self.srl_actions_num):], self.obs_scales_tensor, 
                                                                           targets, potentials, self.dt, target_vel_x, self.gait_period )
         srl_obs_mirrored = compute_srl_observations_mirrored(phase_buf, self.mirror_act_srl_mat, initial_dof_pos, srl_root_states, root_states,
-                                                             dof_pos[:, -srl_dof_num:], dof_vel[:, -srl_dof_num:],
+                                                             humanoid_legs_rot, dof_pos[:, -srl_dof_num:], dof_vel[:, -srl_dof_num:],
                                                             load_cell_sensor,  target_yaw, dof_force_tensor[:, -srl_dof_num:], 
                                                             actions[:, -(self.srl_actions_num):], self.obs_scales_tensor, 
                                                             targets, target_vel_x, self.gait_period )
@@ -1135,6 +1154,7 @@ def compute_srl_observations(
     default_joint_pos,
     root_states ,
     humanoid_root_states,
+    humanoid_legs_rot,
     dof_pos ,
     dof_vel ,
     load_cell,
@@ -1161,35 +1181,28 @@ def compute_srl_observations(
     # base 高度
     root_h = root_pos[:, 2:3]
     euler = quat_to_euler_ypr(root_rot)
-    humanoid_euler = quat_to_euler_ypr(humanoid_root_rot)
+    
+    # Humanoid腿部运动
+    humanoid_root_rot_inv = quat_conjugate(humanoid_root_rot)
+    humanoid_root_rot_inv_expanded = humanoid_root_rot_inv.unsqueeze(1).expand(-1, 4, -1)
+    humanoid_legs_rel_rot = quat_mul(humanoid_root_rot_inv_expanded, humanoid_legs_rot)
+    right_thigh_rel_euler = quat_to_euler_ypr(humanoid_legs_rel_rot[ :, 0, :])
+    right_shin_rel_euler  = quat_to_euler_ypr(humanoid_legs_rel_rot[ :, 1, :])
+    left_thigh_rel_euler  = quat_to_euler_ypr(humanoid_legs_rel_rot[ :, 2, :])
+    left_shin_rel_euler   = quat_to_euler_ypr(humanoid_legs_rel_rot[ :, 3, :])
 
-    if USE_ROOT_QUAT_CORRECTION:
-    # 针对SRL ROOT朝向的修正 
-        qz180 = torch.tensor([0., 0., 1., 0.], device=root_rot.device, dtype=root_rot.dtype).unsqueeze(0).repeat(root_rot.shape[0], 1)
-        root_rot_corr = quat_mul(qz180, root_rot)
-        euler = quat_to_euler_ypr(root_rot_corr)
-    
-    
     target_euler = torch.zeros_like(euler,device=euler.device)
     target_euler[:,0] = target_yaw
     euler_err = target_euler - euler
     euler_err[:, 0] = torch.remainder(euler_err[:, 0] + math.pi, 2*math.pi) - math.pi
     
-    humanoid_euler_err = humanoid_euler - euler
+    srl_rel_rot = quat_mul(humanoid_root_rot_inv, root_rot)
+    humanoid_euler_err = quat_to_euler_ypr(srl_rel_rot)
     
     # 将线速度/角速度旋转到局部坐标
     local_root_vel     = quat_rotate_inverse(root_rot, root_vel)
     local_root_ang_vel = quat_rotate_inverse(root_rot, root_ang_vel)
 
-    # 针对SRL ROOT朝向的修正 
-    if USE_ROOT_QUAT_CORRECTION:
-        rot_corr = torch.tensor(
-            SRL_ROT_CORRECTION,
-            device=root_rot.device,
-            dtype=root_rot.dtype,
-        )
-        local_root_vel     = torch.matmul(local_root_vel, rot_corr.T)
-        local_root_ang_vel = torch.matmul(local_root_ang_vel, rot_corr.T)
    
     # SRL loadcell 是负载力传感器（向下为正）
     load_cell_force = -load_cell
@@ -1231,6 +1244,10 @@ def compute_srl_observations(
                      cos_phase,                          # 1    29
                      humanoid_euler_err,                 # 3    30:32
                      load_cell_force * obs_scales[4],    # 6    33:38
+                     right_thigh_rel_euler,              # 3    39:41
+                     right_shin_rel_euler,               # 3    42:44
+                     left_thigh_rel_euler,               # 3    45:47
+                     left_shin_rel_euler,                # 3    48:50
                     ), dim=-1)
     
     teacher_obs = torch.cat((root_h,                             # 1    0
@@ -1252,6 +1269,7 @@ def compute_srl_observations_mirrored(
     default_joint_pos,
     root_states ,
     humanoid_root_states,
+    humanoid_legs_rot,
     dof_pos ,
     dof_vel ,
     load_cell ,
@@ -1264,8 +1282,6 @@ def compute_srl_observations_mirrored(
     gait_period,
 )  :
     # type: ( Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float) ->  Tensor 
-    
-    global SRL_ROT_CORRECTION, USE_ROOT_QUAT_CORRECTION
 
     # root state 分解
     root_pos = root_states[:, 0:3]
@@ -1294,28 +1310,22 @@ def compute_srl_observations_mirrored(
     euler = quat_to_euler_ypr(root_rot)
     humanoid_euler = quat_to_euler_ypr(humanoid_root_rot)
 
-    if USE_ROOT_QUAT_CORRECTION:
-    # 针对SRL ROOT朝向的修正 
-        qz180 = torch.tensor([0., 0., 1., 0.], device=root_rot.device, dtype=root_rot.dtype).unsqueeze(0).repeat(root_rot.shape[0], 1)
-        root_rot_corr = quat_mul(qz180, root_rot)
-        euler = quat_to_euler_ypr(root_rot_corr)
+    # Humanoid腿部运动
+    humanoid_root_rot_inv = quat_conjugate(humanoid_root_rot)
+    humanoid_root_rot_inv_expanded = humanoid_root_rot_inv.unsqueeze(1).expand(-1, 4, -1)
+    humanoid_legs_rel_rot = quat_mul(humanoid_root_rot_inv_expanded, humanoid_legs_rot)
+    right_thigh_rel_euler = quat_to_euler_ypr(humanoid_legs_rel_rot[ :, 0, :])
+    right_shin_rel_euler  = quat_to_euler_ypr(humanoid_legs_rel_rot[ :, 1, :])
+    left_thigh_rel_euler  = quat_to_euler_ypr(humanoid_legs_rel_rot[ :, 2, :])
+    left_shin_rel_euler   = quat_to_euler_ypr(humanoid_legs_rel_rot[ :, 3, :])
 
     target_euler = torch.zeros_like(euler,device=euler.device)
     target_euler[:,0] = target_yaw
     euler_err = target_euler - euler
     euler_err[:, 0] = torch.remainder(euler_err[:, 0] + math.pi, 2*math.pi) - math.pi
-    humanoid_euler_err = humanoid_euler - euler
 
-
-    # 针对SRL ROOT朝向的修正 
-    if USE_ROOT_QUAT_CORRECTION:
-        rot_corr = torch.tensor(
-            SRL_ROT_CORRECTION,
-            device=root_rot.device,
-            dtype=root_rot.dtype,
-        )
-        local_root_vel     = torch.matmul(local_root_vel, rot_corr.T)
-        local_root_ang_vel = torch.matmul(local_root_ang_vel, rot_corr.T)
+    srl_rel_rot = quat_mul(humanoid_root_rot_inv, root_rot)
+    humanoid_euler_err = quat_to_euler_ypr(srl_rel_rot)
 
     # Mirrored
     local_root_vel[:,1] = -local_root_vel[:,1] # y方向速度
@@ -1332,6 +1342,14 @@ def compute_srl_observations_mirrored(
     load_cell_force[:,5] =  -load_cell_force[:,5]
     humanoid_euler_err[:,0] = -humanoid_euler_err[:,0]
     humanoid_euler_err[:,2] = -humanoid_euler_err[:,2]
+    right_thigh_rel_euler[:,0] = -right_thigh_rel_euler[:,0]
+    right_thigh_rel_euler[:,2] = -right_thigh_rel_euler[:,2]
+    right_shin_rel_euler[:,0]  = -right_shin_rel_euler[:,0]
+    right_shin_rel_euler[:,2]  = -right_shin_rel_euler[:,2]
+    left_thigh_rel_euler[:,0]  = -left_thigh_rel_euler[:,0]
+    left_thigh_rel_euler[:,2]  = -left_thigh_rel_euler[:,2]
+    left_shin_rel_euler[:,0]  = -left_shin_rel_euler[:,0]
+    left_shin_rel_euler[:,2]  = -left_shin_rel_euler[:,2]
 
     # heading_proj[:,1] = -heading_proj[:,1]
 
@@ -1359,7 +1377,11 @@ def compute_srl_observations_mirrored(
                      sin_phase,    
                      cos_phase,     
                      humanoid_euler_err,                  
-                     load_cell_force * obs_scales[4],       # 6                     
+                     load_cell_force * obs_scales[4],       # 6      
+                     right_thigh_rel_euler,              # 3    39:41
+                     right_shin_rel_euler,               # 3    42:44
+                     left_thigh_rel_euler,               # 3    45:47
+                     left_shin_rel_euler,                # 3    48:50              
                     ), dim=-1)
     return obs  
 

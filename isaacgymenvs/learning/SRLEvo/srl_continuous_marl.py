@@ -634,8 +634,8 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         if self._train_humanoid:
             if self.update_counter % self._train_humanoid_freq == 0:
                 self.calc_gradients(input_dict)
-                if self.update_counter%15 == 0:
-                    self._train_humanoid_freq += 1
+                if self.update_counter%20 == 0:
+                    self._train_humanoid_freq += 0
         self.calc_gradients_srl(input_dict_srl)
         
         return self.train_result

@@ -311,32 +311,54 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                             self.target_yaw_log.clear()
                             self.load_cell_fd_log.clear()
                             self.load_cell_log.clear()
-                            num_dims = 38
-                            mid = num_dims // 2
+                            num_dims = 51 
+                            split1 = 17  # Part 1 包含 0 到 16 (共 17 维)
+                            split2 = 34  # Part 2 包含 17 到 33 (共 17 维)
+                            dims_per_plot = split1 # 每张图的维度数量，这里是 17
 
-                            # 前半维度
-                            fig1, axs1 = plt.subplots(mid, 1, figsize=(10, mid * 1.5), sharex=True)
-                            if mid == 1:
+                            # --- Part 1: 维度 0 到 split1 - 1 (共 17 维) ---
+                            start_dim1 = 0
+                            end_dim1 = split1
+                            num_rows1 = end_dim1 - start_dim1
+                            fig1, axs1 = plt.subplots(num_rows1, 1, figsize=(10, num_rows1 * 1.5), sharex=True)
+                            if num_rows1 == 1:
                                 axs1 = [axs1]
-                            for i in range(mid):
-                                axs1[i].plot(obs_array[:, i])
-                                axs1[i].set_ylabel(f"D{i}")
-                                axs1[i].grid(True)
+                            for i in range(start_dim1, end_dim1):
+                                axs1[i - start_dim1].plot(obs_array[:, i])
+                                axs1[i - start_dim1].set_ylabel(f"D{i}")
+                                axs1[i - start_dim1].grid(True)          
                             axs1[-1].set_xlabel("Step")
-                            plt.suptitle(f"Episode {games_played} Observation (Part 1)")
+                            plt.suptitle(f"Episode {games_played} Observation (Part 1: D{start_dim1}-D{end_dim1-1})")
                             plt.tight_layout()
                             plt.show()
 
-                            # 后半维度
-                            fig2, axs2 = plt.subplots(num_dims - mid, 1, figsize=(10, (num_dims - mid) * 1.5), sharex=True)
-                            if (num_dims - mid) == 1:
+                            start_dim2 = split1
+                            end_dim2 = split2
+                            num_rows2 = end_dim2 - start_dim2
+                            fig2, axs2 = plt.subplots(num_rows2, 1, figsize=(10, num_rows2 * 1.5), sharex=True)
+                            if num_rows2 == 1:
                                 axs2 = [axs2]
-                            for i in range(mid, num_dims):
-                                axs2[i - mid].plot(obs_array[:, i])
-                                axs2[i - mid].set_ylabel(f"D{i}")
-                                axs2[i - mid].grid(True)
+                            for i in range(start_dim2, end_dim2):
+                                axs2[i - start_dim2].plot(obs_array[:, i])
+                                axs2[i - start_dim2].set_ylabel(f"D{i}")
+                                axs2[i - start_dim2].grid(True)
                             axs2[-1].set_xlabel("Step")
-                            plt.suptitle(f"Episode {games_played} Observation (Part 2)")
+                            plt.suptitle(f"Episode {games_played} Observation (Part 2: D{start_dim2}-D{end_dim2-1})")
+                            plt.tight_layout()
+                            plt.show()
+
+                            start_dim3 = split2
+                            end_dim3 = num_dims
+                            num_rows3 = end_dim3 - start_dim3
+                            fig3, axs3 = plt.subplots(num_rows3, 1, figsize=(10, num_rows3 * 1.5), sharex=True)
+                            if num_rows3 == 1:
+                                axs3 = [axs3]
+                            for i in range(start_dim3, end_dim3):
+                                axs3[i - start_dim3].plot(obs_array[:, i])
+                                axs3[i - start_dim3].set_ylabel(f"D{i}")
+                                axs3[i - start_dim3].grid(True)
+                            axs3[-1].set_xlabel("Step")
+                            plt.suptitle(f"Episode {games_played} Observation (Part 3: D{start_dim3}-D{end_dim3-1})")
                             plt.tight_layout()
                             plt.show()
                             self.obs_log = []
