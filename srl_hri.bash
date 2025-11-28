@@ -89,3 +89,18 @@ python SRL_Evo_train.py task=SRL_HRI headless=True wandb_project=SRL_Evo wandb_a
 # check
 python SRL_Evo_train.py test=True task=SRL_HRI  num_envs=4  task.env.asset.assetFileName=mjcf/srl_hri/srl_hri_v2_2free.xml  checkpoint=runs/SRL_HRI_21-17-34-13/nn/SRL_HRI_21-17-34-22.pth   task.env.srl_free_actions_num=2
 
+# 11.21 观测中添加Euler Err, 且移除相位信息, 从零训练
+python SRL_Evo_train.py task=SRL_HRI headless=True wandb_project=SRL_Evo wandb_activate=True experiment=SRL_HRI   max_iterations=2000  task.env.asset.assetFileName=mjcf/srl_hri/srl_hri_v2_2free.xml train.params.config.humanoid_checkpoint=runs/AMP_Pretrain_Hybrid_19-17-13-54/nn/AMP_Pretrain_Hybrid_19-17-14-05.pth    train.params.config.srl_teacher_checkpoint=runs/SRL_bot_v6_s2_18-18-17-47/nn/SRL_bot_v6_s2.pth  train.params.config.dagger_loss_coef=0.5 task.env.progress_reward_scale=3.0 task.env.srl_free_actions_num=2 task.env.gait_similarity_penalty_scale=0.0; 
+# check
+python SRL_Evo_train.py test=True task=SRL_HRI  num_envs=4  task.env.asset.assetFileName=mjcf/srl_hri/srl_hri_v2_2free.xml  checkpoint=runs/SRL_HRI_nt_21-19-54-52/nn/SRL_HRI_nt_21-19-55-01.pth   task.env.srl_free_actions_num=2
+
+# 11.21 观测中添加Euler Err, 且移除相位信息, 从上一个训练结果开始训练（不再有教师奖励）
+python SRL_Evo_train.py task=SRL_HRI headless=True wandb_project=SRL_Evo wandb_activate=True experiment=SRL_HRI   max_iterations=2000  task.env.asset.assetFileName=mjcf/srl_hri/srl_hri_v2_2free.xml train.params.config.hsrl_checkpoint=runs/SRL_HRI_21-17-34-13/nn/SRL_HRI_21-17-34-22.pth   train.params.config.dagger_loss_coef=0.0 task.env.progress_reward_scale=3.0 task.env.srl_free_actions_num=2 task.env.gait_similarity_penalty_scale=0.0; 
+# check
+python SRL_Evo_train.py test=True task=SRL_HRI  num_envs=4  task.env.asset.assetFileName=mjcf/srl_hri/srl_hri_v2_2free.xml  checkpoint=runs/SRL_HRI_nt_21-22-50-30/nn/SRL_HRI_nt_21-22-50-39.pth     task.env.srl_free_actions_num=2
+
+# 11.28 使用自动生成的hsrl模型 观测中添加Humanoid Euler + Legs Euler 
+python SRL_Evo_train.py task=SRL_HRI headless=True wandb_project=SRL_Evo wandb_activate=True experiment=SRL_HRI   max_iterations=2000  task.env.asset.assetFileName=mjcf/hsrl_auto_gen/humanoid_with_srl.xml train.params.config.humanoid_checkpoint=runs/AMP_Pretrain_Hybrid_19-17-13-54/nn/AMP_Pretrain_Hybrid_19-17-14-05.pth    train.params.config.srl_teacher_checkpoint=runs/SRL_bot_v6_s2_18-18-17-47/nn/SRL_bot_v6_s2.pth  train.params.config.dagger_loss_coef=0.5 train.params.config.sym_a_loss_coef=1.0 train.params.config.sym_c_loss_coef=0.5 task.env.progress_reward_scale=2.0 train.params.config.dagger_anneal_k=1e-4  task.env.srl_free_actions_num=2; 
+# check
+python SRL_Evo_train.py test=True task=SRL_HRI  num_envs=4  task.env.asset.assetFileName=mjcf/hsrl_auto_gen/humanoid_with_srl.xml  checkpoint=runs/SRL_HRI_28-14-49-42/nn/SRL_HRI_28-14-49-51.pth     task.env.srl_free_actions_num=2
+

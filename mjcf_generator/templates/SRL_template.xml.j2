@@ -1,0 +1,50 @@
+            <!-- SRL Robot Definition -->
+			<body name="SRL" pos="-0.15 0 0.05">
+				<!-- <joint armature="0.00" axis="1 0 0" damping="4" stiffness="100"  type="slide" name="SRL_damping_x" pos="0 0 0" range="-0.025 0.025" /> -->
+                <geom name="board" pos="0 0 0" size="0.0005 0.1 0.1 " type="box" density='100'/> 
+				<body name="SRL_root" pos="-{{ base_distance }} 0 0" >
+				    {% if enable_freejoint_z == 1 %}
+                    <joint armature="0.00" axis="0 0 1" damping="0" name="SRL_freejoint_z" pos="{{ base_distance }} 0 0" range="-20 20" stiffness="0"/>
+                    {% else %}
+                    <!-- SRL_freejoint_z disabled -->
+                    {% endif %}
+                    {% if enable_freejoint_y == 1 %}
+                    <joint armature="0.00" axis="0 1 0" damping="0" name="SRL_freejoint_y" pos="{{ base_distance }} 0 0" range="-20 20" stiffness="0"/>
+                    {% else %}
+                    <!-- SRL_freejoint_y disabled -->
+                    {% endif %}
+                    {% if enable_freejoint_x == 1 %}
+                    <joint armature="0.00" axis="1 0 0" damping="0" name="SRL_freejoint_x" pos="{{ base_distance }} 0 0" range="-20 20" stiffness="0"/>
+                    {% else %}
+                    <!-- SRL_freejoint_x disabled -->
+                    {% endif %}
+
+					<geom density="1000" name="SRL_geom_root" pos="0 0 0" size="0.2 {{ base_width }} 0.05" type="box" contype="1" conaffinity="1"/>
+					<!-- <geom density="1000" name="SRL_geom_load" pos="0 0 0.35" size="0.13 0.13 0.22" type="box" contype="1" conaffinity="1"/> -->
+					<geom density="500" name="SRL_geom_load" pos="0 0 0.22" size="0.13 0.13 0.11" type="box" contype="1" conaffinity="1"/>
+					<body name="SRL_right_leg1" pos="-0.02 -{{ leg_y_offset }} 0"  quat="1.0 0.0 0.0 0.0">
+						<geom density="1000" fromto="0 0 0 -{{ leg1_length }} 0 0" name="SRL_geom_right_leg1" size="0.03" type="capsule"/>
+						<joint armature="0.00" axis="-1 0 0" damping="4" name="SRL_joint_right_hipjoint_x" pos="0 0 0" range="0 40" stiffness="200" />
+						<joint armature="0.00" axis="0 -1 0" damping="4" name="SRL_joint_right_hipjoint_y" pos="0 0 0" range="-170 170" stiffness="200"  />
+						<body name="SRL_right_leg2" pos="-{{ leg1_length }} 0 0" quat="0.70711 0.0 0.70711 0.0">
+							<geom density="1000" fromto="0 0 0 {{ leg2_length }} 0 0" name="SRL_geom_right_leg2" size="0.03" type="capsule"/>
+							<joint armature="0.00" axis="0 -1 0" damping="4" name="SRL_joint_right_kneejoint" pos="0 0 0" range="-170 170" stiffness="200"  />
+							<body name="SRL_right_end" pos="{{ leg2_length }} 0 0" quat="0.70711 0.0 -0.70711 0.0">
+								<geom density="1000" friction="5.0 0.05 0.05" name="SRL_geom_right_end" pos="0 0 -0.045" size="0.05" type="sphere"  contype="1" conaffinity="1"/>
+							</body>
+						</body>
+					</body>
+					<body name="SRL_left_leg1" pos="-0.02 {{ leg_y_offset }} 0"  quat="1.0 0.0 0.0 0.0">
+						<geom density="1000" fromto="0 0 0 -{{ leg1_length }} 0 0" name="SRL_geom_left_leg1" size="0.03" type="capsule"/>
+						<joint armature="0.00" axis="1 0 0" damping="4" name="SRL_joint_left_hipjoint_x" pos="0 0 0" range="0 40" stiffness="200"  />
+						<joint armature="0.00" axis="0 -1 0" damping="4" name="SRL_joint_left_hipjoint_y" pos="0 0 0" range="-170 170" stiffness="200"  />
+						<body name="SRL_left_leg2" pos="-{{ leg1_length }} 0 0" quat="0.70711 0.0 0.70711 0.0">
+							<geom density="1000" fromto="0 0 0 {{ leg2_length }} 0 0" name="SRL_geom_left_leg2" size="0.03" type="capsule"/>
+							<joint armature="0.00" axis="0 -1 0" damping="4" name="SRL_joint_left_kneejoint" pos="0 0 0" range="-170 170" stiffness="200"  />
+							<body name="SRL_left_end" pos="{{ leg2_length }} 0 0" quat="0.70711 0.0 -0.70711 0.0">
+								<geom density="1000" friction="5.0 0.05 0.05" name="SRL_geom_left_end" pos="0 0 -0.045" size="0.05" type="sphere" />
+							</body>
+						</body>
+					</body>
+				</body>
+			</body>
