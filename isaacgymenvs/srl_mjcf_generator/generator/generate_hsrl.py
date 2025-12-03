@@ -13,34 +13,34 @@ OUTPUT_DIR = os.path.join(CURRENT_DIR, "../output")
 TEMPLATE_NAME = "SRL_template.xml.j2"
 
 def generate_hsrl_model(
-    leg1_length,
-    leg2_length,
+    leg1_length=0.60,
+    leg2_length=0.55,
     enable_freejoint_z=1,
     enable_freejoint_y=1,
     enable_freejoint_x=0,
     base_width=0.095,
     base_distance=0.60,
     output_name="humanoid_with_srl.xml",
+    output_dir=None,       
 ):
     """
-    外部接口函数：输入一系列形态参数，自动生成 humanoid+SRL 模型 XML 文件。
+    生成 humanoid + SRL 模型 XML 
 
     参数:
-        leg1_length (float): SRL 大腿段长度
-        leg2_length (float): SRL 小腿段长度
-        enable_freejoint_z (int): 是否启用 Z 向 freejoint
-        enable_freejoint_y (int): 是否启用 Y 向 freejoint
-        enable_freejoint_x (int): 是否启用 X 向 freejoint
-        base_width (float): SRL 安装底座宽度（决定左右腿 y 偏移）
-        base_distance (float): SRL root 距离人体的 x 偏移
-        output_name (str): 输出 XML 文件名（位于 output/ 目录）
+        leg1_length (float)
+        leg2_length (float)
+        enable_freejoint_z, enable_freejoint_y, enable_freejoint_x
+        base_width (float)
+        base_distance (float)
+        output_name (str): 输出文件名
+        output_dir (str):  XML 输出目录（若为 None, 则使用默认 OUTPUT_DIR)
 
     返回:
-        True  - 生成成功
-        False - 生成失败（例如路径不存在或模板渲染失败）
+        out_path (str): 生成的 XML 文件绝对路径
     """
+
     try:
-        # 读取 base humanoid
+        # 读取基础 humanoid XML
         with open(BASE_XML_PATH, "r") as f:
             base_xml = f.read()
 
@@ -59,22 +59,31 @@ def generate_hsrl_model(
             base_distance=base_distance
         )
 
-        # 插入
+        # 插入 SRL 子树
         final_xml = base_xml.replace("<!-- SRL_INSERT_HERE -->", srl_xml)
 
-        # 输出路径
-        os.makedirs(OUTPUT_DIR, exist_ok=True)
-        out_path = os.path.join(OUTPUT_DIR, output_name)
+        # ---- 选择输出目录 ----
+        if output_dir is None:
+            output_dir = OUTPUT_DIR   # 旧逻辑：使用默认目录
 
+        output_dir = os.path.abspath(output_dir)
+        os.makedirs(output_dir, exist_ok=True)
+
+        # ---- 拼接输出文件路径 ----
+        if not output_name.endswith(".xml"):
+            output_name += ".xml"
+
+        out_path = os.path.join(output_dir, output_name)
+
+        # ---- 写入 XML 文件 ----
         with open(out_path, "w") as f:
             f.write(final_xml)
 
-        return True
+        return out_path
 
     except Exception as e:
         print(f"[ERROR] SRL model generation failed: {e}")
-        return False
-
+        return None
 
 def generate_srl_xml(leg1_length, leg2_length, enable_freejoint_z, enable_freejoint_y,
                      enable_freejoint_x, base_width, base_distance):

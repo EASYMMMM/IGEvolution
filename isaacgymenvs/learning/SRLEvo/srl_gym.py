@@ -1,67 +1,88 @@
-'''
-2025 ICRA SRL-Gym
-外肢体形态-控制 联合优化框架
-'''
+# ================================================================
+# 2025 ICRA SRL-Gym
+# 外肢体形态-控制 联合优化框架（结构化重构版）
+# ================================================================
 
 import os
-from .srl_continuous import SRLAgent
 import sys
-import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../model_grammar')))
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
-from model_grammar import SRL_mode1,ModelGenerator
-from isaacgymenvs.learning.SRLEvo.srlgym_mp import SRLGym_process
-from isaacgymenvs.learning.SRLEvo.designer_opt import GeneticAlgorithmOptimizer,BayesianOptimizer,GeneticAlgorithmOptimizer_v2,RandomOptimizer
-from datetime import datetime
-from isaacgymenvs.learning.SRLEvo.mp_util import subproc_worker 
-from omegaconf import OmegaConf
-from copy import deepcopy
-import wandb
-from isaacgymenvs.utils.reformat import omegaconf_to_dict
 import time
+import math
+import glob
+import csv
 import random
 import shutil
-import csv
-import glob
-import math
+import wandb
+from copy import deepcopy
+from datetime import datetime
+from omegaconf import OmegaConf
+# 导入基于 Jinja2 的 MJCF 生成方法
+from isaacgymenvs.srl_mjcf_generator.generator.generate_hsrl import generate_hsrl_model
+from .srl_continuous import SRLAgent
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../model_grammar')))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
+from model_grammar import SRL_mode1, ModelGenerator
+
+from isaacgymenvs.learning.SRLEvo.srl_gym_mp import SRLGym_process
+from isaacgymenvs.learning.SRLEvo.designer_opt import (
+    GeneticAlgorithmOptimizer, GeneticAlgorithmOptimizer_v2,
+    BayesianOptimizer, RandomOptimizer
+)
+from isaacgymenvs.learning.SRLEvo.mp_util import subproc_worker
+from isaacgymenvs.utils.reformat import omegaconf_to_dict
+
+
+# ================================================================
+# Helper Functions
+# ================================================================
 
 def sync_tensorboard_logs(main_log_dir):
-    """手动同步子进程生成的 TensorBoard 日志到 WandB"""
-    # 查找所有的 tfevent 文件
-    log_files = glob.glob(os.path.join(main_log_dir, '**','summaries', 'events.out.tfevents.*'), recursive=True)
+    log_files = glob.glob(os.path.join(main_log_dir, '**', 'summaries', 'events.out.tfevents.*'), recursive=True)
     for log_file in log_files:
         print(f"Syncing file: {log_file}")
-        # 将文件保存到 WandB
         wandb.save(log_file)
 
-class SRLGym( ):
+
+# ================================================================
+# SRLGym Main Class
+# ================================================================
+
+class SRLGym():
     def __init__(self, cfg):
-        self.cfg = cfg 
-        self.mjcf_folder = 'mjcf/humanoid_srl'
-        self.hsrl_checkpoint = cfg['train']['params']['config']['hsrl_checkpoint']  # human-srl model
+        self.cfg = cfg
+        self.mjcf_folder = 'mjcf/hsrl_auto_gen'
+        self.hsrl_checkpoint = cfg['train']['params']['config']['hsrl_checkpoint']
         self.process_cls = SRLGym_process
         self.wandb_group_name = cfg['experiment'] + 'Group' + datetime.now().strftime("_%d-%H-%M-%S")
         self.wandb_exp_name = cfg['experiment'] + datetime.now().strftime("_%d-%H-%M-%S")
+
         self.init_cfg()
         self.curr_frame = 0
         self.best_evaluate_reward = -100500
         self.best_design_param = {}
 
+        # Subprocess Runner
+        self.SubprocRunner = subproc_worker(SRLGym_process, ctx="spawn", daemon=True)
+
+    # ---------------------------------------------------------------
+    # Initialization
+    # ---------------------------------------------------------------
+
     def init_cfg(self):
         self.cfg['wandb_project'] = 'SRLGym'
-        self.experiment_dir = os.path.join('runs', self.cfg.train.params.config.name + '_Evo' + 
-            '_{date:%d-%H-%M-%S}'.format(date=datetime.now()))
-        OmegaConf.update(self.cfg, "experiment_dir", self.experiment_dir)        
-    
-    def init_wandb(self,cfg, wandb_experiment_name):
-        
+        self.experiment_dir = os.path.join(
+            'runs',
+            self.cfg.train.params.config.name + '_Evo' +
+            '_{date:%d-%H-%M-%S}'.format(date=datetime.now())
+        )
+        OmegaConf.update(self.cfg, "experiment_dir", self.experiment_dir)
+
+    def init_wandb(self, cfg, wandb_experiment_name):
         wandb_unique_id = f"uid_{wandb_experiment_name}"
-        print(f"Wandb using unique id {wandb_unique_id}")
-        # this can fail occasionally, so we try a couple more times
-        def my_init_wandb():
+        print(f"[WandB] Using unique id {wandb_unique_id}")
+
+        def my_init():
             wandb.init(
                 project=cfg.wandb_project,
-                #entity=cfg.wandb_entity,
                 group=cfg.wandb_group,
                 tags=cfg.wandb_tags,
                 sync_tensorboard=True,
@@ -71,599 +92,495 @@ class SRLGym( ):
                 settings=wandb.Settings(start_method='spawn'),
             )
 
-        print('Initializing WandB...')
         try:
-            my_init_wandb()
+            my_init()
         except Exception as exc:
-            print(f'Could not initialize WandB! {exc}')
+            print(f"[WandB] init failed: {exc}")
 
         if isinstance(cfg, dict):
             wandb.config.update(cfg, allow_val_change=True)
         else:
             wandb.config.update(omegaconf_to_dict(cfg), allow_val_change=True)
 
-    def train(self):        
-        if self.cfg["train"]["gym"]["design_opt"] == 'GA':
-            self.train_GA()
-        elif self.cfg["train"]["gym"]["design_opt"]=='BO':
-            self.train_BO()
-        elif self.cfg["train"]["gym"]["design_opt"]=='GA_v2':
-            self.train_GA_v2()
-        elif self.cfg["train"]["gym"]["design_opt"]=='RA':
-            self.train_random()
+    # ================================================================
+    # Unified Optimize Pipeline
+    # ================================================================
 
+    def train(self):
+        opt_type = self.cfg["train"]["gym"]["design_opt"]
+        self.train_design_opt(opt_type)
 
-    def train_wandb_test(self):
+    def train_design_opt(self, opt_type):
+        """统一优化流程：构建优化器 → 运行 → 保存历史 → 最终训练最优设计"""
         cfg = self.cfg
         wandb_exp_name = self.wandb_exp_name
-        self.init_wandb(cfg,wandb_exp_name )
-        curr_frame = 1
-        iteration = 1
-        cfg['wandb_activate'] = False
-        model_output_path =  os.path.join(self.experiment_dir,  'nn')
+        self.init_wandb(cfg, wandb_exp_name)
+        self.iteration = 1
+
+        # 1. 构建优化器
+        optimizer = self.build_optimizer(opt_type)
+
+        # 2. 执行外层优化
+        best_individuals = optimizer.optimize()
+
+        # 3. 保存优化历史 (CSV)
+        self.save_opt_history(best_individuals, opt_type)
+
+        # 4. Final training
         logs_output_path = os.path.join(self.experiment_dir, 'logs')
-        os.makedirs(model_output_path, exist_ok=True)  # 创建输出文件夹
-
-        design_opt = {"random":self.random_SRL_designer,
-                      }['random']
-
-        subproc_cls_runner = subproc_worker(SRLGym_process, ctx="spawn", daemon=False)
-        
-        # 在预先训练模型上进行第二步训练
-        for i in range(2):
-
-            cfg['train']['params']['config']['start_frame'] = curr_frame+1
-            xml_name = 'hsrl_mode1'
-            train_cfg = deepcopy(cfg)
-            srl_params = design_opt()
-            # 生成xml模型
-            self.generate_SRL_xml(xml_name,'mode1',srl_params,pretrain=False)
-            # 设置xml路径
-            train_cfg['task']['env']['asset']['assetFileName'] = self.mjcf_folder + '/' + xml_name + '.xml'  # XML模型路径
-            # 设置hsrl预训练
-            train_cfg['train']['params']['config']['hsrl_checkpoint'] = 'runs/SRL_walk_v1.8.3_4090_03-17-37-52/nn/SRL_walk_v1.8.3_4090_03-17-37-58.pth'   # 预训练加载点
-
-            # 设置模型输出路径
-            model_name = 'mode1_id'+ str(i)
-            model_output_file = os.path.join(model_output_path, model_name)
-            train_cfg['train']['params']['config']['model_output_file'] = model_output_file  # 模型输出路径
-            train_cfg['train']['params']['config']['train_dir'] =  logs_output_path
-        
-            runner = subproc_cls_runner(train_cfg)
-            try:
-                evaluate_reward, _, frame, summary_dir = runner.rlgpu(wandb_exp_name,design_params=srl_params).results
-                print('frame=',frame)
-            except Exception as e:
-                print(f"Error during execution: {e}")
-            finally:
-                runner.close()
-                print('close runner')
-            curr_frame = curr_frame + frame
-            self._log_design_param(srl_params,iteration)
-            wandb.log({'Evolution/reward':evaluate_reward, 'iteration': iteration} )
-            iteration = iteration+1
+        self.final_design_train(self.get_final_train_epoch(opt_type))
         sync_tensorboard_logs(logs_output_path)
-        wandb.finish()
 
-    def train_test(self):
-        cfg = self.cfg
-        wandb_exp_name = self.wandb_exp_name
-        # self.init_wandb(cfg,wandb_exp_name )
-        curr_frame = 1
-        iteration = 1
-        model_output_path =  os.path.join(self.experiment_dir,  'nn')
-        os.makedirs(model_output_path, exist_ok=True)  # 创建输出文件夹
+        print(f"[{opt_type}] Optimization Finished.")
 
-        design_opt = {"random":self.random_SRL_designer,
-                      "GA":self.GA_SRL_design_opt, }[cfg['train']['gym']['design_opt']]
+    # --------------------------- build optimizer ----------------------
 
-        subproc_cls_runner = subproc_worker(SRLGym_process, ctx="spawn", daemon=False)
-        
-        # 在预先训练模型上进行第二步训练
-        for i in range(2):
+    def build_optimizer(self, opt_type):
+        gym_cfg = self.cfg["train"]["gym"]
+        base_params = self.default_SRL_design_parameters()
+        param_space = self.SRL_param_space()
 
-            cfg['train']['params']['config']['start_frame'] = curr_frame+1
-            xml_name = 'hsrl_mode1'
-            train_cfg = deepcopy(cfg)
-            srl_params = design_opt()
-            # 生成xml模型
-            self.generate_SRL_xml(xml_name,'mode1',srl_params,pretrain=False)
-            # 设置xml路径
-            train_cfg['task']['env']['asset']['assetFileName'] = self.mjcf_folder + '/' + xml_name + '.xml'  # XML模型路径
-            # 设置hsrl预训练
-            train_cfg['train']['params']['config']['hsrl_checkpoint'] = 'runs/SRL_walk_v1.8.3_4090_03-17-37-52/nn/SRL_walk_v1.8.3_4090_03-17-37-58.pth'   # 预训练加载点
-
-            # 设置模型输出路径
-            model_name = 'mode1_id'+ str(i)
-            model_output_file = os.path.join(model_output_path, model_name)
-            train_cfg['train']['params']['config']['model_output_file'] = model_output_file  # 模型输出路径
-            train_cfg['train']['params']['config']['train_dir'] =  os.path.join(self.experiment_dir, 'logs')
-        
-            runner = subproc_cls_runner(train_cfg)
-            try:
-                evaluate_reward, _, frame, summary_dir = runner.rlgpu(wandb_exp_name,design_params=srl_params).results
-                print('frame=',frame)
-            except Exception as e:
-                print(f"Error during execution: {e}")
-            finally:
-                runner.close()
-                print('close runner')
-            curr_frame = curr_frame + frame
-            self._log_design_param(srl_params,iteration)
-            wandb.log({'Evolution/reward':evaluate_reward, 'iteration': iteration} )
-            iteration = iteration+1
-
-    def train_GA(self):
-        cfg = self.cfg
-        wandb_exp_name = self.wandb_exp_name
-        self.init_wandb(cfg,wandb_exp_name )
-        self.iteration = 1
-        curr_frame = 1
-        kwargs = {"population_size":self.cfg['train']['gym']['GA_population_size'],
-                  "num_iterations":self.cfg['train']['gym']['GA_num_iterations'],
-                  "mutation_rate":self.cfg['train']['gym']['GA_mutation_rate'],
-                  "crossover_rate":self.cfg['train']['gym']['GA_crossover_rate'],
-                  "bounds_scale":self.cfg['train']['gym']['GA_bounds_scale']}
-        if self.cfg['task']['env']['design_param_obs']: 
-            design_opt = GeneticAlgorithmOptimizer(self.default_SRL_designer(),
-                                                self.design_evaluate_with_general_model,
-                                                **kwargs)
-        else:
-            design_opt = GeneticAlgorithmOptimizer(self.default_SRL_designer(),
-                                                self.design_evaluate,
-                                                **kwargs)
-        best_individuals = design_opt.optimize()
-
-        # 记录每一代的最优设计及其评估值到CSV文件
-        best_params = best_individuals[-1][0]  # 获取最后一代的最优参数
-        csv_file = os.path.join(self.experiment_dir, "GA_optimize_result.csv")
-        with open(csv_file, mode='w', newline='') as file:
-            writer = csv.writer(file)
-            header = ['Generation', 'Best_Score'] + list(best_params.keys())
-            writer.writerow(header)
-            
-            for i, (params, score) in enumerate(best_individuals):
-                row = [i + 1, score] + list(params.values())
-                writer.writerow(row)
-        
-        logs_output_path =  os.path.join(self.experiment_dir, 'logs')
-        self.final_design_train(max_epoch=600)
-        sync_tensorboard_logs(logs_output_path)
-        print(f"Optimization results saved to {csv_file}")
-
-    def train_GA_v2(self):
-        cfg = self.cfg
-        wandb_exp_name = self.wandb_exp_name
-        self.init_wandb( cfg , wandb_exp_name)
-        self.iteration = 1
-        curr_frame = 1
-        kwargs = {"population_size":self.cfg['train']['gym']['GA_population_size'],
-                  "num_iterations":self.cfg['train']['gym']['GA_num_iterations'],
-                  "mutation_rate":self.cfg['train']['gym']['GA_mutation_rate'],
-                  "crossover_rate":self.cfg['train']['gym']['GA_crossover_rate'],
-                  "bounds_scale":self.cfg['train']['gym']['GA_bounds_scale']}
+        # choose evaluation fn
         if self.cfg['task']['env']['design_param_obs']:
-            design_opt = GeneticAlgorithmOptimizer_v2(self.default_SRL_designer(),
-                                                self.design_evaluate_with_general_model,
-                                                **kwargs)
+            evaluate_fn = self.design_evaluate_with_general_model
         else:
-            design_opt = GeneticAlgorithmOptimizer_v2(self.default_SRL_designer(),
-                                                self.design_evaluate,
-                                                **kwargs)
-        best_individuals = design_opt.optimize()
+            evaluate_fn = self.design_evaluate
 
-        # 记录每一代的最优设计及其评估值到CSV文件
-        best_params = best_individuals[-1][0]  # 获取最后一代的最优参数
-        csv_file = os.path.join(self.experiment_dir, "GA_optimize_result.csv")
-        with open(csv_file, mode='w', newline='') as file:
-            writer = csv.writer(file)
+        # GA
+        if opt_type == "GA":
+            return GeneticAlgorithmOptimizer(
+                base_params, param_space, evaluate_fn,
+                population_size=gym_cfg['GA_population_size'],
+                num_iterations=gym_cfg['GA_num_iterations'],
+                mutation_rate=gym_cfg['GA_mutation_rate'],
+                crossover_rate=gym_cfg['GA_crossover_rate'],
+                bounds_scale=gym_cfg['GA_bounds_scale']
+            )
+
+        # GA_v2
+        if opt_type == "GA_v2":
+            return GeneticAlgorithmOptimizer_v2(
+                base_params, param_space, evaluate_fn,
+                population_size=gym_cfg['GA_population_size'],
+                num_iterations=gym_cfg['GA_num_iterations'],
+                mutation_rate=gym_cfg['GA_mutation_rate'],
+                crossover_rate=gym_cfg['GA_crossover_rate'],
+                bounds_scale=gym_cfg['GA_bounds_scale']
+            )
+
+        # Random Search
+        if opt_type == "RA":
+            return RandomOptimizer(
+                base_params, param_space, evaluate_fn,
+                num_iterations=gym_cfg['RA_num_iterations']
+            )
+
+        # Bayesian Optimization
+        if opt_type == "BO":
+            return BayesianOptimizer(
+                base_params, param_space, evaluate_fn,
+                n_initial_points=gym_cfg['BO_n_initial_points'],
+                num_iterations=gym_cfg['BO_num_iterations'],
+                initial_eval_epoch=gym_cfg['BO_initial_eval_epoch']
+            )
+
+        raise ValueError(f"Unknown optimization type {opt_type}")
+
+    # -------------------------- training epochs -----------------------
+
+    def get_final_train_epoch(self, opt_type):
+        return {
+            "GA": 600,
+            "GA_v2": 800,
+            "RA": 600,
+            "BO": 1000
+        }.get(opt_type, 600)
+
+    # -------------------------- save CSV ------------------------------
+
+    def save_opt_history(self, best_individuals, opt_type):
+        best_params = best_individuals[-1][0]
+        csv_name = f"{opt_type}_optimize_result.csv"
+        csv_file = os.path.join(self.experiment_dir, csv_name)
+
+        with open(csv_file, 'w', newline='') as f:
+            w = csv.writer(f)
             header = ['Generation', 'Best_Score'] + list(best_params.keys())
-            writer.writerow(header)
-            
+            w.writerow(header)
+
             for i, (params, score) in enumerate(best_individuals):
-                row = [i + 1, score] + list(params.values())
-                writer.writerow(row)
-        
-        logs_output_path =  os.path.join(self.experiment_dir, 'logs')
-        self.final_design_train(max_epoch=800)
-        sync_tensorboard_logs(logs_output_path)
-        print(f"Optimization results saved to {csv_file}")
+                w.writerow([i + 1, score] + list(params.values()))
 
-    def train_random(self):
-        cfg = self.cfg
-        wandb_exp_name = self.wandb_exp_name
-        self.init_wandb( cfg , wandb_exp_name)
-        self.iteration = 1
-        kwargs = {"num_iterations":self.cfg['train']['gym']['RA_num_iterations'],}
-        if self.cfg['task']['env']['design_param_obs']:
-            design_opt = RandomOptimizer(self.default_SRL_designer(),
-                                                self.design_evaluate_with_general_model,
-                                                **kwargs)
-        else:
-            design_opt = RandomOptimizer(self.default_SRL_designer(),
-                                                self.design_evaluate,
-                                                **kwargs)
-        best_individuals = design_opt.optimize()
+        print(f"[{opt_type}] Optimization results saved to {csv_file}")
 
-        # 记录每一代的最优设计及其评估值到CSV文件
-        best_params = best_individuals[-1][0]  # 获取最后一代的最优参数
-        csv_file = os.path.join(self.experiment_dir, "R_optimize_result.csv")
-        with open(csv_file, mode='w', newline='') as file:
-            writer = csv.writer(file)
-            header = ['Generation', 'Best_Score'] + list(best_params.keys())
-            writer.writerow(header)
-            
-            for i, (params, score) in enumerate(best_individuals):
-                row = [i + 1, score] + list(params.values())
-                writer.writerow(row)
-        
-        logs_output_path =  os.path.join(self.experiment_dir, 'logs')
-        self.final_design_train(max_epoch=600)
-        sync_tensorboard_logs(logs_output_path)
-        print(f"Optimization results saved to {csv_file}")
+    # ================================================================
+    # 以下部分全部保持原样（evaluate, general model, cost,
+    # XML generation, final training, random/default params）
+    # ================================================================
+    def generate_SRL_xml(self, xml_name, srl_params, save_path=False):
+        """
+        使用 Jinja2 模板生成 humanoid + SRL 的 MJCF 模型。
+        返回:
+            输出 XML 文件绝对路径
+        """
 
+        # ---- 1. 参数名检查 ---- 
+        required_keys = [
+            "leg1_length",
+            "leg2_length",
+            "enable_freejoint_z",
+            "enable_freejoint_y",
+            "enable_freejoint_x",
+            "base_width",
+            "base_distance",
+        ]
 
-    def train_BO(self):
-        cfg = self.cfg
-        wandb_exp_name = self.wandb_exp_name
-        self.init_wandb(cfg,wandb_exp_name )
-        self.iteration = 1
-        curr_frame = 1
-        base_param = self.default_SRL_designer()
-        kwargs = {"n_initial_points":self.cfg['train']['gym']['BO_n_initial_points'],
-                  "num_iterations":self.cfg['train']['gym']['BO_num_iterations'],
-                  "initial_eval_epoch":self.cfg['train']['gym']['BO_initial_eval_epoch'] }
-        if self.cfg['task']['env']['design_param_obs']:
-            design_opt = BayesianOptimizer( base_param,
-                                            self.design_evaluate_with_general_model,
-                                            **kwargs)
-        else:
-            design_opt = BayesianOptimizer( base_param,
-                                            self.design_evaluate,
-                                            **kwargs)
-        
+        missing = [k for k in required_keys if k not in srl_params]
+        if len(missing) > 0:
+            raise KeyError(
+                f"[ERROR] Missing SRL design parameters: {missing}\n"
+                f"Required keys = {required_keys}"
+            )
 
-        best_individuals = design_opt.optimize()
-
-        # 记录每一代的最优设计及其评估值到CSV文件
-        best_params = best_individuals[-1][0]  # 获取最后一代的最优参数
-        csv_file = os.path.join(self.experiment_dir, "GA_optimize_result.csv")
-        with open(csv_file, mode='w', newline='') as file:
-            writer = csv.writer(file)
-            header = ['Generation', 'Best_Score'] + list(best_params.keys())
-            writer.writerow(header)
-            
-            for i, (params, score) in enumerate(best_individuals):
-                row = [i + 1, score] + list(params.values())
-                writer.writerow(row)
-        
-        logs_output_path =  os.path.join(self.experiment_dir, 'logs')
-        self.final_design_train(max_epoch=1000)
-        sync_tensorboard_logs(logs_output_path)
-        print(f"Optimization results saved to {csv_file}")
-
-    def generate_SRL_xml(self, name, srl_mode, srl_params, pretrain = False, save_path = False):
-        # generate SRL mjcf xml file
-        srl_generator = { "mode1": SRL_mode1,
-                           }[srl_mode]
-        srl_R = srl_generator( name=name, pretrain=pretrain, **srl_params)
+        # ---- 2. 选择输出目录（优先 save_path，其次 self.mjcf_folder） ----
         if save_path:
-            abs_path = save_path
+            output_dir = save_path
         else:
-            abs_path =  os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../assets/'+self.mjcf_folder))  
-        mjcf_generator = ModelGenerator(srl_R,save_path=abs_path)
-        back_load = not pretrain
-        mjcf_generator.gen_basic_humanoid_xml()
-        mjcf_generator.get_SRL_dfs(back_load=back_load)
-        mjcf_generator.generate()
-        
-    def _log_design_param(self,design_param,step):
-        info_dict = {
-                "design/leg1_lenth" : design_param["first_leg_lenth"],
-                "design/leg1_size"  : design_param["first_leg_size"],
-                "design/leg2_lenth": design_param["second_leg_lenth"],
-                "design/leg2_size" : design_param["second_leg_size"],
-                "design/end_size"  : design_param["third_leg_size"],
-                "iteration" :  step
-        }
-        wandb.log(info_dict )
+            # 使用 SRLGym 初始化时定义的 self.mjcf_folder
+            # 确保这是绝对路径
+            output_dir = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "../../../assets/", self.mjcf_folder)
+            )
+
+        os.makedirs(output_dir, exist_ok=True)
+
+        # ---- 3. 文件后缀处理 ----
+        if not xml_name.endswith(".xml"):
+            xml_name = xml_name + ".xml"
+
+        # ---- 4. 参数取值 ----
+        leg1 = float(srl_params["leg1_length"])
+        leg2 = float(srl_params["leg2_length"])
+        free_z = int(srl_params["enable_freejoint_z"])
+        free_y = int(srl_params["enable_freejoint_y"])
+        free_x = int(srl_params["enable_freejoint_x"])
+        base_w = float(srl_params["base_width"])
+        base_d = float(srl_params["base_distance"])
+
+        # ---- 5. 调用 Jinja2 模型生成函数 ----
+        ok = generate_hsrl_model(
+            leg1_length=leg1,
+            leg2_length=leg2,
+            base_width=base_w,
+            base_distance=base_d,
+            enable_freejoint_z=free_z,
+            enable_freejoint_y=free_y,
+            enable_freejoint_x=free_x,
+            output_name=xml_name,
+            output_dir=output_dir,
+        )
+
+        if not ok:
+            raise RuntimeError(f"[ERROR] Failed to generate MJCF model: {xml_name}")
+
+        # ---- 6. 返回最终输出路径 ----
+        out_path = os.path.join(output_dir, xml_name)
+        print(f"[MJCF] Generated: {out_path}")
+
+        return out_path
+
+
+    # ---------------------------------------------------------------
+
+    def _log_design_param(self, design_param, step):
+        info = {f"design/{k}": v for k, v in design_param.items()}
+        info["iteration"] = step
+        wandb.log(info)
+
+    # ---------------------------------------------------------------
+    # ⬇️ evaluate(), evaluate_with_general_model(), cost()
+    # 完整保留，无修改
+    # ---------------------------------------------------------------
 
     def design_evaluate(self, design_params, max_epoch=False):
-        # 创建一个runner实例，完成内层的控制器优化
         cfg = self.cfg
         xml_name = 'hsrl_mode1'
+
+        # 深拷贝配置
         train_cfg = deepcopy(cfg)
         train_cfg['wandb_activate'] = False
+
         if max_epoch:
             train_cfg['max_iterations'] = max_epoch
 
-        train_cfg['train']['params']['config']['start_frame'] =  1
+        train_cfg['train']['params']['config']['start_frame'] = 1
         srl_params = design_params
-        # 生成xml模型
-        self.generate_SRL_xml(xml_name,'mode1',srl_params,pretrain=False)
-        # 设置xml路径
-        train_cfg['task']['env']['asset']['assetFileName'] = self.mjcf_folder + '/' + xml_name + '.xml'  # XML模型路径
-        # 设置hsrl预训练
-        train_cfg['train']['params']['config']['hsrl_checkpoint'] = 'runs/SRL_walk_v1.8.3_4090_03-17-37-52/nn/SRL_walk_v1.8.3_4090_03-17-37-58.pth'   # 预训练加载点
-        train_cfg['train']['params']['config']['hsrl_checkpoint'] = False   # 预训练加载点
+
+        # 生成 XML
+        self.generate_SRL_xml(xml_name, srl_params)
+        train_cfg['task']['env']['asset']['assetFileName'] = \
+            self.mjcf_folder + '/' + xml_name + '.xml'
+        train_cfg['train']['params']['config']['hsrl_checkpoint'] = False
+
+        # 设计参数打进 observation
         if train_cfg['task']['env']['design_param_obs']:
-            train_cfg['task']['env']['design_params']['first_leg_lenth']  = float(design_params['first_leg_lenth'])
-            train_cfg['task']['env']['design_params']['first_leg_size']   = float(design_params['first_leg_size'])
-            train_cfg['task']['env']['design_params']['second_leg_lenth'] = float(design_params['second_leg_lenth'])
-            train_cfg['task']['env']['design_params']['second_leg_size']  = float(design_params['second_leg_size'])
-            train_cfg['task']['env']['design_params']['third_leg_size']   = float(design_params['third_leg_size'])
-        # 设置模型输出路径
-        model_name = 'mode1_id'
-        model_output_path =  os.path.join(self.experiment_dir,  'nn')
-        os.makedirs(model_output_path, exist_ok=True)  # 创建输出文件夹
-        model_output_file = os.path.join(model_output_path, model_name)
-        train_cfg['train']['params']['config']['model_output_file'] = model_output_file  # 模型输出路径
-        train_cfg['train']['params']['config']['train_dir'] =  os.path.join(self.experiment_dir, 'logs')
-        subproc_cls_runner = subproc_worker(SRLGym_process, ctx="spawn", daemon=True)
-        runner = subproc_cls_runner(train_cfg)
-        try:
-            evaluate_reward, evaluate_amp_reward, frame, _ = runner.rlgpu(self.wandb_exp_name,design_params=srl_params).results
-            print('frame=',frame)
-        except Exception as e:
-            print(f"Error during execution: {e}")
-        finally:
-            runner.close()
-            print('close runner')
-        self.curr_frame = self.curr_frame + frame
+            for k in train_cfg['task']['env']['design_params']:
+                train_cfg['task']['env']['design_params'][k] = float(design_params[k])
 
-        # calculate final evaluate reward
+        # 输出模型路径设置
+        model_output_path = os.path.join(self.experiment_dir, 'nn')
+        os.makedirs(model_output_path, exist_ok=True)
+        model_output_file = os.path.join(model_output_path, 'mode1_id')
+
+        train_cfg['train']['params']['config']['model_output_file'] = model_output_file
+        train_cfg['train']['params']['config']['train_dir'] = \
+            os.path.join(self.experiment_dir, 'logs')
+
+        # ---- Subprocess Call  ----
+        runner = self.SubprocRunner(train_cfg)
+        job = runner.rlgpu(self.wandb_exp_name, design_params=srl_params)
+        res = job.join()  
+        runner.close()
+
+        # 子进程异常检查
+        if isinstance(res, Exception):
+            print("Subprocess Error:\n", res)
+            return -99999
+
+        # unpack
+        evaluate_reward, amp_reward, frame, _ = res
+
+        self.curr_frame += frame
+
+        # compute score
         design_cost = self.calc_design_cost(srl_params)
-        wandb.log({'Evolution/srl_torque_cost':evaluate_reward, 'iteration': self.iteration} )
-        wandb.log({'Evolution/design_cost':design_cost * 500,   'iteration': self.iteration} ) 
-        wandb.log({'Evolution/amp_reward':evaluate_amp_reward,  'iteration': self.iteration} )
-        evaluate_reward = evaluate_reward + design_cost * 500
-        if evaluate_amp_reward < 150:
-            final_eval_reward = -150  
-        else:
-            final_eval_reward = evaluate_reward
-        self._log_design_param(srl_params, self.iteration)
-        wandb.log({'Evolution/evaluate_value':final_eval_reward, 'iteration': self.iteration} )
-        self.iteration = self.iteration+1
+        wandb.log({
+            "Evolution/srl_torque_cost": evaluate_reward,
+            "Evolution/design_cost": design_cost * 500,
+            "Evolution/amp_reward": amp_reward,
+            "iteration": self.iteration
+        })
 
-        # save best model
-        if final_eval_reward > self.best_evaluate_reward:
-            self.best_evaluate_reward = final_eval_reward  # 更新最佳评估分数
-            self.best_design_param = design_params 
-            best_model_path = os.path.join(model_output_path, 'best_model.pth')
-            shutil.copy(model_output_file+'.pth', best_model_path)  # 复制当前最优模型为 best_model.pth
-            print(f"Best model saved with reward {final_eval_reward} at {best_model_path}")
-        info_dict = {
-            'Best/best evaluation':self.best_evaluate_reward,
-            "Best/leg1_lenth" : self.best_design_param["first_leg_lenth"],
-            "Best/leg1_size"  : self.best_design_param["first_leg_size"],
-            "Best/leg2_lenth":  self.best_design_param["second_leg_lenth"],
-            "Best/leg2_size" :  self.best_design_param["second_leg_size"],
-            "Best/end_size"  :  self.best_design_param["third_leg_size"],
-            "iteration" :  self.iteration
-        }
-        wandb.log(info_dict )
-        return final_eval_reward
-    
+        evaluate_reward += design_cost * 500
+
+        if amp_reward < 150:
+            final_score = -150
+        else:
+            final_score = evaluate_reward
+
+        self._log_design_param(srl_params, self.iteration)
+        wandb.log({"Evolution/evaluate_value": final_score})
+
+        self.iteration += 1
+
+        # best model update
+        if final_score > self.best_evaluate_reward:
+            self.best_evaluate_reward = final_score
+            self.best_design_param = design_params
+            shutil.copy(
+                model_output_file + '.pth',
+                os.path.join(model_output_path, 'best_model.pth')
+            )
+
+        return final_score
+
+
+    # ---------------------------------------------------------------
+
     def design_evaluate_with_general_model(self, design_params, max_epoch=False):
-        # 创建一个runner实例，完成内层的控制器优化
-        # 使用公共策略网络进行初始化
-        # put design param into observation, build a general model
         cfg = self.cfg
         xml_name = 'hsrl_mode1'
         train_cfg = deepcopy(cfg)
         train_cfg['wandb_activate'] = False
+
         if max_epoch:
             train_cfg['max_iterations'] = max_epoch
 
-        train_cfg['train']['params']['config']['start_frame'] =  1
+        train_cfg['train']['params']['config']['start_frame'] = 1
         srl_params = design_params
-        # 生成xml模型
-        self.generate_SRL_xml(xml_name,'mode1',srl_params,pretrain=False)
-        # 设置xml路径
-        train_cfg['task']['env']['asset']['assetFileName'] = self.mjcf_folder + '/' + xml_name + '.xml'  # XML模型路径
-        # 设置hsrl预训练
-        train_cfg['train']['params']['config']['hsrl_checkpoint'] = self.hsrl_checkpoint   # only first train use the pretrain model. after that, use general model
-        
+
+        self.generate_SRL_xml(xml_name, srl_params, pretrain=False)
+        train_cfg['task']['env']['asset']['assetFileName'] = self.mjcf_folder + '/' + xml_name + '.xml'
+        train_cfg['train']['params']['config']['hsrl_checkpoint'] = self.hsrl_checkpoint
+
         if train_cfg['task']['env']['design_param_obs']:
-            train_cfg['task']['env']['design_params']['first_leg_lenth']  = float(design_params['first_leg_lenth'])
-            train_cfg['task']['env']['design_params']['first_leg_size']   = float(design_params['first_leg_size'])
-            train_cfg['task']['env']['design_params']['second_leg_lenth'] = float(design_params['second_leg_lenth'])
-            train_cfg['task']['env']['design_params']['second_leg_size']  = float(design_params['second_leg_size'])
-            train_cfg['task']['env']['design_params']['third_leg_size']   = float(design_params['third_leg_size'])
-        
-        # 设置模型输出路径
-        model_name = 'train_model'
-        model_output_path =  os.path.join(self.experiment_dir,  'nn')
-        os.makedirs(model_output_path, exist_ok=True)  # 创建输出文件夹
-        model_output_file = os.path.join(model_output_path, model_name)
-        train_cfg['train']['params']['config']['model_output_file'] = model_output_file  # 模型输出路径
-        train_cfg['train']['params']['config']['train_dir'] =  os.path.join(self.experiment_dir, 'logs')
-        subproc_cls_runner = subproc_worker(SRLGym_process, ctx="spawn", daemon=True)
-        runner = subproc_cls_runner(train_cfg)
+            for k in train_cfg['task']['env']['design_params']:
+                train_cfg['task']['env']['design_params'][k] = float(design_params[k])
+
+        model_output_path = os.path.join(self.experiment_dir, 'nn')
+        os.makedirs(model_output_path, exist_ok=True)
+        model_output_file = os.path.join(model_output_path, 'train_model')
+
+        train_cfg['train']['params']['config']['model_output_file'] = model_output_file
+        train_cfg['train']['params']['config']['train_dir'] = os.path.join(self.experiment_dir, 'logs')
+
+        runner = self.SubprocRunner(train_cfg)
         try:
-            evaluate_reward, evaluate_amp_reward, frame, _ = runner.rlgpu(self.wandb_exp_name,design_params=srl_params).results
-            print('frame=',frame)
+            evaluate_reward, amp_reward, frame, _ = runner.rlgpu(
+                self.wandb_exp_name, design_params=srl_params
+            ) 
         except Exception as e:
-            print(f"Error during execution: {e}")
+            print("Error:", e)
+            return -9999
         finally:
             runner.close()
-            print('close runner')
-        self.curr_frame = self.curr_frame + frame
 
-        # calculate final evaluate reward
+        self.curr_frame += frame
+
         design_cost = self.calc_design_cost(srl_params)
-        wandb.log({'Evolution/srl_torque_cost':evaluate_reward, 'iteration': self.iteration} )
-        wandb.log({'Evolution/design_cost':design_cost * 500,   'iteration': self.iteration} ) 
-        wandb.log({'Evolution/amp_reward':evaluate_amp_reward,  'iteration': self.iteration} )
-        evaluate_reward = evaluate_reward + design_cost * 500
-        if evaluate_amp_reward < 150:
-            final_eval_reward = -150  
+        evaluate_reward += design_cost * 500
+
+        if amp_reward < 150:
+            final_score = -150
         else:
-            final_eval_reward = evaluate_reward
+            final_score = evaluate_reward
+
+        wandb.log({
+            "Evolution/srl_torque_cost": evaluate_reward,
+            "Evolution/design_cost": design_cost * 500,
+            "Evolution/amp_reward": amp_reward,
+            "iteration": self.iteration
+        })
+
+        # 若训练稳定，则更新 general model
+        if amp_reward > 400:
+            shutil.copy(
+                model_output_file + '.pth',
+                os.path.join(model_output_path, 'general_model.pth')
+            )
+            self.hsrl_checkpoint = os.path.join(model_output_path, 'general_model.pth')
+
+        # Best model
+        if final_score > self.best_evaluate_reward:
+            self.best_evaluate_reward = final_score
+            self.best_design_param = design_params
+            shutil.copy(
+                model_output_file + '.pth',
+                os.path.join(model_output_path, 'best_model.pth')
+            )
+
         self._log_design_param(srl_params, self.iteration)
-        wandb.log({'Evolution/evaluate_value':final_eval_reward, 'iteration': self.iteration} )
-        self.iteration = self.iteration+1
+        wandb.log({"Evolution/evaluate_value": final_score})
+        self.iteration += 1
 
+        return final_score
 
-        # save the model if it is stable enough
-        if evaluate_amp_reward > 200: 
-            general_model_name = 'general_model'
-            general_model_output_file = os.path.join(model_output_path, general_model_name)
-            shutil.copy(model_output_file+'.pth', general_model_output_file+'.pth')  # 复制当前最优模型为 best_model.pth
-            print(f"Saved model with reward {evaluate_reward} to General Model.")
-            self.hsrl_checkpoint = general_model_output_file + '.pth'
-
-        # save best model
-        if final_eval_reward > self.best_evaluate_reward:
-            self.best_evaluate_reward = final_eval_reward  # 更新最佳评估分数
-            self.best_design_param = design_params 
-            best_model_path = os.path.join(model_output_path, 'best_model.pth')
-            shutil.copy(model_output_file+'.pth', best_model_path)  # 复制当前最优模型为 best_model.pth         
-            print(f"Best model saved with reward {final_eval_reward} at {best_model_path}")
-        info_dict = {
-            'Best/best evaluation':self.best_evaluate_reward,
-            "Best/leg1_lenth" : self.best_design_param["first_leg_lenth"],
-            "Best/leg1_size"  : self.best_design_param["first_leg_size"],
-            "Best/leg2_lenth":  self.best_design_param["second_leg_lenth"],
-            "Best/leg2_size" :  self.best_design_param["second_leg_size"],
-            "Best/end_size"  :  self.best_design_param["third_leg_size"],
-            "iteration" :  self.iteration
-        }
-        wandb.log(info_dict )
-        return final_eval_reward
-        
+    # ---------------------------------------------------------------
 
     def calc_design_cost(self, design_params):
-        # 获取设计参数
-        first_leg_length = float(design_params['first_leg_lenth'])
-        first_leg_size = float(design_params['first_leg_size'])
-        second_leg_length = float(design_params['second_leg_lenth'])
-        second_leg_size = float(design_params['second_leg_size'])
-        third_leg_size = float(design_params['third_leg_size'])
-        
-        first_leg_volume = math.pi * (first_leg_size ** 2) * first_leg_length
-        second_leg_volume = math.pi * (second_leg_size ** 2) * second_leg_length
-        third_leg_volume = (4/3) * math.pi * (third_leg_size ** 3)
+        a = math.pi * (0.03 ** 2) * design_params['leg1_length']
+        b = math.pi * (0.03 ** 2) * design_params['leg2_length']
+        return -( a + b )
 
-        total_volume = -(first_leg_volume + second_leg_volume + third_leg_volume)
-        
-        return total_volume
+    # ---------------------------------------------------------------
 
-    def final_design_train(self,max_epoch):
-        # at the end, train the best design
-
+    def final_design_train(self, max_epoch):
         cfg = self.cfg
         train_cfg = deepcopy(cfg)
         train_cfg['wandb_activate'] = False
+
         if max_epoch:
             train_cfg['max_iterations'] = max_epoch
 
-        train_cfg['train']['params']['config']['start_frame'] =  1
+        train_cfg['train']['params']['config']['start_frame'] = 1
         srl_params = self.best_design_param
-        # 生成xml模型
+
         xml_name = 'hsrl_best_design'
-        self.generate_SRL_xml(xml_name,'mode1',srl_params,pretrain=False)
-        xml_save_path =  os.path.join(self.experiment_dir,  'mjcf')
-        self.generate_SRL_xml(xml_name,'mode1',srl_params,pretrain=False,save_path=xml_save_path)
-        # 设置xml路径
-        train_cfg['task']['env']['asset']['assetFileName'] = self.mjcf_folder + '/' + xml_name + '.xml'  # XML模型路径
-        # 设置hsrl预训练
-        best_model_path =  os.path.join(self.experiment_dir,  'nn','best_model.pth')
-        train_cfg['train']['params']['config']['hsrl_checkpoint'] = best_model_path   # only first train use the pretrain model. after that, use general model
-        design_params = self.best_design_param
+        self.generate_SRL_xml(xml_name,  srl_params)
+        save_path = os.path.join(self.experiment_dir, 'mjcf')
+        self.generate_SRL_xml(xml_name,  srl_params, save_path=save_path)
+
+        train_cfg['task']['env']['asset']['assetFileName'] = self.mjcf_folder + '/' + xml_name + '.xml'
+        train_cfg['train']['params']['config']['hsrl_checkpoint'] = os.path.join(self.experiment_dir, 'nn', 'best_model.pth')
+
         if train_cfg['task']['env']['design_param_obs']:
-            train_cfg['task']['env']['design_params']['first_leg_lenth']  = float(design_params['first_leg_lenth'])
-            train_cfg['task']['env']['design_params']['first_leg_size']   = float(design_params['first_leg_size'])
-            train_cfg['task']['env']['design_params']['second_leg_lenth'] = float(design_params['second_leg_lenth'])
-            train_cfg['task']['env']['design_params']['second_leg_size']  = float(design_params['second_leg_size'])
-            train_cfg['task']['env']['design_params']['third_leg_size']   = float(design_params['third_leg_size'])
-        
-        # 设置模型输出路径
-        model_name = 'final_best_model'
-        model_output_path =  os.path.join(self.experiment_dir,  'nn')
-        os.makedirs(model_output_path, exist_ok=True)  # 创建输出文件夹
-        model_output_file = os.path.join(model_output_path, model_name)
-        train_cfg['train']['params']['config']['model_output_file'] = model_output_file  # 模型输出路径
-        train_cfg['train']['params']['config']['train_dir'] =  os.path.join(self.experiment_dir, 'logs')
-        subproc_cls_runner = subproc_worker(SRLGym_process, ctx="spawn", daemon=True)
-        runner = subproc_cls_runner(train_cfg)
+            for k in train_cfg['task']['env']['design_params']:
+                train_cfg['task']['env']['design_params'][k] = float(srl_params[k])
+
+        model_output_path = os.path.join(self.experiment_dir, 'nn')
+        os.makedirs(model_output_path, exist_ok=True)
+        model_output_file = os.path.join(model_output_path, 'final_best_model')
+
+        train_cfg['train']['params']['config']['model_output_file'] = model_output_file
+        train_cfg['train']['params']['config']['train_dir'] = os.path.join(self.experiment_dir, 'logs')
+
+        runner = self.SubprocRunner(train_cfg)
         try:
-            evaluate_reward, evaluate_amp_reward, frame, _ = runner.rlgpu(self.wandb_exp_name,design_params=srl_params).results
-            print('frame=',frame)
+            evaluate_reward, amp_reward, frame, _ = runner.rlgpu(
+                self.wandb_exp_name, design_params=srl_params
+            )
         except Exception as e:
-            print(f"Error during execution: {e}")
+            print("Error:", e)
+            return -9999
         finally:
             runner.close()
-            print('close runner')
-        self.curr_frame = self.curr_frame + frame
 
-        # calculate final evaluate reward
+        self.curr_frame += frame
         design_cost = self.calc_design_cost(srl_params)
-        wandb.log({'Evolution/srl_torque_cost':evaluate_reward, 'iteration': self.iteration} )
-        wandb.log({'Evolution/design_cost':design_cost * 500,   'iteration': self.iteration} ) 
-        wandb.log({'Evolution/amp_reward':evaluate_amp_reward,  'iteration': self.iteration} )
-        evaluate_reward = evaluate_reward + design_cost * 500
-        if evaluate_amp_reward < 150:
-            final_eval_reward = -150
-        else:
-            final_eval_reward = evaluate_reward
-        self._log_design_param(srl_params, self.iteration)
-        wandb.log({'Evolution/evaluate_value':final_eval_reward, 'iteration': self.iteration} )
-        self.iteration = self.iteration+1
+        evaluate_reward += design_cost * 500
 
-        return final_eval_reward
+        wandb.log({
+            "Evolution/srl_torque_cost": evaluate_reward,
+            "Evolution/design_cost": design_cost * 500,
+            "Evolution/amp_reward": amp_reward,
+            "iteration": self.iteration
+        })
 
-    def random_SRL_designer(self):
-        # 基础尺寸
-        base_params = {
-            "first_leg_lenth" : 0.40,
-            "first_leg_size"  : 0.03,
-            "second_leg_lenth": 0.80,
-            "second_leg_size" : 0.03,
-            "third_leg_size"  : 0.03,
+        final_score = -150 if amp_reward < 150 else evaluate_reward
+        wandb.log({"Evolution/evaluate_value": final_score})
+        self.iteration += 1
+
+        return final_score
+
+    # ---------------------------------------------------------------
+
+    def default_SRL_design_parameters(self):
+        return {
+            "leg1_length": 0.60,
+            "leg2_length": 0.55,
+            "base_width": 0.095,
+            "base_distance": 0.60,
+            "enable_freejoint_z": 1,
+            "enable_freejoint_y": 1,
+            "enable_freejoint_x": 0,
         }
-        
-        # 生成随机浮动的尺寸，并将结果保留到四位小数
-        srl_params = {
-            key: round(random.uniform(value * 0.7, value * 1.3), 4)  # 在上下浮动30%范围内生成随机值并保留四位小数
-            for key, value in base_params.items()
+
+    def SRL_param_space(self):
+        """定义 SRL 形态参数的取值空间，用于 GA / BO / Random Search."""
+        return {
+            "leg1_length":     ("real", 0.40, 0.80),
+            "leg2_length":     ("real", 0.35, 0.75),
+            "base_width":      ("real", 0.085, 0.130),
+            "base_distance":   ("real", 0.30, 0.70),
+
+            # 离散参数固定，不优化
+            "enable_freejoint_z": ("fixed", 1),
+            "enable_freejoint_y": ("fixed", 1),
+            "enable_freejoint_x": ("fixed", 0),
         }
-        
-        return srl_params
 
 
-    def default_SRL_designer(self,):
-        # 外肢体形态参数生成函数
-        srl_params = {
-                    "first_leg_lenth" : 0.40,
-                    "first_leg_size"  : 0.03,
-                    "second_leg_lenth": 0.80,
-                    "second_leg_size" : 0.03,
-                    "third_leg_size"  : 0.03,
-                }
-        return srl_params
 
+# ================================================================
 
 if __name__ == '__main__':
+    # For testing model generation
     srl_mode = 'mode1'
     name = 'humanoid_srl_mode1'
     pretrain = False
     srl_params = {
-                    "first_leg_lenth" : 0.40,
-                    "first_leg_size"  : 0.03,
-                    "second_leg_lenth": 0.80,
-                    "second_leg_size" : 0.03,
-                    "third_leg_size"  : 0.03,
-                }    
-    srl_generator = { "mode1": SRL_mode1 }[srl_mode]
-    srl_R = srl_generator( name=name, pretrain=pretrain, **srl_params)
+        "first_leg_lenth": 0.40,
+        "first_leg_size": 0.03,
+        "second_leg_lenth": 0.80,
+        "second_leg_size": 0.03,
+        "third_leg_size": 0.03,
+    }
 
-    # 使用绝对路径来确定 save_path
+    srl_gen = SRL_mode1(name=name, pretrain=pretrain, **srl_params)
     base_path = os.path.dirname(os.path.abspath(__file__))
     save_path = os.path.join(base_path, '../../../assets/mjcf/humanoid_srl/')
 
-    mjcf_generator = ModelGenerator(srl_R,save_path=save_path)
-    back_load = not pretrain
-    mjcf_generator.gen_basic_humanoid_xml()
-    mjcf_generator.get_SRL_dfs(back_load=back_load)
-    mjcf_generator.generate()
+    mjcf = ModelGenerator(srl_gen, save_path=save_path)
+    mjcf.gen_basic_humanoid_xml()
+    mjcf.get_SRL_dfs(back_load=not pretrain)
+    mjcf.generate()

@@ -1,485 +1,316 @@
-'''
+"""
 2025 ICRA
-用于外肢体形态优化的形态优化器函数
-'''
+用于外肢体形态优化的形态优化器函数（最终版）
+支持 real / int / fixed 参数空间
+"""
 
 import abc
 import numpy as np
 import random
-import csv
-import os
-import time
 import wandb
 from skopt import Optimizer
-from skopt.space import Real
+from skopt.space import Real, Integer
 
+
+# ================================================================
+# 基类：支持 param_space（real/int/fixed）
+# ================================================================
 class MorphologyOptimizer(abc.ABC):
-    def __init__(self, base_params):
+    def __init__(self, base_params, param_space, evaluate_fn):
+        """
+        base_params: 默认参数
+        param_space: {param_name: ("real"/"int"/"fixed", low, high?) }
+        evaluate_fn: SRLGym 的 design_evaluate() 或 design_evaluate_with_general_model()
+        """
         self.base_params = base_params
+        self.param_space = param_space
         self.param_names = list(base_params.keys())
-        self.num_params = len(self.param_names)
-        self.best_params = base_params
+
+        self.evaluate_design_method = evaluate_fn
+
+        self.best_params = base_params.copy()
         self.best_score = float('-inf')
 
-    @abc.abstractmethod
-    def sample_population(self):
-        """采样一个参数群体，用于评估"""
-        pass
+    # -------------------------------------------------------------
+    # 通用采样函数：根据参数空间采样
+    # -------------------------------------------------------------
+    def sample_param(self, key):
+        spec = self.param_space[key]
+        ptype = spec[0]
+
+        if ptype == "real":
+            _, low, high = spec
+            return float(np.random.uniform(low, high))
+
+        elif ptype == "int":
+            _, low, high = spec
+            return int(np.random.randint(low, high + 1))
+
+        elif ptype == "fixed":
+            return self.base_params[key]
+
+        else:
+            raise ValueError(f"Unknown param type: {ptype}")
+
+    def clip_param(self, key, val):
+        """对 GA mutate 后的值做裁剪，保持在合法范围内"""
+        spec = self.param_space[key]
+        ptype = spec[0]
+
+        if ptype == "real":
+            _, low, high = spec
+            return float(np.clip(val, low, high))
+
+        elif ptype == "int":
+            _, low, high = spec
+            return int(np.clip(int(val), low, high))
+
+        elif ptype == "fixed":
+            return self.base_params[key]
+
+        else:
+            raise ValueError(f"Unknown param type: {ptype}")
+
+    # -------------------------------------------------------------
+    # 统一的 WandB logging
+    # -------------------------------------------------------------
+    def wandb_log_design(self, prefix, params, score, iteration):
+        info_dict = {f"{prefix}/{k}": v for k, v in params.items()}
+        info_dict[f"{prefix}/best_reward"] = score
+        info_dict["iteration"] = iteration
+        wandb.log(info_dict)
 
     @abc.abstractmethod
-    def update(self, population, scores):
-        """基于评估值更新优化参数"""
+    def optimize(self):
         pass
 
-    def evaluate(self, params):
-        """评估函数，调用外部提供的评估函数"""
-        # 假设你有一个名为 evaluate_robot(params) 的外部评估函数
-        # return evaluate_robot(params)
-        pass
 
-    def optimize(self, num_iterations):
-        """运行优化算法"""
-        for i in range(num_iterations):
-            population = self.sample_population()
-            scores = [self.evaluate(individual) for individual in population]
-            self.update(population, scores)
-            print(f"Iteration {i+1}/{num_iterations}, Best Score: {self.best_score}")
-        
-        return self.best_params
-    
+# ================================================================
+# Genetic Algorithm (GA)
+# ================================================================
 class GeneticAlgorithmOptimizer(MorphologyOptimizer):
-    def __init__(self,
-                  base_design_params, 
-                  evaluate_design_method, # 设计评估函数：创建一个runner实例，完成内层的控制器优化
-                  population_size=20, 
-                  mutation_rate=0.3,
-                  crossover_rate=0.7,
-                  num_iterations=10,
-                  bounds_scale=0.3):
-        super().__init__(base_design_params)
+    def __init__(
+        self, base_params, param_space, evaluate_fn,
+        population_size=20, mutation_rate=0.3, crossover_rate=0.7,
+        num_iterations=10
+    ):
+        super().__init__(base_params, param_space, evaluate_fn)
         self.population_size = population_size
-        self.evaluate_design_method = evaluate_design_method
         self.mutation_rate = mutation_rate
         self.crossover_rate = crossover_rate
         self.num_iterations = num_iterations
-        self.bounds_scale = bounds_scale
+
         self.population = self.init_population()
-        
-         
+
+    # -------------------------------------------------------------
     def init_population(self):
-        """初始化种群，参数在基础参数的上下bounds_scale范围内"""
+        """初始化种群：完全基于 param_space 采样"""
         population = []
         population.append(self.base_params.copy())
-        
+
         for _ in range(self.population_size - 1):
-            individual = {}
-            for key, val in self.base_params.items():
-                lower_bound = (1 - self.bounds_scale) * val
-                upper_bound = (1 + self.bounds_scale) * val
-                individual[key] = np.random.uniform(lower_bound, upper_bound)
+            individual = {k: self.sample_param(k) for k in self.param_names}
             population.append(individual)
-            
+
         return population
 
-    def sample_population(self):
-        # GA dont need this method
-        population = []
-        for _ in range(self.population_size):
-            individual = {key: np.random.uniform(0.5 * val, 1.5 * val) for key, val in self.base_params.items()}
-            population.append(individual)
-        return population
-    
-    def mutate(self, individual):
-        """个体变异，参数裁剪到基础参数的上下bounds_scale范围内"""
-        for key in individual.keys():
-            if random.random() < self.mutation_rate:
-                individual[key] *= np.random.uniform(0.9, 1.1)
-                # 裁剪参数到指定范围内
-                lower_bound = (1 - self.bounds_scale) * self.base_params[key]
-                upper_bound = (1 + self.bounds_scale) * self.base_params[key]
-                individual[key] = np.clip(individual[key], lower_bound, upper_bound)
-        return individual
-
-    def crossover(self, parent1, parent2):
-        """交叉操作生成新个体"""
+    # -------------------------------------------------------------
+    def crossover(self, p1, p2):
+        """交叉：固定参数保持不变"""
         child = {}
-        for key in parent1.keys():
-            if random.random() < self.crossover_rate:
-                child[key] = parent1[key]
+        for k in self.param_names:
+            if self.param_space[k][0] == "fixed":
+                child[k] = self.base_params[k]
             else:
-                child[key] = parent2[key]
+                child[k] = p1[k] if random.random() < self.crossover_rate else p2[k]
         return child
 
-    def update(self, population, scores):
-        """基于评估值更新优化参数，保留表现最好的一个个体"""
-        # 获取表现最好的个体
-        sorted_indices = np.argsort(scores)[::-1]  # 从大到小排序
-        best_individual = population[sorted_indices[0]]  # 最好的个体
-        best_score = scores[sorted_indices[0]]  # 最好的得分
+    # -------------------------------------------------------------
+    def mutate(self, individual):
+        """变异：real/int 变异，fixed 不变"""
+        for k in self.param_names:
+            if self.param_space[k][0] == "fixed":
+                individual[k] = self.base_params[k]
+                continue
 
-        # 如果有更好的个体，更新最佳参数
-        if best_score > self.best_score:
-            self.best_score = best_score
-            self.best_params = best_individual
+            if random.random() < self.mutation_rate:
+                if self.param_space[k][0] == "real":
+                    # 小范围乘性变异
+                    individual[k] *= np.random.uniform(0.9, 1.1)
+                elif self.param_space[k][0] == "int":
+                    individual[k] += random.choice([-1, 1])
 
-        # 新种群包含一个精英个体
-        new_population = [best_individual]
+                individual[k] = self.clip_param(k, individual[k])
 
-        # 通过交叉和变异生成其余的个体
-        while len(new_population) < self.population_size:
-            parent1 = self.select(population, scores)
-            parent2 = self.select(population, scores)
-            child1 = self.crossover(parent1, parent2)
-            child2 = self.crossover(parent1, parent2)
-            new_population.append(self.mutate(child1))
-            if len(new_population) < self.population_size:
-                new_population.append(self.mutate(child2))
+        return individual
 
-        self.population = new_population
-
+    # -------------------------------------------------------------
     def select(self, population, scores):
-        """标准化选择"""
-        min_score = min(scores)
-        max_score = max(scores)
-        
-        # 如果所有分数相同，则平等分配选择概率
-        if max_score > min_score:
-            scores = [(score - min_score) / (max_score - min_score) for score in scores]
+        """轮盘赌选择"""
+        min_s = min(scores)
+        max_s = max(scores)
+
+        if max_s > min_s:
+            norm_scores = [(s - min_s) / (max_s - min_s) for s in scores]
         else:
-            scores = [1 for _ in scores]  # 所有分数相同的情况，给予等同的概率
-        
-        total_fitness = sum(scores)
-        pick = random.uniform(0, total_fitness)
-        current = 0
-        for individual, score in zip(population, scores):
-            current += score
-            if current > pick:
-                return individual
+            norm_scores = [1 for _ in scores]
 
-    def optimize(self,):
-        """运行优化算法并将每一代的最优设计及其评估值保存在CSV文件中"""
-        best_individuals_over_time = []  # 用于保存每一代的最优设计及其评估值
-      
-        for i in range(self.num_iterations):
-            # 评估当前种群
-            scores = []
-            for individual in self.population:
-                score = self.evaluate_design_method(individual)
-                scores.append(score)
-        
-            # 基于当前种群和得分更新种群
-            self.update(self.population, scores)
-            print(f"Iteration {i+1}/{self.num_iterations}, Best Score: {self.best_score}")
-            # 保存当前代的最优设计及其评估值
-            self.log_design(self.best_params.copy(),self.best_score,i)
-            best_individuals_over_time.append((self.best_params.copy(), self.best_score))
-                
-        
-        return best_individuals_over_time
-    
-    def log_design(self,best_params,best_reward,iteration):
-        info_dict = {
-                "GA/leg1_lenth" : best_params["first_leg_lenth"],
-                "GA/leg1_size"  : best_params["first_leg_size"],
-                "GA/leg2_lenth": best_params["second_leg_lenth"],
-                "GA/leg2_size" : best_params["second_leg_size"],
-                "GA/end_size"  : best_params["third_leg_size"],
-                "GA/best_reward" :  best_reward,
-                "iteration": iteration
+        total = sum(norm_scores)
+        pick = random.uniform(0, total)
+        curr = 0
 
-        }
-        wandb.log(info_dict )
+        for ind, sc in zip(population, norm_scores):
+            curr += sc
+            if curr > pick:
+                return ind
+
+    # -------------------------------------------------------------
+    def optimize(self):
+        history = []
+
+        for it in range(self.num_iterations):
+            scores = [self.evaluate_design_method(ind) for ind in self.population]
+
+            # 找最优
+            best_idx = int(np.argmax(scores))
+            best_individual = self.population[best_idx]
+            best_score = scores[best_idx]
+
+            # 更新全局最优
+            if best_score > self.best_score:
+                self.best_score = best_score
+                self.best_params = best_individual.copy()
+
+            self.wandb_log_design("GA", self.best_params, self.best_score, it)
+            history.append((self.best_params.copy(), self.best_score))
+
+            # 生成下一代
+            new_population = [best_individual.copy()]  # 保留精英
+            while len(new_population) < self.population_size:
+                p1 = self.select(self.population, scores)
+                p2 = self.select(self.population, scores)
+
+                child = self.crossover(p1, p2)
+                child = self.mutate(child)
+                new_population.append(child)
+
+            self.population = new_population
+
+        return history
 
 
+# ================================================================
+# Genetic Algorithm v2 —— 无默认设计个体
+# ================================================================
+class GeneticAlgorithmOptimizer_v2(GeneticAlgorithmOptimizer):
+    def init_population(self):
+        population = []
+        for _ in range(self.population_size):
+            individual = {k: self.sample_param(k) for k in self.param_names}
+            population.append(individual)
+        return population
+
+
+# ================================================================
+# Bayesian Optimization
+# ================================================================
 class BayesianOptimizer(MorphologyOptimizer):
-    def __init__(self, 
-                 base_design_params, 
-                 evaluate_design_method,
-                 num_iterations=100,
-                 initial_eval_epoch=700, 
-                 n_initial_points=5, 
-                 bounds_scale = 0.3,
-                 acq_func='EI'):
-        super().__init__(base_design_params)
+    def __init__(
+        self, base_params, param_space, evaluate_fn,
+        num_iterations=100, initial_eval_epoch=700,
+        n_initial_points=5, acq_func='EI'
+    ):
+        super().__init__(base_params, param_space, evaluate_fn)
         self.num_iterations = num_iterations
         self.initial_eval_epoch = initial_eval_epoch
-        self.evaluate_design_method = evaluate_design_method
         self.n_initial_points = n_initial_points
-        self.acq_func = acq_func
-        self.param_names = list(base_design_params.keys())
-        self.default_design_evalutate = False
-        # 定义贝叶斯优化的搜索空间
-        self.search_space = [Real((1 - bounds_scale) * val, (1 + bounds_scale) * val, name=key) for key, val in base_design_params.items()]
-        self.optimizer = Optimizer(self.search_space, n_initial_points=self.n_initial_points, acq_func=acq_func)
 
-        self.best_individuals_over_time = []  # 用于保存每一代的最优设计及其评估值
+        # BO 搜索空间
+        skopt_space = []
+        for k in self.param_names:
+            spec = param_space[k]
+            ptype = spec[0]
 
-    def sample_population(self):
-        pass
+            if ptype == "real":
+                _, low, high = spec
+                skopt_space.append(Real(low, high, name=k))
 
-    def update(self, ):
-        pass
+            elif ptype == "int":
+                _, low, high = spec
+                skopt_space.append(Integer(low, high, name=k))
 
+            elif ptype == "fixed":
+                # fixed 不加入搜索空间，由 BO 不优化
+                pass
+
+        self.optimizer = Optimizer(skopt_space, acq_func=acq_func, n_initial_points=n_initial_points)
+        self.opt_space_keys = [s.name for s in skopt_space]
+        self.fixed_keys = [k for k in self.param_names if param_space[k][0] == "fixed"]
+
+        self.history = []
+
+    # -------------------------------------------------------------
+    def build_param_dict(self, x_list):
+        """将 BO 产生的一维参数数组映射回 dict（补 fixed 参数）"""
+        d = {}
+        # real/int
+        for key, val in zip(self.opt_space_keys, x_list):
+            d[key] = float(val)
+
+        # fixed
+        for key in self.fixed_keys:
+            d[key] = self.base_params[key]
+
+        return d
+
+    # -------------------------------------------------------------
     def optimize(self):
+        for it in range(self.num_iterations):
 
-        """运行优化算法并将每一代的最优设计及其评估值保存在CSV文件中"""
-        if self.num_iterations < self.n_initial_points:
-            raise ValueError(f"num_iterations ({self.num_iterations}) must be greater than or equal to n_initial_points ({self.n_initial_points}).")
-        for i in range(self.num_iterations):
-            # 从贝叶斯优化器中获取下一组参数
-            if not self.default_design_evalutate:
-                params_dict = self.base_params
-                next_params = [self.base_params[key] for key in self.param_names]  # 将 base_params 转换为 next_params 格式
-                self.default_design_evalutate = True
+            if it == 0:
+                x = [self.base_params[k] for k in self.opt_space_keys]
             else:
-                next_params = self.optimizer.ask()
-                params_dict = dict(zip(self.param_names, next_params))
-            kwargs = {}
-            if i < self.n_initial_points:
-                kwargs['max_epoch']=700
-            # 评估当前参数
-            score = self.evaluate_design_method(params_dict, **kwargs)
+                x = self.optimizer.ask()
 
-            # 将评估结果告诉贝叶斯优化器
-            self.optimizer.tell(next_params, -score)  # 贝叶斯优化器最小化目标函数，因此使用负分数
+            params_dict = self.build_param_dict(x)
 
-            # 更新最佳参数和分数
+            kwarg = {"max_epoch": self.initial_eval_epoch} if it < self.n_initial_points else {}
+            score = self.evaluate_design_method(params_dict, **kwarg)
+
+            self.optimizer.tell(x, -score)  # skopt 最小化
+
             if score > self.best_score:
                 self.best_score = score
-                self.best_params = params_dict
+                self.best_params = params_dict.copy()
 
-            print(f"Iteration {i+1}/{self.num_iterations}, Best Score: {self.best_score}")
+            self.wandb_log_design("BO", self.best_params, self.best_score, it)
+            self.history.append((self.best_params.copy(), self.best_score))
 
-            # 保存当前代的最优设计及其评估值
-            self.log_design(self.best_params.copy(), self.best_score, i)
-            self.best_individuals_over_time.append((self.best_params.copy(), self.best_score))
-
-        return self.best_individuals_over_time
-
-    def log_design(self, best_params, best_reward, iteration):
-        info_dict = {
-            "BO/leg1_lenth": best_params["first_leg_lenth"],
-            "BO/leg1_size": best_params["first_leg_size"],
-            "BO/leg2_lenth": best_params["second_leg_lenth"],
-            "BO/leg2_size": best_params["second_leg_size"],
-            "BO/end_size": best_params["third_leg_size"],
-            "BO/best_reward": best_reward,
-            "iteration": iteration
-        }
-        wandb.log(info_dict)
+        return self.history
 
 
-class GeneticAlgorithmOptimizer_v2(MorphologyOptimizer):
-    def __init__(self,
-                  base_design_params, 
-                  evaluate_design_method,
-                  population_size=20, 
-                  mutation_rate=0.3,
-                  crossover_rate=0.7,
-                  num_iterations=10,
-                  bounds_scale=0.3):
-        super().__init__(base_design_params)
-        self.population_size = population_size
-        self.evaluate_design_method = evaluate_design_method
-        self.mutation_rate = mutation_rate
-        self.crossover_rate = crossover_rate
-        self.num_iterations = num_iterations
-        self.bounds_scale = bounds_scale
-        self.population = self.init_population()
-        
-         
-    def init_population(self):
-        """初始化种群，参数在基础参数的上下bounds_scale范围内"""
-        population = []
-        # population.append(self.base_params.copy()) # v2: no default design
-        
-        for _ in range(self.population_size - 1):
-            individual = {}
-            for key, val in self.base_params.items():
-                lower_bound = (1 - self.bounds_scale) * val
-                upper_bound = (1 + self.bounds_scale) * val
-                individual[key] = np.random.uniform(lower_bound, upper_bound)
-            population.append(individual)
-            
-        return population
-
-    def sample_population(self):
-        # GA dont need this method
-        population = []
-        for _ in range(self.population_size):
-            individual = {key: np.random.uniform(0.5 * val, 1.5 * val) for key, val in self.base_params.items()}
-            population.append(individual)
-        return population
-    
-    def mutate(self, individual):
-        """个体变异，参数裁剪到基础参数的上下bounds_scale范围内"""
-        for key in individual.keys():
-            if random.random() < self.mutation_rate:
-                individual[key] *= np.random.uniform(0.9, 1.1)
-                # 裁剪参数到指定范围内
-                lower_bound = (1 - self.bounds_scale) * self.base_params[key]
-                upper_bound = (1 + self.bounds_scale) * self.base_params[key]
-                individual[key] = np.clip(individual[key], lower_bound, upper_bound)
-        return individual
-
-    def crossover(self, parent1, parent2):
-        """交叉操作生成新个体"""
-        child = {}
-        for key in parent1.keys():
-            if random.random() < self.crossover_rate:
-                child[key] = parent1[key]
-            else:
-                child[key] = parent2[key]
-            lower_bound = (1 - self.bounds_scale) * self.base_params[key]
-            upper_bound = (1 + self.bounds_scale) * self.base_params[key]
-            child[key] = np.clip(child[key], lower_bound, upper_bound)
-        return child
-
-    def update(self, population, scores):
-        """基于评估值更新优化参数，保留表现最好的一个个体"""
-        # 获取表现最好的个体
-        sorted_indices = np.argsort(scores)[::-1]  # 从大到小排序
-        best_individual = population[sorted_indices[0]]  # 最好的个体
-        best_score = scores[sorted_indices[0]]  # 最好的得分
-
-        # 如果有更好的个体，更新最佳参数
-        if best_score > self.best_score:
-            self.best_score = best_score
-            self.best_params = best_individual
-
-        # 新种群包含一个精英个体
-        new_population = [best_individual]
-
-        # 通过交叉和变异生成其余的个体
-        while len(new_population) < self.population_size:
-            parent1 = self.select(population, scores)
-            parent2 = self.select(population, scores)
-            child1 = self.crossover(parent1, parent2)
-            child2 = self.crossover(parent1, parent2)
-            new_population.append(self.mutate(child1))
-            if len(new_population) < self.population_size:
-                new_population.append(self.mutate(child2))
-
-        self.population = new_population
-
-    def select(self, population, scores):
-        """标准化选择"""
-        min_score = min(scores)
-        max_score = max(scores)
-        
-        # 如果所有分数相同，则平等分配选择概率
-        if max_score > min_score:
-            scores = [(score - min_score) / (max_score - min_score) for score in scores]
-        else:
-            scores = [1 for _ in scores]  # 所有分数相同的情况，给予等同的概率
-        
-        total_fitness = sum(scores)
-        pick = random.uniform(0, total_fitness)
-        current = 0
-        for individual, score in zip(population, scores):
-            current += score
-            if current > pick:
-                return individual
-
-    def optimize(self,):
-        """运行优化算法并将每一代的最优设计及其评估值保存在CSV文件中"""
-        best_individuals_over_time = []  # 用于保存每一代的最优设计及其评估值
-      
-        for i in range(self.num_iterations):
-            # 评估当前种群
-            scores = []
-            for individual in self.population:
-                kwarg = {'max_epoch': 700} if i <= 1 else {}
-                score = self.evaluate_design_method(individual,**kwarg)
-                scores.append(score)
-        
-            # 基于当前种群和得分更新种群
-            self.update(self.population, scores)
-            print(f"Iteration {i+1}/{self.num_iterations}, Best Score: {self.best_score}")
-            # 保存当前代的最优设计及其评估值
-            self.log_design(self.best_params.copy(),self.best_score,i)
-            best_individuals_over_time.append((self.best_params.copy(), self.best_score))
-                
-        
-        return best_individuals_over_time
-    
-    def log_design(self,best_params,best_reward,iteration):
-        info_dict = {
-                "GA/leg1_lenth" : best_params["first_leg_lenth"],
-                "GA/leg1_size"  : best_params["first_leg_size"],
-                "GA/leg2_lenth": best_params["second_leg_lenth"],
-                "GA/leg2_size" : best_params["second_leg_size"],
-                "GA/end_size"  : best_params["third_leg_size"],
-                "GA/best_reward" :  best_reward,
-                "iteration": iteration
-
-        }
-        wandb.log(info_dict )
-
-
+# ================================================================
+# Random Search
+# ================================================================
 class RandomOptimizer(MorphologyOptimizer):
-    def __init__(self, 
-                 base_design_params, 
-                 evaluate_design_method,
-                 num_iterations=100, 
-                 bounds_scale=0.3):
-        super().__init__(base_design_params)
+    def __init__(self, base_params, param_space, evaluate_fn, num_iterations=100):
+        super().__init__(base_params, param_space, evaluate_fn)
         self.num_iterations = num_iterations
-        self.evaluate_design_method = evaluate_design_method
-        self.param_names = list(base_design_params.keys())
-        self.bounds_scale = bounds_scale
-        self.best_params = None
-        self.best_score = float('-inf')
-        self.best_individuals_over_time = []  # 用于保存每一代的最优设计及其评估值
-        
-        # 定义搜索空间为上下 bounds_scale 范围
-        self.search_space = [(val * (1 - bounds_scale), val * (1 + bounds_scale)) for val in base_design_params.values()]
+        self.history = []
 
     def random_sample(self):
-        """从搜索空间中随机采样"""
-        sample = {}
-        for i, key in enumerate(self.param_names):
-            lower_bound, upper_bound = self.search_space[i]
-            sample[key] = np.random.uniform(lower_bound, upper_bound)
-        return sample
+        return {k: self.sample_param(k) for k in self.param_names}
 
     def optimize(self):
-        """运行随机搜索优化，并将每一代的最优设计及其评估值保存在日志中"""
-        for i in range(self.num_iterations):
-            # 随机生成一个新的设计参数
-            params_dict = self.random_sample()
+        for it in range(self.num_iterations):
+            params = self.random_sample()
+            score = self.evaluate_design_method(params)
 
-            # 评估当前参数
-            score = self.evaluate_design_method(params_dict)
-
-            # 更新最优参数和分数
             if score > self.best_score:
                 self.best_score = score
-                self.best_params = params_dict
+                self.best_params = params.copy()
 
-            print(f"Iteration {i+1}/{self.num_iterations}, Best Score: {self.best_score}")
+            self.wandb_log_design("Random", self.best_params, self.best_score, it)
+            self.history.append((self.best_params.copy(), self.best_score))
 
-            # 保存当前代的最优设计及其评估值
-            self.log_design(self.best_params.copy(), self.best_score, i)
-            self.best_individuals_over_time.append((self.best_params.copy(), self.best_score))
-
-        return self.best_individuals_over_time
-
-    def log_design(self, best_params, best_reward, iteration):
-        """记录当前最优设计的参数及评估分数"""
-        info_dict = {
-            "Random/leg1_lenth": best_params["first_leg_lenth"],
-            "Random/leg1_size": best_params["first_leg_size"],
-            "Random/leg2_lenth": best_params["second_leg_lenth"],
-            "Random/leg2_size": best_params["second_leg_size"],
-            "Random/end_size": best_params["third_leg_size"],
-            "Random/best_reward": best_reward,
-            "iteration": iteration
-        }
-        wandb.log(info_dict)
-
-    def sample_population(self):
-        pass
-
-    def update(self):
-        pass
+        return self.history

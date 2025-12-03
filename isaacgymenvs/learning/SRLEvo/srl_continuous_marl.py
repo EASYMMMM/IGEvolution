@@ -416,13 +416,13 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             self.algo_observer.process_infos(infos, done_indices)
 
             not_dones = 1.0 - self.dones.float()
-            # TODO：可以在这里添加Fitness Function
+            # TODO：Fitness Function
             for idx in done_indices:
                 ep_lenth = self.current_lengths[idx].item()
                 amp_reward = self.current_rewards_amp[idx].item()
-                # reward = 2*evaluate_t_c + 2*evaluate_u_r + srl_t_c 
+                huamnoid_task_reward = self.current_rewards_task[idx].item()  
                 # 添加新的 reward 到队列中
-                # self.evaluate_rewards.append(reward)
+                self.evaluate_rewards.append(huamnoid_task_reward)
                 self.evaluate_amp_rewards.append(amp_reward)
             ''' If env is done, reset current_reward '''
             
@@ -1149,8 +1149,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
                     self.save(self.model_output_file)
                     print('MAX EPOCHS NUM!')
                     self.writer.close()
-                    avg_evaluate_rewards = 0
-                    # avg_evaluate_rewards = sum(self.evaluate_rewards) / len(self.evaluate_rewards)
+                    avg_evaluate_rewards = sum(self.evaluate_rewards) / len(self.evaluate_rewards)
                     avg_evaluate_amp_rewards = sum(self.evaluate_amp_rewards) / len(self.evaluate_amp_rewards)
                     return avg_evaluate_rewards, avg_evaluate_amp_rewards, epoch_num, self.frame, 
 

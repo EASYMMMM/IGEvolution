@@ -19,7 +19,7 @@ SRL_ROOT_BODY_NAMES = ["SRL", "SRL_root"]
 UPPER_BODY_NAMES = ["pelvis", "torso"]
 KEY_BODY_NAMES = ["right_hand", "left_hand", "right_foot", "left_foot"]  # body end + SRL end
 SRL_END_BODY_NAMES = ["SRL_right_end","SRL_left_end"] 
-SRL_CONTACT_BODY_NAMES = ['SRL_root', 'SRL_leg2', 'SRL_shin11', 'SRL_right_end', 'SRL_leg1', 'SRL_shin1', 'SRL_left_end']
+SRL_CONTACT_BODY_NAMES = ['SRL_root', 'SRL_right_leg1', 'SRL_right_leg2', 'SRL_right_end', 'SRL_left_leg1', 'SRL_left_leg2', 'SRL_left_end']
 
 USE_ROOT_QUAT_CORRECTION = False
 SRL_ROT_CORRECTION = [
@@ -92,7 +92,6 @@ class SRL_HRIBase(VecTask):
         self._srl_root_force_reward_w = self.cfg["env"]["srl_root_force_reward_w"]
         self._srl_feet_slip_w = self.cfg["env"]["srl_feet_slip_w"]
         self._srl_endpos_obs = self.cfg["env"]["srl_endpos_obs"]
-        self._autogen_model = self.cfg["env"].get("autogen_model", False)
         self._design_param_obs = self.cfg["env"].get("design_param_obs", False)
         self._load_cell_activate = self.cfg["env"].get("load_cell",False)
         self._humanoid_load_cell_obs = self.cfg["env"].get("humanoid_load_cell_obs", False)
@@ -948,10 +947,7 @@ class SRL_HRIBase(VecTask):
 
     def _build_srl_end_body_ids_tensor(self, env_ptr, actor_handle):
         body_ids = []
-        if self._autogen_model:
-            srl_end_body_names = ["SRL_right_end","SRL_left_end"] 
-        else:
-            srl_end_body_names = SRL_END_BODY_NAMES
+        srl_end_body_names = SRL_END_BODY_NAMES
         
         for body_name in srl_end_body_names:
             body_id = self.gym.find_actor_rigid_body_handle(env_ptr, actor_handle, body_name)
@@ -965,10 +961,7 @@ class SRL_HRIBase(VecTask):
         body_ids = []      
         # 添加外肢体碰撞模型 
         contact_body = self._contact_bodies
-        if self._autogen_model:
-            contact_body = contact_body + ['SRL_root', 'SRL_right_leg1', 'SRL_right_leg2', 'SRL_right_end', 'SRL_left_leg1', 'SRL_left_leg2', 'SRL_left_end']
-        else:
-            contact_body = contact_body + SRL_CONTACT_BODY_NAMES
+        contact_body = contact_body + SRL_CONTACT_BODY_NAMES
         for body_name in contact_body:
             body_id = self.gym.find_actor_rigid_body_handle(env_ptr, actor_handle, body_name)
             assert body_id != -1, f'No agent-body named: {body_name}'
