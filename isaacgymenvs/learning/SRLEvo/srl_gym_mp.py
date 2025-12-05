@@ -404,7 +404,7 @@ class SRLGym_process():
         self._maybe_dump_experiment_cfg(cfg)
 
         # 训练 / 测试
-        evaluate_reward, evaluate_amp_reward, frame, summary_dir = self.run(
+        evaluate_reward, evaluate_info, frame, epoch_num = self.run(
             runner,
             {
                 'train': not cfg.test,
@@ -418,7 +418,7 @@ class SRLGym_process():
         # if design_params:
         #     self._log_design_param(design_params, frame)
 
-        return evaluate_reward, evaluate_amp_reward, frame, summary_dir
+        return evaluate_reward, evaluate_info, frame, epoch_num
 
     def run(self, runner, args):
         """
@@ -440,5 +440,5 @@ class SRLGym_process():
         _override_sigma(agent, args)
 
         # 对应你的 srl/amp agent.train() 返回 (evaluate_reward, evaluate_amp_reward, frame, summary_dir)
-        evaluate_reward, evaluate_amp_reward, frame, summary_dir = agent.train()
-        return evaluate_reward, evaluate_amp_reward, frame, summary_dir
+        evaluate_reward, evaluate_info, frame, epoch_num = agent.train()
+        return evaluate_reward, evaluate_info, frame, epoch_num

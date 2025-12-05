@@ -4,3 +4,6 @@ export http_proxy=http://127.0.0.1:7890
 export https_proxy=http://127.0.0.1:7890
 # 测试SRL-Gym Random Optimization
 python SRLGym_train.py task=SRL_HRI experiment=SRLGym_RA_test  headless=True wandb_activate=True max_iterations=500  train.gym.design_opt=RA  train.params.config.hsrl_checkpoint=runs/SRL_HRI_21-17-34-13/nn/SRL_HRI_21-17-34-22.pth  sim_device=cuda:0 rl_device=cuda:0  task.env.design_param_obs=False  train.gym.RA_num_iterations=20
+
+# 测试SRL-Gym Bayesian Optimization
+python SRLGym_train.py task=SRL_HRI experiment=SRLGym_BO_test  headless=True wandb_activate=True max_iterations=500  train.gym.design_opt=BO  train.params.config.hsrl_checkpoint=runs/SRL_HRI_21-17-34-13/nn/SRL_HRI_21-17-34-22.pth  sim_device=cuda:0 rl_device=cuda:0  task.env.design_param_obs=False  train.gym.BO_num_iterations=25

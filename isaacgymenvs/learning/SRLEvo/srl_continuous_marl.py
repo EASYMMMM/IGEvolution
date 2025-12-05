@@ -129,9 +129,13 @@ class SRL_MultiAgent(common_agent.CommonAgent):
 
         if self._normalize_amp_input:
             self._amp_input_mean_std = RunningMeanStd(self._amp_observation_space.shape).to(self.ppo_device)
+        
+        # Outer Loop Evaluate Values
+        self.evaluate_humanoid_rewards = deque(maxlen=6) 
+        self.evaluate_amp_rewards = deque(maxlen=6)
+        self.evaluate_ep_length = deque(maxlen=6)  
+        self.evaluate_srl_rewards = deque(maxlen=6)  
 
-        self.evaluate_rewards = deque(maxlen=6)  # Reward used to evaluate the design
-        self.evaluate_amp_rewards = deque(maxlen=6) 
         self.train_result = {}
 
         self.update_counter = 0
@@ -416,14 +420,17 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             self.algo_observer.process_infos(infos, done_indices)
 
             not_dones = 1.0 - self.dones.float()
-            # TODO：Fitness Function
+            # TODO: Fitness Function
             for idx in done_indices:
-                ep_lenth = self.current_lengths[idx].item()
                 amp_reward = self.current_rewards_amp[idx].item()
                 huamnoid_task_reward = self.current_rewards_task[idx].item()  
+                srl_reward = self.current_rewards_srl[idx].item()
+                ep_length = self.current_lengths[idx].item()
                 # 添加新的 reward 到队列中
-                self.evaluate_rewards.append(huamnoid_task_reward)
+                self.evaluate_humanoid_rewards.append(huamnoid_task_reward)
                 self.evaluate_amp_rewards.append(amp_reward)
+                self.evaluate_srl_rewards.append(srl_reward)
+                self.evaluate_ep_length.append(ep_length)
             ''' If env is done, reset current_reward '''
             
             self.current_rewards      = self.current_rewards      * not_dones.unsqueeze(1)
@@ -1149,9 +1156,17 @@ class SRL_MultiAgent(common_agent.CommonAgent):
                     self.save(self.model_output_file)
                     print('MAX EPOCHS NUM!')
                     self.writer.close()
-                    avg_evaluate_rewards = sum(self.evaluate_rewards) / len(self.evaluate_rewards)
+                    avg_evaluate_rewards = sum(self.evaluate_humanoid_rewards) / len(self.evaluate_humanoid_rewards)
                     avg_evaluate_amp_rewards = sum(self.evaluate_amp_rewards) / len(self.evaluate_amp_rewards)
-                    return avg_evaluate_rewards, avg_evaluate_amp_rewards, epoch_num, self.frame, 
+                    avg_evaluate_srl_rewards = sum(self.evaluate_srl_rewards) / len(self.evaluate_srl_rewards)
+                    avg_evaluate_ep_lengths = sum(self.evaluate_ep_length) / len(self.evaluate_ep_length)
+                    evaluate_info = {
+                                    "amp_rewards": avg_evaluate_amp_rewards,
+                                    "srl_rewards": avg_evaluate_srl_rewards,
+                                    "humanoid_rewards": avg_evaluate_rewards,
+                                    "ep_length": avg_evaluate_ep_lengths
+                    }
+                    return avg_evaluate_rewards, evaluate_info,  self.frame, epoch_num
 
                 update_time = 0
          

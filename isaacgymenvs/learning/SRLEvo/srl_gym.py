@@ -348,14 +348,19 @@ class SRLGym():
             return -99999
 
         # unpack
-        evaluate_reward, amp_reward, frame, _ = res
-
+        evaluate_reward, evaluate_info, frame, epoch_num = res
+        amp_reward = evaluate_info.get("amp_rewards", 0)
+        srl_reward = evaluate_info.get("srl_rewards", 0)
+        humanoid_reward = evaluate_info.get("humanoid_rewards", 0)
+        ep_length = evaluate_info.get("ep_length", 0)
         self.curr_frame += frame
 
         # compute score
         design_cost = self.calc_design_cost(srl_params)
         wandb.log({
-            "Evolution/srl_torque_cost": evaluate_reward,
+            "Evolution/humanoid_task_reward": humanoid_reward,
+            "Evolution/srl_reward": srl_reward,
+            "Evolution/ep_length": ep_length,
             "Evolution/design_cost": design_cost * 500,
             "Evolution/amp_reward": amp_reward,
             "iteration": self.iteration
@@ -399,7 +404,7 @@ class SRLGym():
         train_cfg['train']['params']['config']['start_frame'] = 1
         srl_params = design_params
 
-        self.generate_SRL_xml(xml_name, srl_params, pretrain=False)
+        self.generate_SRL_xml(xml_name, srl_params )
         train_cfg['task']['env']['asset']['assetFileName'] = self.mjcf_folder + '/' + xml_name + '.xml'
         train_cfg['train']['params']['config']['hsrl_checkpoint'] = self.hsrl_checkpoint
 
@@ -416,7 +421,7 @@ class SRLGym():
 
         runner = self.SubprocRunner(train_cfg)
         try:
-            evaluate_reward, amp_reward, frame, _ = runner.rlgpu(
+            evaluate_reward, evaluate_info, frame, epoch_num = runner.rlgpu(
                 self.wandb_exp_name, design_params=srl_params
             ) 
         except Exception as e:
@@ -427,6 +432,11 @@ class SRLGym():
 
         self.curr_frame += frame
 
+        amp_reward = evaluate_info.get("amp_rewards", 0)
+        srl_reward = evaluate_info.get("srl_rewards", 0)
+        humanoid_reward = evaluate_info.get("humanoid_rewards", 0)
+        ep_length = evaluate_info.get("ep_length", 0)
+
         design_cost = self.calc_design_cost(srl_params)
         evaluate_reward += design_cost * 500
 
@@ -436,7 +446,9 @@ class SRLGym():
             final_score = evaluate_reward
 
         wandb.log({
-            "Evolution/srl_torque_cost": evaluate_reward,
+            "Evolution/humanoid_task_reward": humanoid_reward,
+            "Evolution/srl_reward": srl_reward,
+            "Evolution/ep_length": ep_length,
             "Evolution/design_cost": design_cost * 500,
             "Evolution/amp_reward": amp_reward,
             "iteration": self.iteration
@@ -506,7 +518,7 @@ class SRLGym():
 
         runner = self.SubprocRunner(train_cfg)
         try:
-            evaluate_reward, amp_reward, frame, _ = runner.rlgpu(
+            evaluate_reward, evaluate_info, frame, epoch_num = runner.rlgpu(
                 self.wandb_exp_name, design_params=srl_params
             )
         except Exception as e:
@@ -516,11 +528,19 @@ class SRLGym():
             runner.close()
 
         self.curr_frame += frame
+
+        amp_reward = evaluate_info.get("amp_rewards", 0)
+        srl_reward = evaluate_info.get("srl_rewards", 0)
+        humanoid_reward = evaluate_info.get("humanoid_rewards", 0)
+        ep_length = evaluate_info.get("ep_length", 0)
+
         design_cost = self.calc_design_cost(srl_params)
         evaluate_reward += design_cost * 500
 
         wandb.log({
-            "Evolution/srl_torque_cost": evaluate_reward,
+            "Evolution/humanoid_task_reward": humanoid_reward,
+            "Evolution/srl_reward": srl_reward,
+            "Evolution/ep_length": ep_length,
             "Evolution/design_cost": design_cost * 500,
             "Evolution/amp_reward": amp_reward,
             "iteration": self.iteration
@@ -546,18 +566,39 @@ class SRLGym():
         }
 
     def SRL_param_space(self):
-        """定义 SRL 形态参数的取值空间，用于 GA / BO / Random Search."""
-        return {
-            "leg1_length":     ("real", 0.40, 0.80),
-            "leg2_length":     ("real", 0.35, 0.75),
-            "base_width":      ("real", 0.085, 0.130),
-            "base_distance":   ("real", 0.30, 0.70),
+        gym_cfg = self.cfg.get("gym", {})
+        cfg_space = gym_cfg.get("morphology_space", None)
 
-            # 离散参数固定，不优化
-            "enable_freejoint_z": ("fixed", 1),
-            "enable_freejoint_y": ("fixed", 1),
-            "enable_freejoint_x": ("fixed", 0),
-        }
+        # 如果 cfg 里没配，就用默认 hard-code 一份，防止报错
+        if cfg_space is None:
+            return {
+                "leg1_length": ("real", 0.40, 0.80),
+                "leg2_length": ("real", 0.35, 0.75),
+                "base_width": ("real", 0.085, 0.130),
+                "base_distance": ("real", 0.30, 0.70),
+                "enable_freejoint_z": ("fixed", 1),
+                "enable_freejoint_y": ("fixed", 1),
+                "enable_freejoint_x": ("fixed", 0),
+            }
+
+        param_space = {}
+
+        for name, spec in cfg_space.items():
+            ptype = spec.get("type", "real")
+            ptype = ptype.lower()
+
+            if ptype in ("real", "int"):
+                low = float(spec["low"])
+                high = float(spec["high"])
+                param_space[name] = (ptype, low, high)
+            elif ptype == "fixed":
+                value = spec["value"]
+                param_space[name] = (ptype, value)
+            else:
+                raise ValueError(f"Unknown param type '{ptype}' for '{name}' in morphology_space")
+
+        return param_space
+
 
 
 

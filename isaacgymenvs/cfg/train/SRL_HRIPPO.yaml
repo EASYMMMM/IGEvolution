@@ -124,6 +124,40 @@ params:
 
 gym:
   design_opt: 'RA'  # SRL designer optimizer
+  # ====== Design Space ======
+  morphology_space:
+    leg1_length:
+      type: real
+      low: 0.40
+      high: 0.80
+
+    leg2_length:
+      type: real
+      low: 0.35
+      high: 0.75
+
+    base_width:
+      type: real
+      low: 0.085
+      high: 0.130
+
+    base_distance:
+      type: real
+      low: 0.30
+      high: 0.70
+
+    enable_freejoint_z:
+      type: fixed
+      value: 1
+
+    enable_freejoint_y:
+      type: fixed
+      value: 1
+
+    enable_freejoint_x:
+      type: fixed
+      value: 0
+  # ===== Optimizer ===== 
   GA_population_size: 20
   GA_num_iterations: 10
   GA_mutation_rate: 0.1
