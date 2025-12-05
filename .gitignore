@@ -32,3 +32,5 @@ outputs/
 *.hydra*
 /isaacgymenvs/wandb
 !isaacgymenvs/utils/wandb_utils.py
+!isaacgymenvs/saved_runs/
+!isaacgymenvs/saved_runs/**
