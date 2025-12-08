@@ -1,5 +1,5 @@
 # ================================================================
-# 2025 ICRA SRL-Gym
+# SRL-Gym
 # 外肢体形态-控制 联合优化框架（结构化重构版）
 # ================================================================
 
@@ -15,7 +15,6 @@ import wandb
 from copy import deepcopy
 from datetime import datetime
 from omegaconf import OmegaConf
-# 导入基于 Jinja2 的 MJCF 生成方法
 from isaacgymenvs.srl_mjcf_generator.generator.generate_hsrl import generate_hsrl_model
 from .srl_continuous import SRLAgent
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../model_grammar')))
@@ -31,20 +30,12 @@ from isaacgymenvs.learning.SRLEvo.mp_util import subproc_worker
 from isaacgymenvs.utils.reformat import omegaconf_to_dict
 
 
-# ================================================================
-# Helper Functions
-# ================================================================
-
 def sync_tensorboard_logs(main_log_dir):
     log_files = glob.glob(os.path.join(main_log_dir, '**', 'summaries', 'events.out.tfevents.*'), recursive=True)
     for log_file in log_files:
         print(f"Syncing file: {log_file}")
         wandb.save(log_file)
 
-
-# ================================================================
-# SRLGym Main Class
-# ================================================================
 
 class SRLGym():
     def __init__(self, cfg):
@@ -349,45 +340,26 @@ class SRLGym():
 
         # unpack
         evaluate_reward, evaluate_info, frame, epoch_num = res
-        amp_reward = evaluate_info.get("amp_rewards", 0)
-        srl_reward = evaluate_info.get("srl_rewards", 0)
-        humanoid_reward = evaluate_info.get("humanoid_rewards", 0)
-        ep_length = evaluate_info.get("ep_length", 0)
         self.curr_frame += frame
 
         # compute score
-        design_cost = self.calc_design_cost(srl_params)
-        wandb.log({
-            "Evolution/humanoid_task_reward": humanoid_reward,
-            "Evolution/srl_reward": srl_reward,
-            "Evolution/ep_length": ep_length,
-            "Evolution/design_cost": design_cost * 500,
-            "Evolution/amp_reward": amp_reward,
-            "iteration": self.iteration
-        })
+        evaluate_reward = self.calc_evaluate_reward(evaluate_info, design_params) 
 
-        evaluate_reward += design_cost * 500
-
-        if amp_reward < 150:
-            final_score = -150
-        else:
-            final_score = evaluate_reward
-
-        self._log_design_param(srl_params, self.iteration)
-        wandb.log({"Evolution/evaluate_value": final_score})
+        self._log_design_param(design_params, self.iteration)
+        self._log_evaluate_info(evaluate_info, evaluate_reward, design_params )
 
         self.iteration += 1
 
         # best model update
-        if final_score > self.best_evaluate_reward:
-            self.best_evaluate_reward = final_score
+        if evaluate_reward > self.best_evaluate_reward:
+            self.best_evaluate_reward = evaluate_reward
             self.best_design_param = design_params
             shutil.copy(
                 model_output_file + '.pth',
                 os.path.join(model_output_path, 'best_model.pth')
             )
 
-        return final_score
+        return evaluate_reward
 
 
     # ---------------------------------------------------------------
@@ -432,29 +404,11 @@ class SRLGym():
 
         self.curr_frame += frame
 
-        amp_reward = evaluate_info.get("amp_rewards", 0)
-        srl_reward = evaluate_info.get("srl_rewards", 0)
-        humanoid_reward = evaluate_info.get("humanoid_rewards", 0)
-        ep_length = evaluate_info.get("ep_length", 0)
-
-        design_cost = self.calc_design_cost(srl_params)
-        evaluate_reward += design_cost * 500
-
-        if amp_reward < 150:
-            final_score = -150
-        else:
-            final_score = evaluate_reward
-
-        wandb.log({
-            "Evolution/humanoid_task_reward": humanoid_reward,
-            "Evolution/srl_reward": srl_reward,
-            "Evolution/ep_length": ep_length,
-            "Evolution/design_cost": design_cost * 500,
-            "Evolution/amp_reward": amp_reward,
-            "iteration": self.iteration
-        })
+        # compute score
+        evaluate_reward = self.calc_evaluate_reward(evaluate_info, design_params) 
 
         # 若训练稳定，则更新 general model
+        amp_reward = evaluate_info.get("amp_rewards", 0)
         if amp_reward > 400:
             shutil.copy(
                 model_output_file + '.pth',
@@ -463,8 +417,8 @@ class SRLGym():
             self.hsrl_checkpoint = os.path.join(model_output_path, 'general_model.pth')
 
         # Best model
-        if final_score > self.best_evaluate_reward:
-            self.best_evaluate_reward = final_score
+        if evaluate_reward > self.best_evaluate_reward:
+            self.best_evaluate_reward = evaluate_reward
             self.best_design_param = design_params
             shutil.copy(
                 model_output_file + '.pth',
@@ -472,17 +426,49 @@ class SRLGym():
             )
 
         self._log_design_param(srl_params, self.iteration)
-        wandb.log({"Evolution/evaluate_value": final_score})
+        self._log_evaluate_info(evaluate_info, evaluate_reward, srl_params)
         self.iteration += 1
 
-        return final_score
+        return evaluate_reward
 
     # ---------------------------------------------------------------
+
+    def calc_evaluate_reward(self, evaluate_info, design_params):
+        design_cost = self.calc_design_cost(design_params)
+        humanoid_reward = evaluate_info.get("humanoid_rewards", 0)
+        ep_length = evaluate_info.get("ep_length", 0)
+        amp_reward = evaluate_info.get("amp_rewards", 0)
+        evaluate_reward = humanoid_reward*0.02 \
+                          + design_cost * 5 \
+                          + ep_length * 0.01 \
+                          + amp_reward * 0.01
+        if amp_reward < 150:
+            final_score = -1
+        else:
+            final_score = evaluate_reward
+        return final_score
+
 
     def calc_design_cost(self, design_params):
         a = math.pi * (0.03 ** 2) * design_params['leg1_length']
         b = math.pi * (0.03 ** 2) * design_params['leg2_length']
         return -( a + b )
+
+    def _log_evaluate_info(self, evaluate_info, evaluate_reward, srl_params ):
+        amp_reward = evaluate_info.get("amp_rewards", 0)
+        srl_reward = evaluate_info.get("srl_rewards", 0)
+        humanoid_reward = evaluate_info.get("humanoid_rewards", 0)
+        ep_length = evaluate_info.get("ep_length", 0)
+        design_cost = self.calc_design_cost(srl_params)
+        wandb.log({
+            "Evolution/humanoid_task_reward": humanoid_reward,
+            "Evolution/srl_reward": srl_reward,
+            "Evolution/ep_length": ep_length,
+            "Evolution/design_cost": design_cost * 500,
+            "Evolution/amp_reward": amp_reward,
+            "Evolution/evaluate_value": evaluate_reward,
+            "iteration": self.iteration
+        })
 
     # ---------------------------------------------------------------
 
@@ -529,28 +515,15 @@ class SRLGym():
 
         self.curr_frame += frame
 
-        amp_reward = evaluate_info.get("amp_rewards", 0)
-        srl_reward = evaluate_info.get("srl_rewards", 0)
-        humanoid_reward = evaluate_info.get("humanoid_rewards", 0)
-        ep_length = evaluate_info.get("ep_length", 0)
+        # compute score
+        evaluate_reward = self.calc_evaluate_reward(evaluate_info, srl_params) 
 
-        design_cost = self.calc_design_cost(srl_params)
-        evaluate_reward += design_cost * 500
+        self._log_design_param(srl_params, self.iteration)
+        self._log_evaluate_info(evaluate_info, evaluate_reward, srl_params )
 
-        wandb.log({
-            "Evolution/humanoid_task_reward": humanoid_reward,
-            "Evolution/srl_reward": srl_reward,
-            "Evolution/ep_length": ep_length,
-            "Evolution/design_cost": design_cost * 500,
-            "Evolution/amp_reward": amp_reward,
-            "iteration": self.iteration
-        })
-
-        final_score = -150 if amp_reward < 150 else evaluate_reward
-        wandb.log({"Evolution/evaluate_value": final_score})
         self.iteration += 1
 
-        return final_score
+        return evaluate_reward
 
     # ---------------------------------------------------------------
 
