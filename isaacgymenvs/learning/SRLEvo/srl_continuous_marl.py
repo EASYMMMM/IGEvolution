@@ -1246,9 +1246,15 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         return amp_obs
     
     def _combine_humanoid_rewards(self, task_rewards, amp_rewards):
+        # 初始值
+        w0 = self._disc_reward_w
+        T = 1000
+        t = float(self.epoch_num)
+        x = min(t / T, 1.0)
+        disc_reward_coeff = w0 * (1.0 + x)
         disc_r = amp_rewards['disc_rewards']
         combined_rewards = self._task_reward_w * task_rewards \
-                           + self._disc_reward_w * disc_r
+                           + disc_reward_coeff * disc_r
         return combined_rewards
 
     def _combine_srl_rewards(self, srl_rewards, teacher_rewards=None):
