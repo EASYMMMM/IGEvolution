@@ -176,6 +176,7 @@ class SRL_HRIBase(VecTask):
         self._dof_state = gymtorch.wrap_tensor(dof_state_tensor)
         self._dof_pos = self._dof_state.view(self.num_envs, self.num_dof, 2)[..., 0]
         self._dof_vel = self._dof_state.view(self.num_envs, self.num_dof, 2)[..., 1]
+        self._dof_vel_prev = self._dof_vel.clone()
 
         self.target_yaw = torch.zeros(self.num_envs, device=self.device)
         self.target_ang_vel_z = torch.zeros(self.num_envs, device=self.device)
@@ -612,7 +613,7 @@ class SRL_HRIBase(VecTask):
         to_target = self.targets - self._initial_root_states[:, 0:3]
         srl_root_pos = self.srl_root_states[:, 0:3]
         clearance_reward = self.compute_foot_clearance_reward()
-        self.rew_buf[:] = compute_humanoid_reward(self.obs_buf, self._dof_pos)
+        self.rew_buf[:] = compute_humanoid_reward(self.obs_buf, self._dof_pos, self._dof_vel, self._dof_vel_prev,)
         self.srl_rew_buf[:]  = compute_srl_reward(self.srl_obs_buf[:],
                                             clearance_reward,
                                             to_target,
@@ -872,6 +873,7 @@ class SRL_HRIBase(VecTask):
         # TODO: Task Randomization
         # self.set_task_target()
 
+        self._dof_vel_prev = self._dof_vel.clone()
         self.extras["terminate"] = self._terminate_buf
 
         # SRL reward & Obs
@@ -1445,7 +1447,7 @@ def compute_priv_extra_observations_mirrored(root_states, dof_pos, dof_vel, key_
                      ), dim=-1)
     return obs
     
-def compute_humanoid_reward(obs_buf, dof_pos):
+def compute_humanoid_reward(obs_buf, dof_pos, dof_vel, dof_vel_prev):
     # --- Task Command ---
     target_pelvis_height = obs_buf[:, -1] 
     target_ang_vel_z = obs_buf[:, -2]
@@ -1470,9 +1472,13 @@ def compute_humanoid_reward(obs_buf, dof_pos):
     gait_phase_penalty_coef = torch.where(target_vel_x > 0.1, torch.zeros_like(target_vel_x), torch.ones_like(target_vel_x))
     dof_pos_cost = gait_phase_penalty_coef * dof_pos_cost
 
-    # --- DOF velocity cost ---
-    dof_vel = obs_buf[:, 64:64+28]
-    dof_vel_cost = 0.00 * torch.sum(dof_vel ** 2, dim=-1)
+    # --- Torso DOF velocity cost ---
+    torso_dof_vel = dof_vel[:,0:6]
+    dof_vel_cost = 0.00 * torch.sum(torso_dof_vel ** 2, dim=-1)
+
+    # --- Dof Acc cost ---
+    humanoid_dof_acc = dof_vel[:,0:28] - dof_vel_prev[:,0:28]
+    dof_acc_cost = 0.00 * torch.sum(humanoid_dof_acc ** 2, dim=-1)
 
     total_reward = vel_tracking_reward \
                    - dof_pos_cost \
