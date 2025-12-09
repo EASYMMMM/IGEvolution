@@ -61,6 +61,7 @@ from .SRLEvo.humanoid_amp_srl import HumanoidAMPSRLGym
 from .SRLEvo.humanoid_amp_srl_v2 import HumanoidAMPSRLGym_v2
 from .SRLEvo.hsrl_marl import HumanoidAMPSRLGym_marl
 from .SRLEvo.humanoid_amp_s1 import HumanoidAMP_s1
+from .SRLEvo.humanoid_amp_s1_smpl import HumanoidAMP_s1_Smpl
 
 from .SRLEvo.srl_hri import SRL_HRI
 from .SRLEvo.srl_bot import SRL_bot
@@ -124,6 +125,7 @@ isaacgym_task_map = {
     "HumanoidAMPSRLGym_v2":HumanoidAMPSRLGym_v2,
     "HumanoidAMPSRLGym_marl":HumanoidAMPSRLGym_marl,
     "HumanoidAMPSRLGym_s1":HumanoidAMP_s1,
+    "HumanoidAMPSRLGym_s1_Smpl":HumanoidAMP_s1_Smpl,
     "SRLBot":SRL_bot,
     "SRL_HRI":SRL_HRI,
     # "HumanoidSRLGym": HumanoidAMPSRLTest,

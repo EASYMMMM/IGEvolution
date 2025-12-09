@@ -1,0 +1,30 @@
+{
+    "source_motion": "../../../../../../assets/amp/motions/amp_humanoid_walk.npy",
+    "target_motion_path": "../../../../../../assets/amp/motions/smpl2_humanoid_walk.npy",
+    "source_tpose": "data/amp_humanoid_tpose.npy",
+    "target_tpose": "data/smpl2_tpose.npy",
+    "joint_mapping": {
+        "pelvis": "Pelvis",
+        "torso": "Chest",
+        "head": "Head",
+
+        "left_upper_arm": "L_Shoulder",
+        "left_lower_arm": "L_Elbow",
+        "left_hand": "L_Hand",
+        "right_upper_arm": "R_Shoulder",
+        "right_lower_arm": "R_Elbow",
+        "right_hand": "R_Hand",
+
+        "left_thigh": "L_Hip",
+        "left_shin": "L_Knee",
+        "left_foot": "L_Ankle",
+        "right_thigh": "R_Hip",
+        "right_shin": "R_Knee",
+        "right_foot": "R_Ankle"
+    },
+    "rotation": [0.0, 0.0087265, 0.0, 0.9999619],
+    "scale": 1.0,
+    "root_height_offset": 0.05,
+    "trim_frame_beg": 0,
+    "trim_frame_end": -1
+}

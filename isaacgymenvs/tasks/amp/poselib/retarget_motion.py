@@ -26,15 +26,18 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-from isaacgymenvs.utils.torch_jit_utils import quat_mul, quat_from_angle_axis
-import torch
+import argparse
 import json
+import os
+
 import numpy as np
 
+from isaacgymenvs.utils.torch_jit_utils import quat_mul, quat_from_angle_axis
 from poselib.core.rotation3d import *
 from poselib.skeleton.skeleton3d import SkeletonTree, SkeletonState, SkeletonMotion
 from poselib.visualization.common import plot_skeleton_state, plot_skeleton_motion_interactive
 
+import torch
 """
 This scripts shows how to retarget a motion clip from the source skeleton to a target skeleton.
 Data required for retargeting are stored in a retarget config dictionary as a json file. This file contains:
@@ -47,7 +50,6 @@ Data required for retargeting are stored in a retarget config dictionary as a js
   - scale: scale offset from source to target skeleton
 """
 
-VISUALIZE = False
 
 def project_joints(motion):
     right_upper_arm_id = motion.skeleton_tree._node_indices["right_upper_arm"]
@@ -203,80 +205,115 @@ def project_joints(motion):
     return new_motion
 
 
-def main():
-    # load retarget config
-    retarget_data_path = "data/configs/retarget_cmu_to_amp.json"
-    with open(retarget_data_path) as f:
+def _resolve_path(base_dir: str, path: str) -> str:
+    if os.path.isabs(path):
+        return path
+    return os.path.normpath(os.path.join(base_dir, path))
+
+
+def run_retarget(config_path: str, visualize: bool = False) -> None:
+    config_abs_path = os.path.abspath(config_path)
+    with open(config_abs_path, "r") as f:
         retarget_data = json.load(f)
 
-    # load and visualize t-pose files
-    source_tpose = SkeletonState.from_file(retarget_data["source_tpose"])
-    if VISUALIZE:
+    config_dir = os.path.dirname(config_abs_path)
+
+    source_motion_path = _resolve_path(config_dir, retarget_data["source_motion"])
+    target_motion_path = _resolve_path(config_dir, retarget_data["target_motion_path"])
+    source_tpose_path = _resolve_path(config_dir, retarget_data["source_tpose"])
+    target_tpose_path = _resolve_path(config_dir, retarget_data["target_tpose"])
+
+    os.makedirs(os.path.dirname(target_motion_path), exist_ok=True)
+
+    source_tpose = SkeletonState.from_file(source_tpose_path)
+    if visualize:
         plot_skeleton_state(source_tpose)
 
-    target_tpose = SkeletonState.from_file(retarget_data["target_tpose"])
-    if VISUALIZE:
+    target_tpose = SkeletonState.from_file(target_tpose_path)
+    if visualize:
         plot_skeleton_state(target_tpose)
 
-    # load and visualize source motion sequence
-    source_motion = SkeletonMotion.from_file(retarget_data["source_motion"])
-    if VISUALIZE:
+    source_motion = SkeletonMotion.from_file(source_motion_path)
+    if visualize:
         plot_skeleton_motion_interactive(source_motion)
 
-    # parse data from retarget config
-    joint_mapping = retarget_data["joint_mapping"]
     rotation_to_target_skeleton = torch.tensor(retarget_data["rotation"])
 
-    # run retargeting
     target_motion = source_motion.retarget_to_by_tpose(
-      joint_mapping=retarget_data["joint_mapping"],
-      source_tpose=source_tpose,
-      target_tpose=target_tpose,
-      rotation_to_target_skeleton=rotation_to_target_skeleton,
-      scale_to_target_skeleton=retarget_data["scale"]
+        joint_mapping=retarget_data["joint_mapping"],
+        source_tpose=source_tpose,
+        target_tpose=target_tpose,
+        rotation_to_target_skeleton=rotation_to_target_skeleton,
+        scale_to_target_skeleton=retarget_data["scale"],
     )
 
-    # keep frames between [trim_frame_beg, trim_frame_end - 1]
     frame_beg = retarget_data["trim_frame_beg"]
     frame_end = retarget_data["trim_frame_end"]
-    if (frame_beg == -1):
+    if frame_beg == -1:
         frame_beg = 0
-        
-    if (frame_end == -1):
+    if frame_end == -1:
         frame_end = target_motion.local_rotation.shape[0]
-        
+
     local_rotation = target_motion.local_rotation
     root_translation = target_motion.root_translation
     local_rotation = local_rotation[frame_beg:frame_end, ...]
     root_translation = root_translation[frame_beg:frame_end, ...]
-      
-    new_sk_state = SkeletonState.from_rotation_and_root_translation(target_motion.skeleton_tree, local_rotation, root_translation, is_local=True)
+
+    new_sk_state = SkeletonState.from_rotation_and_root_translation(
+        target_motion.skeleton_tree,
+        local_rotation,
+        root_translation,
+        is_local=True,
+    )
     target_motion = SkeletonMotion.from_skeleton_state(new_sk_state, fps=target_motion.fps)
 
-    # need to convert some joints from 3D to 1D (e.g. elbows and knees)
     target_motion = project_joints(target_motion)
 
-    # move the root so that the feet are on the ground
     local_rotation = target_motion.local_rotation
     root_translation = target_motion.root_translation
     tar_global_pos = target_motion.global_translation
     min_h = torch.min(tar_global_pos[..., 2])
     root_translation[:, 2] += -min_h
-    
-    # adjust the height of the root to avoid ground penetration
+
     root_height_offset = retarget_data["root_height_offset"]
     root_translation[:, 2] += root_height_offset
-    
-    new_sk_state = SkeletonState.from_rotation_and_root_translation(target_motion.skeleton_tree, local_rotation, root_translation, is_local=True)
+
+    new_sk_state = SkeletonState.from_rotation_and_root_translation(
+        target_motion.skeleton_tree,
+        local_rotation,
+        root_translation,
+        is_local=True,
+    )
     target_motion = SkeletonMotion.from_skeleton_state(new_sk_state, fps=target_motion.fps)
 
-    # save retargeted motion
-    target_motion.to_file(retarget_data["target_motion_path"])
+    target_motion.to_file(target_motion_path)
 
-    # visualize retargeted motion
-    plot_skeleton_motion_interactive(target_motion)
-    
-    return
+    if visualize:
+        plot_skeleton_motion_interactive(target_motion)
 
-if __name__ == '__main__':
-    main()
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Retarget motion from source skeleton to target skeleton using T-poses."
+    )
+    parser.add_argument(
+        "--config",
+        "-c",
+        default="data/configs/retarget_cmu_to_amp.json",
+        help="Retarget 配置文件路径（默认：data/configs/retarget_cmu_to_amp.json）。",
+    )
+    parser.add_argument(
+        "--visualize",
+        action="store_true",
+        help="启用可视化（需要 GUI 环境）。",
+    )
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    args = parse_args()
+    config_path = args.config
+    if not os.path.isabs(config_path):
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        config_path = os.path.normpath(os.path.join(script_dir, config_path))
+    run_retarget(config_path=config_path, visualize=args.visualize)
