@@ -9,3 +9,5 @@ python SRL_Evo_train.py test=True task=SRL_HRI  num_envs=4  task.env.asset.asset
 
 # 测试SRL-Gym Bayesian Optimization
 python SRLGym_train.py task=SRL_HRI experiment=SRLGym_BO_test  headless=True wandb_activate=True max_iterations=500  train.gym.design_opt=BO  train.params.config.hsrl_checkpoint=runs/SRL_HRI_21-17-34-13/nn/SRL_HRI_21-17-34-22.pth  sim_device=cuda:0 rl_device=cuda:0  task.env.design_param_obs=False  train.gym.BO_num_iterations=25
+# check BO 
+python SRL_Evo_train.py test=True task=SRL_HRI  num_envs=4  task.env.asset.assetFileName=mjcf/srl_gym/hsrl_best_design.xml checkpoint=runs/SRLGym_BO_test_Evo_08-20-32-51/nn/best_model.pth     task.env.srl_free_actions_num=2
