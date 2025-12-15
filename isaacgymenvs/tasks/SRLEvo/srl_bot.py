@@ -329,7 +329,7 @@ class SRL_bot(VecTask):
                 dof_prop["stiffness"].fill(0.0)
                 dof_prop["damping"].fill(0.0)
                 dof_prop["velocity"].fill(14.0)
-                dof_prop["effort"].fill(200.0)
+                dof_prop["effort"].fill(400.0)
                 dof_prop["driveMode"] = gymapi.DOF_MODE_EFFORT
                 self.gym.set_actor_dof_properties(env_ptr, handle, dof_prop)
             elif (self._pd_control):
@@ -1192,13 +1192,13 @@ def set_task_target(
     height_choices = torch.tensor([ 0.81, 0.83, 0.85, 0.87,], device=cur_target_vel_x.device)
     vel_x_choices = torch.tensor([0.0, 0.8, 1.0, 1.2, 1.4, 1.6], device=cur_target_vel_x.device)
 
-    # 高度变化
-    for i in range(max_episode_length//height_change_period):
-        mask = progress_buf == height_change_period * i+1
-        height_indices = torch.randint(0, len(height_choices), (len(target_pelvis_height),), device=target_pelvis_height.device)
-        target_pelvis_height =  torch.where(mask, unit_vel_x*height_choices[height_indices], target_pelvis_height)
-    mask = progress_buf == 1  # reset
-    target_pelvis_height =  torch.where(mask, unit_vel_x*height_choices[2], target_pelvis_height)
+    # # 高度变化
+    # for i in range(max_episode_length//height_change_period):
+    #     mask = progress_buf == height_change_period * i+1
+    #     height_indices = torch.randint(0, len(height_choices), (len(target_pelvis_height),), device=target_pelvis_height.device)
+    #     target_pelvis_height =  torch.where(mask, unit_vel_x*height_choices[height_indices], target_pelvis_height)
+    # mask = progress_buf == 1  # reset
+    # target_pelvis_height =  torch.where(mask, unit_vel_x*height_choices[2], target_pelvis_height)
 
     # # 单纯速度变化
     vel_x_choices = torch.tensor([0.6, 0.8, 1.0, 1.2], device=cur_target_vel_x.device)
@@ -1229,30 +1229,30 @@ def set_task_target(
     #         vel_indices = vel_indices * 0
     #     target_vel_x =  torch.where(mask, unit_vel_x*vel_x_choices[vel_indices], target_vel_x)
 
-    # 随机朝向变化 以45为单位量
-    delta_yaw = torch.zeros_like(target_yaw)
-    ang_vel_indices = torch.randint(0, len(ang_vel_choices), (len(target_ang_vel_z),), device=target_vel_x.device)
-    yaw_indices = torch.randint(0, len(yaw_choices), (len(target_yaw),), device=target_vel_x.device)
-    for i in range(max_episode_length//step_period ):
-        mask = progress_buf == step_period * i+1
-        if i%2 == 0:
-            ang_vel_indices = torch.full_like(ang_vel_indices, 0)
-            yaw_indices = torch.full_like(yaw_indices, 0)
-            if i  == 0:
-                target_yaw = torch.where(mask, unit_vel_x*yaw_choices[yaw_indices], target_yaw)
-        # turn left
-        elif i%2 == 1:
-            ang_vel_indices = torch.randint(1, len(ang_vel_choices), (len(target_ang_vel_z),), device=target_vel_x.device)
-            yaw_indices = ang_vel_indices
-        # set angular rate
-        target_ang_vel_z =  torch.where(mask, unit_vel_x*ang_vel_choices[ang_vel_indices], target_ang_vel_z)
-        # set yaw
-        delta_yaw  = torch.where(mask, unit_vel_x*yaw_choices[yaw_indices], delta_yaw)
-        # reset angular rate
-        reset_mask = progress_buf == step_period * i+61
-        ang_vel_indices = torch.full_like(ang_vel_indices, 0)
-        target_ang_vel_z =  torch.where(reset_mask, unit_vel_x*ang_vel_choices[ang_vel_indices], target_ang_vel_z)
-    target_yaw = target_yaw + delta_yaw
+    # # 随机朝向变化 以45为单位量
+    # delta_yaw = torch.zeros_like(target_yaw)
+    # ang_vel_indices = torch.randint(0, len(ang_vel_choices), (len(target_ang_vel_z),), device=target_vel_x.device)
+    # yaw_indices = torch.randint(0, len(yaw_choices), (len(target_yaw),), device=target_vel_x.device)
+    # for i in range(max_episode_length//step_period ):
+    #     mask = progress_buf == step_period * i+1
+    #     if i%2 == 0:
+    #         ang_vel_indices = torch.full_like(ang_vel_indices, 0)
+    #         yaw_indices = torch.full_like(yaw_indices, 0)
+    #         if i  == 0:
+    #             target_yaw = torch.where(mask, unit_vel_x*yaw_choices[yaw_indices], target_yaw)
+    #     # turn left
+    #     elif i%2 == 1:
+    #         ang_vel_indices = torch.randint(1, len(ang_vel_choices), (len(target_ang_vel_z),), device=target_vel_x.device)
+    #         yaw_indices = ang_vel_indices
+    #     # set angular rate
+    #     target_ang_vel_z =  torch.where(mask, unit_vel_x*ang_vel_choices[ang_vel_indices], target_ang_vel_z)
+    #     # set yaw
+    #     delta_yaw  = torch.where(mask, unit_vel_x*yaw_choices[yaw_indices], delta_yaw)
+    #     # reset angular rate
+    #     reset_mask = progress_buf == step_period * i+61
+    #     ang_vel_indices = torch.full_like(ang_vel_indices, 0)
+    #     target_ang_vel_z =  torch.where(reset_mask, unit_vel_x*ang_vel_choices[ang_vel_indices], target_ang_vel_z)
+    # target_yaw = target_yaw + delta_yaw
 
     return target_vel_x, target_pelvis_height, target_ang_vel_z, target_yaw
 

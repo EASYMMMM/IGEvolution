@@ -40,6 +40,10 @@
 - **启动X11桌面共享：**  
    `x11vnc -display :1 -auth /run/user/1000/gdm/Xauthority -forever -rfbauth ~/.vnc/passwd -listen 0.0.0.0`  
 
+- **运行结果投到屏幕上：**  
+   `export DISPLAY=:1`    
+
+
 ### 0.1 一键配置Titan Ubuntu训练终端
 ```bash
 conda activate rlgpu  

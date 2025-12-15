@@ -1458,12 +1458,12 @@ def compute_humanoid_reward(obs_buf, dof_pos, dof_vel, dof_vel_prev):
     root_target_vel = torch.zeros((root_vel.shape[0], 3), device=root_vel.device)
     root_target_vel[:, 0] = target_vel_x  
     vel_error_vec = root_vel - root_target_vel
-    vel_tracking_reward =  1 *  torch.exp(-4 * torch.norm(vel_error_vec, dim=-1))  # α = 1.5
+    vel_tracking_reward =  1 *  torch.exp(-3 * torch.norm(vel_error_vec, dim=-1))  # α = 1.5
 
     # --- Pelvis Orientation ---
     pelvis_upright_z = obs_buf[:,6]
     pelvis_penalty = (1.0 - pelvis_upright_z).clamp(min=0.0)
-    pelvis_penalty = 20 * pelvis_penalty
+    pelvis_penalty = 5 * pelvis_penalty
 
     # --- Standing Joint Pose ---
     humanoid_dof_pos = dof_pos[:,0:28]
@@ -1474,16 +1474,17 @@ def compute_humanoid_reward(obs_buf, dof_pos, dof_vel, dof_vel_prev):
 
     # --- Torso DOF velocity cost ---
     torso_dof_vel = dof_vel[:,0:6]
-    dof_vel_cost = 0.00 * torch.sum(torso_dof_vel ** 2, dim=-1)
+    dof_vel_cost = 0.01 * torch.sum(torso_dof_vel ** 2, dim=-1)
 
     # --- Dof Acc cost ---
-    humanoid_dof_acc = dof_vel[:,0:28] - dof_vel_prev[:,0:28]
-    dof_acc_cost = 0.00 * torch.sum(humanoid_dof_acc ** 2, dim=-1)
+    humanoid_dof_acc = dof_vel[:,0:6] - dof_vel_prev[:,0:6]
+    dof_acc_cost = 0.01 * torch.sum(humanoid_dof_acc ** 2, dim=-1)
 
     total_reward = vel_tracking_reward \
                    - dof_pos_cost \
                    - dof_vel_cost \
-                   - pelvis_penalty
+                   - pelvis_penalty \
+                   - dof_acc_cost
     return total_reward
 
 
