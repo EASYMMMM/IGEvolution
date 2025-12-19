@@ -7,9 +7,9 @@ physics_engine: ${..physics_engine}
 env:
   numEnvs: ${resolve_default:4096,${...num_envs}}
   envSpacing: 5
-  episodeLength: 300
+  episodeLength: 600
   cameraFollow: True # if the camera follows humanoid or not
-  enableDebugVis: False
+  enableDebugVis: True
 
   pdControl: True
   powerScale: 1.0
@@ -19,13 +19,14 @@ env:
   numAMPObsSteps: 2
 
   localRootObs: False
-  contactBodies: ["L_Knee", "R_Knee", "L_Ankle", "R_Ankle"]  # SMPL specific: toes as contact points
+  contactBodies: ["right_foot", "left_foot","right_shin","left_shin"]  # SMPL specific: toes as contact points
   terminationHeight: 0.5
   enableEarlyTermination: True
 
   # animation files to learn from
   # these motions should use hyperparameters from HumanoidAMPPPO.yaml
-  motion_file: "smpl2_humanoid_walk.npy"  # Use SMPL motion file
+  #motion_file: "test_humanoid_walk.npy"
+  motion_file: "56_01_cmu_amp.npy"
   #motion_file: "amp_smpl_run.npy"
   #motion_file: "amp_smpl_dance.npy"
 
@@ -35,7 +36,7 @@ env:
   srl_endpos_obs: False
 
   asset:
-    assetFileName: "mjcf/smpl_humanoid_1.xml"  # SMPL asset
+    assetFileName: "mjcf/amp_humanoid_180.xml"  # SMPL asset
 
   plane:
     staticFriction: 1.0

@@ -73,6 +73,7 @@ params:
     e_clip: 0.2
     horizon_length: 16
     minibatch_size: 32768
+    #minibatch_size: 512
     mini_epochs: 6
     critic_coef: 5
     clip_value: False
@@ -83,6 +84,7 @@ params:
     amp_replay_keep_prob: 0.01
     amp_batch_size: 512
     amp_minibatch_size: 4096
+    #amp_minibatch_size: 256
     disc_coef: 5
     disc_logit_reg: 0.05
     disc_grad_penalty: 5
@@ -90,11 +92,11 @@ params:
     disc_weight_decay: 0.0001
     normalize_amp_input: True
 
-    task_reward_w: 1.0
-    disc_reward_w: 1.0
+    task_reward_w: 0.5
+    disc_reward_w: 10
 
     # ---- user defined ----
-    actions_num_humanoid: 69  #adjustment for SMPL
+    actions_num_humanoid: 57  #adjustment for SMPL
     actions_num_srl: 6
     train_srl_only: False
     humanoid_checkpoint: False

@@ -1,6 +1,8 @@
 '''
 SRL-Gym
 分段训练S1: 仅优化Humanoid行走, 观测空间中添加了6D的交互力传感器
++ 修改: 随机曲线轨迹跟随任务 (TrajGenerator)
++ 修改: 加入偏离重置 (Early Termination based on distance)
 '''
 from enum import Enum
 import numpy as np
@@ -16,11 +18,13 @@ from isaacgymenvs.tasks.SRLEvo.humanoid_amp_s1_smpl_base import HumanoidAMP_s1_S
 from isaacgymenvs.tasks.amp.utils_amp import gym_util
 from isaacgymenvs.tasks.amp.utils_amp.motion_lib_smpl import MotionLibSMPL as MotionLib
 
+from isaacgymenvs.tasks.SRLEvo.traj_generator import SimpleCurveGenerator as TrajGenerator
 from isaacgymenvs.utils.torch_jit_utils import quat_mul, to_torch, calc_heading_quat_inv, quat_to_tan_norm, my_quat_rotate
 
 
-# 维度计算: Root(13) + DofObs(21*6=126) + DofVel(63) + KeyBody(4*3=12) = 214
-NUM_AMP_OBS_PER_STEP = 214 
+# 维度计算: Root(13) + DofObs(19*6=114) + DofVel(57) + KeyBody(4*3=12) = 196
+# NUM_AMP_OBS_PER_STEP = 196 
+NUM_AMP_OBS_PER_STEP = 13 + 52 + 28 + 12 # [root_h, root_rot, root_vel, root_ang_vel, dof_pos, dof_vel, key_body_pos]
 
 
 class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
@@ -32,8 +36,12 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
         Hybrid = 3
 
     def __init__(self, cfg, rl_device, sim_device, graphics_device_id, headless, virtual_screen_capture, force_render):
+        
+        self._traj_sample_times = [0.5, 1.0, 1.5] # 轨迹参数
+        self._num_traj_points = len(self._traj_sample_times)
+        self._traj_obs_dim = self._num_traj_points * 2 
+        
         self.cfg = cfg
-
         state_init = cfg["env"]["stateInit"]
         self._state_init = HumanoidAMP_s1_Smpl.StateInit[state_init]
         self._hybrid_init_prob = cfg["env"]["hybridInitProb"]
@@ -45,21 +53,27 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
 
         super().__init__(config=self.cfg, rl_device=rl_device, sim_device=sim_device, graphics_device_id=graphics_device_id, headless=headless, virtual_screen_capture=virtual_screen_capture, force_render=force_render)
 
+        # 2轨迹生成器参数
+        episode_duration = self.max_episode_length * self.dt
+        self._traj_gen = TrajGenerator(self.num_envs, self.device, self.dt, episode_duration,
+                                       speed_mean=1.0,      
+                                       turn_speed_max=0.5,  # 不要太大，先设为0.5
+                                       num_turns=2)         # 转向次数
+
         motion_file = cfg['env'].get('motion_file', "amp_humanoid_backflip.npy")
         motion_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../assets/amp/motions/" + motion_file)
         self._load_motion(motion_file_path)
 
         self.num_amp_obs = self._num_amp_obs_steps * NUM_AMP_OBS_PER_STEP
-
         self._amp_obs_space = spaces.Box(np.ones(self.num_amp_obs) * -np.Inf, np.ones(self.num_amp_obs) * np.Inf)
-
         self._amp_obs_buf = torch.zeros((self.num_envs, self._num_amp_obs_steps, NUM_AMP_OBS_PER_STEP), device=self.device, dtype=torch.float)
         self._curr_amp_obs_buf = self._amp_obs_buf[:, 0]
         self._hist_amp_obs_buf = self._amp_obs_buf[:, 1:]
-        
         self._amp_obs_demo_buf = None
-
         return
+
+    def get_obs_size(self):
+        return super().get_obs_size() + self._traj_obs_dim
 
     def post_physics_step(self):
         super().post_physics_step()
@@ -70,17 +84,66 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
         amp_obs_flat = self._amp_obs_buf.view(-1, self.get_num_amp_obs())
         self.extras["amp_obs"] = amp_obs_flat
 
+        if self.viewer and self.debug_viz:
+            self._draw_debug_traj()
         return
 
+    def _draw_debug_traj(self):
+        self.gym.clear_lines(self.viewer)
+        num_debug_envs = min(self.num_envs, 5) 
+        for i in range(num_debug_envs):
+            traj = self._traj_gen._traj_pos[i] 
+            points = traj[::10].cpu().numpy() 
+            lines = np.zeros((len(points)-1, 6), dtype=np.float32)
+            for j in range(len(points)-1):
+                lines[j, :3] = points[j]
+                lines[j, 3:] = points[j+1]
+            colors = np.array([[1.0, 0.0, 0.0]], dtype=np.float32).repeat(len(lines), axis=0)
+            self.gym.add_lines(self.viewer, self.envs[i], len(lines), lines, colors)
+
+    def _compute_reward(self, actions):
+        current_time = self.progress_buf * self.dt
+        env_ids = torch.arange(self.num_envs, device=self.device)
+        target_pos = self._traj_gen.get_position(env_ids, current_time)
+        root_pos = self._root_states[..., 0:3]
+
+        # 计算位置误差
+        dist_sq = torch.sum((target_pos[..., 0:2] - root_pos[..., 0:2]) ** 2, dim=-1)
+        pos_reward = torch.exp(-1.0 * dist_sq)
+        self.rew_buf[:] = pos_reward
+        return
+
+    def _compute_reset(self):
+        super()._compute_reset()
+
+        # 检测是否偏离轨迹太远
+        current_time = self.progress_buf * self.dt
+        env_ids = torch.arange(self.num_envs, device=self.device)
+        target_pos = self._traj_gen.get_position(env_ids, current_time)
+        root_pos = self._root_states[..., 0:3]
+
+        dist_sq = torch.sum((target_pos[..., 0:2] - root_pos[..., 0:2]) ** 2, dim=-1)
+        
+        # 如果偏离超过 0.8 米，强制重置
+        max_dist_sq = 0.8 * 0.8
+        has_strayed = dist_sq > max_dist_sq
+        
+        # 刚开始的前几帧不检测（反应时间）
+        has_strayed = has_strayed & (self.progress_buf > 10)
+
+        strayed_tensor = has_strayed.to(dtype=torch.long)
+
+        # 更新重置 Buffer
+        self.reset_buf = self.reset_buf | strayed_tensor
+        self._terminate_buf = self._terminate_buf | strayed_tensor
+        return
+    
     def get_num_amp_obs(self):
         return self.num_amp_obs
 
     @property
     def amp_observation_space(self):
         return self._amp_obs_space
-
-    def fetch_amp_obs_demo(self, num_samples):
-        return self.task.fetch_amp_obs_demo(num_samples)
 
     def fetch_amp_obs_demo(self, num_samples):
         dt = self.dt
@@ -127,8 +190,41 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
 
     def reset_idx(self, env_ids):
         super().reset_idx(env_ids)
+        root_pos = self._root_states[env_ids, 0:3]
+        root_rot = self._root_states[env_ids, 3:7]
+        self._traj_gen.reset(env_ids, root_pos, init_rot=root_rot)
         self._init_amp_obs(env_ids)
         return
+
+    def _compute_humanoid_obs(self, env_ids=None):
+        base_obs = super()._compute_humanoid_obs(env_ids)
+
+        if env_ids is None:
+            env_ids_flat = torch.arange(self.num_envs, device=self.device)
+            current_time = self.progress_buf * self.dt
+            root_pos = self._root_states[:, 0:3]
+            root_rot = self._root_states[:, 3:7]
+        else:
+            env_ids_flat = env_ids
+            current_time = self.progress_buf[env_ids] * self.dt
+            root_pos = self._root_states[env_ids, 0:3]
+            root_rot = self._root_states[env_ids, 3:7]
+
+        traj_points_world = self._traj_gen.get_observation_points(env_ids_flat, current_time, self._traj_sample_times)
+
+        heading_inv = calc_heading_quat_inv(root_rot)
+        num_samples = self._num_traj_points
+        heading_inv_expand = heading_inv.unsqueeze(1).expand(-1, num_samples, -1).reshape(-1, 4)
+        
+        delta_pos = traj_points_world - root_pos.unsqueeze(1)
+        delta_pos_flat = delta_pos.reshape(-1, 3)
+
+        local_traj_points = my_quat_rotate(heading_inv_expand, delta_pos_flat)
+        local_traj_points = local_traj_points.view(root_pos.shape[0], num_samples, 3)
+
+        traj_obs = local_traj_points[..., 0:2].reshape(root_pos.shape[0], -1)
+        obs = torch.cat([base_obs, traj_obs], dim=-1)
+        return obs
 
     def _reset_actors(self, env_ids):
         if (self._state_init == HumanoidAMP_s1_Smpl.StateInit.Default):
@@ -144,7 +240,6 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
         self.progress_buf[env_ids] = 0
         self.reset_buf[env_ids] = 0
         self._terminate_buf[env_ids] = 0
-
         return
     
     def _reset_default(self, env_ids):

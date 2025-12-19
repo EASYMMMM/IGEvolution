@@ -11,7 +11,7 @@ from ..poselib.poselib.core.rotation3d import *
 
 from isaacgymenvs.utils.torch_jit_utils import to_torch, slerp, quat_to_exp_map, quat_to_angle_axis, normalize_angle
 
-# 导入 SMPL 的骨架定义
+# 【关键修改】：导入 SMPL 的骨架定义
 from isaacgymenvs.tasks.amp.smpl_humanoid_amp_base import DOF_BODY_IDS, DOF_OFFSETS
 
 class MotionLibSMPL():
@@ -24,6 +24,7 @@ class MotionLibSMPL():
         self.motion_ids = torch.arange(len(self._motions), dtype=torch.long, device=self._device)
         return
 
+    # ... 以下所有方法复制自原版 MotionLib，没有任何修改 ...
     
     def num_motions(self): return len(self._motions)
     def get_total_length(self): return sum(self._motion_lengths)
@@ -112,7 +113,8 @@ class MotionLibSMPL():
             curr_file = motion_files[f]
             print("Loading {:d}/{:d} motion files: {:s}".format(f + 1, num_motion_files, curr_file))
             curr_motion = SkeletonMotion.from_file(curr_file)
-            motion_fps = curr_motion.fps
+            #motion_fps = curr_motion.fps
+            motion_fps = 120
             curr_dt = 1.0 / motion_fps
             num_frames = curr_motion.tensor.shape[0]
             curr_len = 1.0 / motion_fps * (num_frames - 1)

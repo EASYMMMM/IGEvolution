@@ -14,16 +14,14 @@ from isaacgymenvs.utils.torch_jit_utils import quat_mul, to_torch, get_axis_para
 
 from ..base.vec_task import VecTask
 
-# =============================================================================
-# SMPL 配置 (替换原版 AMP 配置)
-# =============================================================================
+"""
 DOF_BODY_IDS = [
     1, 2, 3,           # L Leg
     4, 5, 6,           # R Leg
-    7, 8, 9,           # Spine
-    10, 11,            # Head
-    12, 13, 14, 15, 16, # L Arm
-    17, 18, 19, 20, 21  # R Arm
+    7,            # Spine
+    8, 9,            # Head
+    10, 11, 12, 13, 14, # L Arm
+    15, 16, 17, 18, 19  # R Arm
 ]
 
 DOF_OFFSETS = [
@@ -32,17 +30,19 @@ DOF_OFFSETS = [
     18, 21, 24, 
     27, 30, 
     33, 36, 39, 42, 45, 
-    48, 51, 54, 57, 60, 
-    63 
+    48, 51, 54, 57 
 ]
 
-# Root(13) + Obs(21*6=126) + Vel(63) + KeyBody(12) + SRL(6) = 220
-NUM_OBS = 220
-NUM_ACTIONS = 63
+# Root(13) + Obs(19*6=114) + Vel(57) + KeyBody(12) + SRL(6) = 202
+NUM_OBS = 202
+NUM_ACTIONS = 57
 KEY_BODY_NAMES = ["R_Hand", "L_Hand", "R_Ankle", "L_Ankle"]
-
-
-
+"""
+DOF_BODY_IDS = [1, 2, 3, 4, 6, 7, 9, 10, 11, 12, 13, 14]
+DOF_OFFSETS = [0, 3, 6, 9, 10, 13, 14, 17, 18, 21, 24, 25, 28]
+NUM_OBS = 13 + 52 + 28 + 12 + 6 # [root_h, root_rot, root_vel, root_ang_vel, dof_pos, dof_vel, key_body_pos]
+NUM_ACTIONS = 28
+KEY_BODY_NAMES = ["right_hand", "left_hand", "right_foot", "left_foot"]
 class HumanoidAMP_s1_Smpl_Base(VecTask):
 
     def __init__(self, config, rl_device, sim_device, graphics_device_id, headless, virtual_screen_capture, force_render):
@@ -102,10 +102,13 @@ class HumanoidAMP_s1_Smpl_Base(VecTask):
         self._dof_vel = self._dof_state.view(self.num_envs, self.num_dof, 2)[..., 1]
 
         self._initial_dof_pos = torch.zeros_like(self._dof_pos, device=self.device, dtype=torch.float)
+
+        
         right_shoulder_x_handle = self.gym.find_actor_dof_handle(self.envs[0], self.humanoid_handles[0], "right_shoulder_x")
         left_shoulder_x_handle = self.gym.find_actor_dof_handle(self.envs[0], self.humanoid_handles[0], "left_shoulder_x")
         self._initial_dof_pos[:, right_shoulder_x_handle] = 0 * np.pi
         self._initial_dof_pos[:, left_shoulder_x_handle] = 0 * np.pi
+        
 
         self._initial_dof_vel = torch.zeros_like(self._dof_vel, device=self.device, dtype=torch.float)
         
@@ -189,8 +192,8 @@ class HumanoidAMP_s1_Smpl_Base(VecTask):
         motor_efforts = [prop.motor_effort for prop in actuator_props]
         
         # create force sensors at the feet
-        right_foot_idx = self.gym.find_asset_rigid_body_index(humanoid_asset, "R_Ankle")
-        left_foot_idx = self.gym.find_asset_rigid_body_index(humanoid_asset, "L_Ankle")
+        right_foot_idx = self.gym.find_asset_rigid_body_index(humanoid_asset, "right_foot")
+        left_foot_idx = self.gym.find_asset_rigid_body_index(humanoid_asset, "left_foot")
         sensor_pose = gymapi.Transform()
 
         self.gym.create_asset_force_sensor(humanoid_asset, right_foot_idx, sensor_pose)
@@ -213,7 +216,7 @@ class HumanoidAMP_s1_Smpl_Base(VecTask):
         self.num_joints = self.gym.get_asset_joint_count(humanoid_asset)
 
         start_pose = gymapi.Transform()
-        start_pose.p = gymapi.Vec3(*get_axis_params(0.89, self.up_axis_idx))
+        start_pose.p = gymapi.Vec3(*get_axis_params(1.1, self.up_axis_idx))
         start_pose.r = gymapi.Quat(0.0, 0.0, 0.0, 1.0)
 
         self.start_rotation = torch.tensor([start_pose.r.x, start_pose.r.y, start_pose.r.z, start_pose.r.w], device=self.device)
@@ -473,9 +476,11 @@ def dof_to_obs(pose):
     # type: (Tensor) -> Tensor
     #dof_obs_size = 64
     #dof_offsets = [0, 3, 6, 9, 12, 13, 16, 19, 20, 23, 24, 27, 30, 31, 34]
-    # 更新 DoF Obs 尺寸 (21*6=126)
-    dof_obs_size = 126
-    dof_offsets = [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 45, 48, 51, 54, 57, 60, 63]
+    # 更新 DoF Obs 尺寸 (19*6=114)
+    #dof_obs_size = 114
+    #dof_offsets = [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 45, 48, 51, 54, 57]
+    dof_obs_size = 52
+    dof_offsets = [0, 3, 6, 9, 10, 13, 14, 17, 18, 21, 24, 25, 28]
     num_joints = len(dof_offsets) - 1
 
     dof_obs_shape = pose.shape[:-1] + (dof_obs_size,)
@@ -552,15 +557,8 @@ def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, l
 
 @torch.jit.script
 def compute_humanoid_reward(obs_buf):
-    # type: (Tensor) -> Tensor
-    root_vel = obs_buf[:, 7:10] 
-    root_target_vel = torch.zeros((root_vel.shape[0], 3), device=root_vel.device)
-    root_target_vel[:, 0] = 1.0   
-    vel_error_vec = root_vel - root_target_vel
-    vel_tracking_reward =  1 *  torch.exp(-4 * torch.norm(vel_error_vec, dim=-1))  # α = 1.5
-
-    # reward = torch.ones_like(obs_buf[:, 0])
-    reward = vel_tracking_reward
+    
+    reward = torch.zeros_like(obs_buf[:, 0])
     return reward
 
 @torch.jit.script
