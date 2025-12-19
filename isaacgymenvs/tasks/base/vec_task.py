@@ -377,9 +377,10 @@ class VecTask(Env):
 
         # step physics and render each frame
         for i in range(self.control_freq_inv):
-            if self.force_render:
-                self.render()
+
             self.gym.simulate(self.sim)
+        if self.force_render:
+                self.render()
 
         # to fix!
         if self.device == 'cpu':
@@ -489,7 +490,7 @@ class VecTask(Env):
                 delta = now - self.last_frame_time
                 if self.render_fps < 0:
                     # render at control frequency
-                    render_dt = self.dt   # FIXME: original: self.dt*self.control_freq_inv, render every control step
+                    render_dt = self.dt*self.control_freq_inv   
                 else:
                     render_dt = 1.0 / self.render_fps
 

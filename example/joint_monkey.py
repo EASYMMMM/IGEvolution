@@ -34,6 +34,7 @@ class AssetDesc:
 
 
 asset_descriptors = [
+    AssetDesc("mjcf/srl_real/srl_real_bot.xml", False),
     AssetDesc("mjcf/srl_hri/srl_hri_basic_2free.xml", False),
     AssetDesc("mjcf/srl_bot/srl_bot_inversed_v2.xml", False),
     AssetDesc("mjcf/humanoid_srl_v3/hsrl_mode1_v3_2_lightweight.xml", False),
