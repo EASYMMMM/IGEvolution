@@ -92,9 +92,9 @@ class SRL_Real_Bot(VecTask):
         self.actions_rate_scale = self.cfg["env"]["actions_rate_scale"]
         self.actions_smoothness_scale = self.cfg["env"]["actions_smoothness_scale"]
 
-        self.frame_stack = self.cfg["env"]["frame_stack"]  # 帧堆叠数量
+        self.obs_frame_stack = self.cfg["env"]["obs_frame_stack"]  # 帧堆叠数量
         
-        self.cfg["env"]["numObservations"] = 30 * self.frame_stack + 3
+        self.cfg["env"]["numObservations"] = 30 * self.obs_frame_stack + 3
         self.cfg["env"]["numActions"] = 6
         # self.default_joint_angles = [0*np.pi, 
         #                              0.15*np.pi,
@@ -113,8 +113,8 @@ class SRL_Real_Bot(VecTask):
        
         super().__init__(config=self.cfg, rl_device=rl_device, sim_device=sim_device, graphics_device_id=graphics_device_id, headless=headless, virtual_screen_capture=virtual_screen_capture, force_render=force_render)
 
-        self.obs_buffer = torch.zeros((self.num_envs, self.frame_stack, np.int32(self.num_obs/self.frame_stack)), device=self.device)
-        self.obs_mirrored_buffer = torch.zeros((self.num_envs, self.frame_stack, np.int32(self.num_obs/self.frame_stack)), device=self.device)
+        self.obs_buffer = torch.zeros((self.num_envs, self.obs_frame_stack, np.int32(self.num_obs/self.obs_frame_stack)), device=self.device)
+        self.obs_mirrored_buffer = torch.zeros((self.num_envs, self.obs_frame_stack, np.int32(self.num_obs/self.obs_frame_stack)), device=self.device)
         self.phase_buf = torch.zeros(
             self.num_envs, device=self.device, dtype=torch.long)
 
@@ -548,7 +548,7 @@ class SRL_Real_Bot(VecTask):
         position_noise[:,4] = - positions.squeeze(-1)
         velocities = torch_rand_float(-0.1, 0.1, (len(env_ids), self.num_dof), device=self.device)
         # TODO: random init
-        # self.dof_pos[env_ids] = tensor_clamp(self.initial_dof_pos[env_ids] + positions, self.dof_limits_lower, self.dof_limits_upper)
+        self.dof_pos[env_ids] = tensor_clamp(self.initial_dof_pos[env_ids] + positions, self.dof_limits_lower, self.dof_limits_upper)
         self.dof_pos[env_ids] = tensor_clamp(self.initial_dof_pos[env_ids] , self.dof_limits_lower, self.dof_limits_upper)
         self.dof_vel[env_ids] = velocities
 
@@ -611,7 +611,7 @@ class SRL_Real_Bot(VecTask):
         self.compute_reward(self.actions)
 
         # TODO: Task Randomization
-        # self.set_task_target()
+        self.set_task_target()
         
         # mirrored info
         self.extras["obs_mirrored"] = self.obs_mirrored_buf.to(self.rl_device)  # 镜像观测
@@ -951,8 +951,8 @@ def compute_srl_reward(
     flying_miss_right = expect_flying_right * is_contact_right
     gait_phase_penalty = gait_similarity_penalty_scale * (stance_miss_left + stance_miss_right + flying_miss_left + flying_miss_right)
     # standing
-    gait_phase_penalty_coef = torch.where(target_vel_x < 0.1, torch.zeros_like(target_vel_x), torch.ones_like(target_vel_x))
-    gait_phase_penalty =  gait_phase_penalty*gait_phase_penalty_coef
+    # gait_phase_penalty_coef = torch.where(target_vel_x < 0.1, torch.zeros_like(target_vel_x), torch.ones_like(target_vel_x))
+    # gait_phase_penalty =  gait_phase_penalty*gait_phase_penalty_coef
    
     # --- Total reward ---
     total_reward = alive_reward_scale * alive_reward  \
@@ -1046,9 +1046,9 @@ def compute_srl_bot_observations(
     cos_phase = torch.cos(phase_t).unsqueeze(-1)
 
     # standing phase mask
-    standing_phase_mask = target_vel_x <= 0.1
-    sin_phase = torch.where(standing_phase_mask.unsqueeze(-1), sin_phase*0, sin_phase)
-    cos_phase = torch.where(standing_phase_mask.unsqueeze(-1), cos_phase*0, cos_phase)
+    # standing_phase_mask = target_vel_x <= 0.1
+    # sin_phase = torch.where(standing_phase_mask.unsqueeze(-1), sin_phase*0, sin_phase)
+    # cos_phase = torch.where(standing_phase_mask.unsqueeze(-1), cos_phase*0, cos_phase)
 
     obs = torch.cat((root_h,                             # 1    0
                      local_root_vel ,                    # 3    1:3
@@ -1138,9 +1138,9 @@ def compute_srl_bot_observations_mirrored(
     cos_phase = torch.cos(phase_t).unsqueeze(-1)
 
     # standing phase mask
-    standing_phase_mask = target_vel_x <= 0.1
-    sin_phase = torch.where(standing_phase_mask.unsqueeze(-1), sin_phase*0, sin_phase)
-    cos_phase = torch.where(standing_phase_mask.unsqueeze(-1), cos_phase*0, cos_phase)
+    # standing_phase_mask = target_vel_x <= 0.1
+    # sin_phase = torch.where(standing_phase_mask.unsqueeze(-1), sin_phase*0, sin_phase)
+    # cos_phase = torch.where(standing_phase_mask.unsqueeze(-1), cos_phase*0, cos_phase)
 
     # phase mirrored
     sin_phase = - sin_phase
@@ -1171,7 +1171,7 @@ def set_task_target(
 # type: (Tensor, Tensor, Tensor, Tensor, Tensor, int) -> Tuple[Tensor, Tensor, Tensor, Tensor]
 
     step_period = 240
-    velocity_change_period = 200
+    velocity_change_period = 600
     height_change_period = 180
 
     target_vel_x = cur_target_vel_x.clone().float() 
@@ -1195,7 +1195,7 @@ def set_task_target(
     # target_pelvis_height =  torch.where(mask, unit_vel_x*height_choices[2], target_pelvis_height)
 
     # # 单纯速度变化
-    vel_x_choices = torch.tensor([0.6, 0.8, 1.0, 1.2], device=cur_target_vel_x.device)
+    vel_x_choices = torch.tensor([0.0, 0.6, 0.8, 1.0, 1.2], device=cur_target_vel_x.device)
     for i in range(max_episode_length//velocity_change_period):
         mask = progress_buf == velocity_change_period * i+1
         vel_indices = torch.randint(0, len(vel_x_choices), (len(target_vel_x),), device=target_vel_x.device)

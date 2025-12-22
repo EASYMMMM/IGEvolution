@@ -377,7 +377,6 @@ class VecTask(Env):
 
         # step physics and render each frame
         for i in range(self.control_freq_inv):
-
             self.gym.simulate(self.sim)
         if self.force_render:
                 self.render()

@@ -7,12 +7,12 @@ physics_engine: ${..physics_engine}
 env: 
   numEnvs: ${resolve_default:8192,${...num_envs}}
   envSpacing: 5
-  episodeLength: 1200
+  episodeLength: 5000
   enableDebugVis: False
-  cameraFollow: True # if the camera follows humanoid or not
+  cameraFollow: False # if the camera follows humanoid or not
   controlFrequencyInv: 3  
   clipActions: 1.0
-  frame_stack: 5
+  obs_frame_stack: 5
   
   pdControl: True
   forceControl: True
