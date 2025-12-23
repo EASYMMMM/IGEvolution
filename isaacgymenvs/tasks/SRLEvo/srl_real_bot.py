@@ -91,6 +91,7 @@ class SRL_Real_Bot(VecTask):
         self.lateral_distance_penalty_scale = self.cfg["env"]["lateral_distance_penalty_scale"]
         self.actions_rate_scale = self.cfg["env"]["actions_rate_scale"]
         self.actions_smoothness_scale = self.cfg["env"]["actions_smoothness_scale"]
+        self.task_training_stage = self.cfg["env"].get("task_training_stage", 0)
 
         self.obs_frame_stack = self.cfg["env"]["obs_frame_stack"]  # 帧堆叠数量
         
@@ -528,6 +529,7 @@ class SRL_Real_Bot(VecTask):
                                                                                                        self.target_ang_vel_z,
                                                                                                        self.target_yaw,
                                                                                                        self.progress_buf,
+                                                                                                       task_training_stage = self.task_training_stage,
                                                                                                        max_episode_length=self.max_episode_length)
 
     def reset_done(self):
@@ -1159,94 +1161,159 @@ def compute_srl_bot_observations_mirrored(
     return obs  
 
 # TODO: Task Setting
-@torch.jit.script
 def set_task_target(
     cur_target_vel_x,
     cur_target_pelvis_height,
     cur_target_ang_vel_z,
     cur_target_yaw,
     progress_buf,
-    max_episode_length=1000,
-)  :
-# type: (Tensor, Tensor, Tensor, Tensor, Tensor, int) -> Tuple[Tensor, Tensor, Tensor, Tensor]
+    task_training_stage=1,
+    max_episode_length=5000,
+):
+    """
+    任务随机化（分阶段）：
+    - stage=1: 仅更新速度
+    - stage=2: 更新速度 + 高度
+    - stage=3: 更新速度 + 高度 + 朝向
+    """
+    # ===== 超参数 =====
+    step_period            = 750   # 每隔多少步判定一次“是否转向”
+    velocity_change_period = 600   # 速度命令变化周期
+    height_change_period   = 430   # 高度命令变化周期
+    turn_duration_steps    = 60    # 非零角速度持续的步数（之后 reset 为 0）
 
-    step_period = 240
-    velocity_change_period = 600
-    height_change_period = 180
+    # ===== 复制当前命令 =====
+    target_vel_x         = cur_target_vel_x.clone().float()
+    target_pelvis_height = cur_target_pelvis_height.clone().float()
+    target_ang_vel_z     = cur_target_ang_vel_z.clone().float()
+    target_yaw           = cur_target_yaw.clone().float()
 
-    target_vel_x = cur_target_vel_x.clone().float() 
-    target_pelvis_height = cur_target_pelvis_height.clone().float() 
-    target_ang_vel_z = cur_target_ang_vel_z.clone().float() 
-    target_yaw = cur_target_yaw.clone().float()
+    device = target_vel_x.device
+    n_envs = target_vel_x.shape[0]
+    ones = torch.ones_like(target_vel_x, device=device)
 
-    # 候选集
-    unit_vel_x = torch.ones_like(target_vel_x, device=target_vel_x.device)
-    ang_vel_choices = torch.tensor([0.0, -0.785/2,  0.785/2], device=cur_target_vel_x.device)
-    yaw_choices = torch.tensor([0.0,-0.785, 0.785],device=cur_target_vel_x.device)
-    height_choices = torch.tensor([ 0.81, 0.83, 0.85, 0.87,], device=cur_target_vel_x.device)
-    vel_x_choices = torch.tensor([0.0, 0.8, 1.0, 1.2, 1.4, 1.6], device=cur_target_vel_x.device)
+    # ================== 1️⃣ 速度随机化（所有阶段都启用） ==================
+    vel_x_choices = torch.tensor(
+        [0.0, 0.6, 0.8, 1.0, 1.2, 1.4],
+        device=device,
+        dtype=target_vel_x.dtype,
+    )
 
-    # # 高度变化
-    # for i in range(max_episode_length//height_change_period):
-    #     mask = progress_buf == height_change_period * i+1
-    #     height_indices = torch.randint(0, len(height_choices), (len(target_pelvis_height),), device=target_pelvis_height.device)
-    #     target_pelvis_height =  torch.where(mask, unit_vel_x*height_choices[height_indices], target_pelvis_height)
-    # mask = progress_buf == 1  # reset
-    # target_pelvis_height =  torch.where(mask, unit_vel_x*height_choices[2], target_pelvis_height)
+    for i in range(max_episode_length // velocity_change_period):
+        step_at = velocity_change_period * i + 1
+        mask = (progress_buf == step_at)
+        if mask.any():
+            vel_indices = torch.randint(
+                low=0,
+                high=vel_x_choices.numel(),
+                size=(n_envs,),
+                device=device,
+            )
+            sampled_vel = vel_x_choices[vel_indices]
+            target_vel_x = torch.where(mask, sampled_vel, target_vel_x)
 
-    # # 单纯速度变化
-    vel_x_choices = torch.tensor([0.0, 0.6, 0.8, 1.0, 1.2], device=cur_target_vel_x.device)
-    for i in range(max_episode_length//velocity_change_period):
-        mask = progress_buf == velocity_change_period * i+1
-        vel_indices = torch.randint(0, len(vel_x_choices), (len(target_vel_x),), device=target_vel_x.device)
-        target_vel_x =  torch.where(mask, unit_vel_x*vel_x_choices[vel_indices], target_vel_x)
+    # ================== 2️⃣ 高度随机化（stage≥2） ==================
+    if task_training_stage >= 2:
+        height_choices = torch.tensor(
+            [0.80, 0.85, 0.90, 0.95, 1.00, 1.00, 1.00, 1.00, 1.05],
+            device=device,
+            dtype=target_pelvis_height.dtype,
+        )
 
-    # 速度变化 Delta Vx
-    # delta_vel_x_choices = torch.tensor([-0.2, 0.0, 0.2], device=cur_target_vel_x.device)
-    # delta_vel_x = torch.zeros_like(target_vel_x)
-    # for i in range(max_episode_length//velocity_change_period):
-    #     mask = progress_buf == velocity_change_period * i+1
-    #     vel_indices =  torch.randint(0, len(delta_vel_x_choices), (len(target_vel_x),), device=delta_vel_x_choices.device)
-    #     delta_vel_x =  torch.where(mask, unit_vel_x*delta_vel_x_choices[vel_indices], delta_vel_x)
-    # target_vel_x =  target_vel_x + delta_vel_x
-    # target_vel_x =  target_vel_x.clamp(min=0.8, max=1.6)
+        # 周期性随机高度
+        for i in range(max_episode_length // height_change_period):
+            step_at = height_change_period * i + 1
+            mask = (progress_buf == step_at)
+            if mask.any():
+                height_indices = torch.randint(
+                    low=0,
+                    high=height_choices.numel(),
+                    size=(n_envs,),
+                    device=device,
+                )
+                sampled_height = height_choices[height_indices]
+                target_pelvis_height = torch.where(
+                    mask,
+                    sampled_height,
+                    target_pelvis_height,
+                )
 
-    # # progress buf 小于velocity_change_period时，固定站立
-    # mask = progress_buf <= velocity_change_period
-    # target_vel_x =  torch.where(mask, unit_vel_x*0.0, target_vel_x)
+        # reset 时强制设定为默认高度
+        reset_mask_h = (progress_buf == 1)
+        if reset_mask_h.any():
+            default_idx = 5  # 对应 1.0（height_choices[5]）
+            default_height = height_choices[default_idx]
+            target_pelvis_height = torch.where(
+                reset_mask_h,
+                ones * default_height,
+                target_pelvis_height,
+            )
 
-    # 速度变化+站立交替进行
-    # for i in range(max_episode_length//step_period):
-    #     mask = progress_buf == step_period * i+1
-    #     vel_indices = torch.randint(1, len(vel_x_choices), (len(target_vel_x),), device=target_vel_x.device)
-    #     if i%2 == 1:
-    #         vel_indices = vel_indices * 0
-    #     target_vel_x =  torch.where(mask, unit_vel_x*vel_x_choices[vel_indices], target_vel_x)
+    # ================== 3️⃣ 朝向 + 角速度随机化（stage≥3） ==================
+    if task_training_stage >= 3:
+        # yaw 增量采样集（弧度）：0, 0, ±15°, ±30°, ±45°
+        yaw_delta_choices = torch.tensor(
+            [
+                0.0,  0.0,
+                -math.radians(15.0),  math.radians(15.0),
+                -math.radians(30.0),  math.radians(30.0),
+                -math.radians(45.0),  math.radians(45.0),
+            ],
+            device=device,
+            dtype=target_yaw.dtype,
+        )
 
-    # # 随机朝向变化 以45为单位量
-    # delta_yaw = torch.zeros_like(target_yaw)
-    # ang_vel_indices = torch.randint(0, len(ang_vel_choices), (len(target_ang_vel_z),), device=target_vel_x.device)
-    # yaw_indices = torch.randint(0, len(yaw_choices), (len(target_yaw),), device=target_vel_x.device)
-    # for i in range(max_episode_length//step_period ):
-    #     mask = progress_buf == step_period * i+1
-    #     if i%2 == 0:
-    #         ang_vel_indices = torch.full_like(ang_vel_indices, 0)
-    #         yaw_indices = torch.full_like(yaw_indices, 0)
-    #         if i  == 0:
-    #             target_yaw = torch.where(mask, unit_vel_x*yaw_choices[yaw_indices], target_yaw)
-    #     # turn left
-    #     elif i%2 == 1:
-    #         ang_vel_indices = torch.randint(1, len(ang_vel_choices), (len(target_ang_vel_z),), device=target_vel_x.device)
-    #         yaw_indices = ang_vel_indices
-    #     # set angular rate
-    #     target_ang_vel_z =  torch.where(mask, unit_vel_x*ang_vel_choices[ang_vel_indices], target_ang_vel_z)
-    #     # set yaw
-    #     delta_yaw  = torch.where(mask, unit_vel_x*yaw_choices[yaw_indices], delta_yaw)
-    #     # reset angular rate
-    #     reset_mask = progress_buf == step_period * i+61
-    #     ang_vel_indices = torch.full_like(ang_vel_indices, 0)
-    #     target_ang_vel_z =  torch.where(reset_mask, unit_vel_x*ang_vel_choices[ang_vel_indices], target_ang_vel_z)
-    # target_yaw = target_yaw + delta_yaw
+        # 对应角速度采样集
+        control_freq      = 66.0
+        turn_duration_sec = turn_duration_steps / control_freq  # 约 0.9 s
+        ang_vel_choices   = yaw_delta_choices / turn_duration_sec
 
+        delta_yaw = torch.zeros_like(target_yaw)
+
+        for i in range(max_episode_length // step_period):
+            # 初始阶段保持正向：第一个 block 从 step_period*(1)+1 开始
+            start_step = step_period * (i + 1) + 1
+            end_step   = start_step + turn_duration_steps
+
+            # 判定当前帧是否触发转向
+            decision_mask = (progress_buf == start_step)
+            if decision_mask.any():
+                yaw_indices = torch.randint(
+                    low=0,
+                    high=yaw_delta_choices.numel(),
+                    size=(n_envs,),
+                    device=device,
+                )
+                sampled_delta_yaw = yaw_delta_choices[yaw_indices]
+                sampled_ang_vel   = ang_vel_choices[yaw_indices]
+
+                delta_yaw        = torch.where(decision_mask, sampled_delta_yaw, delta_yaw)
+                target_ang_vel_z = torch.where(decision_mask, sampled_ang_vel,   target_ang_vel_z)
+
+            # reset 角速度
+            reset_mask_turn = (progress_buf == end_step)
+            if reset_mask_turn.any():
+                target_ang_vel_z = torch.where(
+                    reset_mask_turn,
+                    torch.zeros_like(target_ang_vel_z),
+                    target_ang_vel_z,
+                )
+
+        target_yaw = target_yaw + delta_yaw
+
+    # ================== 4️⃣ episode 起始统一重置 yaw / ang_vel_z ==================
+    reset_mask_root = (progress_buf == 1)
+    if reset_mask_root.any():
+        target_yaw = torch.where(
+            reset_mask_root,
+            torch.zeros_like(target_yaw),
+            target_yaw,
+        )
+        target_ang_vel_z = torch.where(
+            reset_mask_root,
+            torch.zeros_like(target_ang_vel_z),
+            target_ang_vel_z,
+        )
+
+    # 返回所有目标
     return target_vel_x, target_pelvis_height, target_ang_vel_z, target_yaw
-
