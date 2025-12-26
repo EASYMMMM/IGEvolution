@@ -1015,9 +1015,13 @@ def compute_srl_bot_observations(
     root_h = root_pos[:, 2:3]
 
     euler = quat_to_euler_xyz(root_rot)
-    target_euler = torch.zeros_like(euler,device=euler.device)
-    target_euler[:,0] = target_yaw
-    euler_err = target_euler - euler
+    yaw   = euler[:, 0]
+    delta   = target_yaw - yaw                 
+    yaw_err = torch.atan2(torch.sin(delta), torch.cos(delta))  # (-pi, pi]
+    euler_err = torch.zeros_like(euler)
+    euler_err[:, 0] = yaw_err        # yaw 误差（wrap 后）
+    euler_err[:, 1] = -euler[:, 1]   
+    euler_err[:, 2] = -euler[:, 2]    
 
     # 将线速度/角速度旋转到局部坐标
     local_root_vel     = quat_rotate_inverse(root_rot, root_vel)
@@ -1046,11 +1050,6 @@ def compute_srl_bot_observations(
     phase_t = (2 * math.pi / gait_period) * (phase_buf-1).float()  # shape: [num_envs]
     sin_phase = torch.sin(phase_t).unsqueeze(-1)
     cos_phase = torch.cos(phase_t).unsqueeze(-1)
-
-    # standing phase mask
-    # standing_phase_mask = target_vel_x <= 0.1
-    # sin_phase = torch.where(standing_phase_mask.unsqueeze(-1), sin_phase*0, sin_phase)
-    # cos_phase = torch.where(standing_phase_mask.unsqueeze(-1), cos_phase*0, cos_phase)
 
     obs = torch.cat((root_h,                             # 1    0
                      local_root_vel ,                    # 3    1:3
@@ -1116,9 +1115,13 @@ def compute_srl_bot_observations_mirrored(
     to_target[:, 2] = 0
  
     euler = quat_to_euler_xyz(root_rot)
-    target_euler = torch.zeros_like(euler,device=euler.device)
-    target_euler[:,0] = target_yaw
-    euler_err = target_euler - euler
+    yaw   = euler[:, 0]
+    delta   = target_yaw - yaw                 
+    yaw_err = torch.atan2(torch.sin(delta), torch.cos(delta))  # (-pi, pi]
+    euler_err = torch.zeros_like(euler)
+    euler_err[:, 0] = yaw_err        # yaw 误差（wrap 后）
+    euler_err[:, 1] = -euler[:, 1]   
+    euler_err[:, 2] = -euler[:, 2]   
 
 
     # Mirrored
@@ -1138,11 +1141,6 @@ def compute_srl_bot_observations_mirrored(
     phase_t = (2 * math.pi / gait_period) * (phase_buf-1).float()  # shape: [num_envs]
     sin_phase = torch.sin(phase_t).unsqueeze(-1)
     cos_phase = torch.cos(phase_t).unsqueeze(-1)
-
-    # standing phase mask
-    # standing_phase_mask = target_vel_x <= 0.1
-    # sin_phase = torch.where(standing_phase_mask.unsqueeze(-1), sin_phase*0, sin_phase)
-    # cos_phase = torch.where(standing_phase_mask.unsqueeze(-1), cos_phase*0, cos_phase)
 
     # phase mirrored
     sin_phase = - sin_phase
@@ -1255,7 +1253,8 @@ def set_task_target(
         yaw_delta_choices = torch.tensor(
             [
                 0.0,  0.0,
-                -math.radians(15.0),  math.radians(15.0),
+                -math.radians(10.0),  math.radians(10.0),
+                -math.radians(20.0),  math.radians(20.0),
                 -math.radians(30.0),  math.radians(30.0),
                 -math.radians(45.0),  math.radians(45.0),
             ],

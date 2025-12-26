@@ -16,7 +16,7 @@ from isaacgym import gymtorch
 
 from isaacgymenvs.tasks.SRLEvo.humanoid_amp_s1_smpl_base import HumanoidAMP_s1_Smpl_Base, dof_to_obs
 from isaacgymenvs.tasks.amp.utils_amp import gym_util
-from isaacgymenvs.tasks.amp.utils_amp.motion_lib_smpl import MotionLibSMPL as MotionLib
+from isaacgymenvs.tasks.amp.utils_amp.motion_lib import MotionLib
 
 from isaacgymenvs.tasks.SRLEvo.traj_generator import SimpleCurveGenerator as TrajGenerator
 from isaacgymenvs.utils.torch_jit_utils import quat_mul, to_torch, calc_heading_quat_inv, quat_to_tan_norm, my_quat_rotate
@@ -54,8 +54,8 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
         super().__init__(config=self.cfg, rl_device=rl_device, sim_device=sim_device, graphics_device_id=graphics_device_id, headless=headless, virtual_screen_capture=virtual_screen_capture, force_render=force_render)
 
         # 2轨迹生成器参数
-        episode_duration = self.max_episode_length * self.dt
-        self._traj_gen = TrajGenerator(self.num_envs, self.device, self.dt, episode_duration,
+        episode_duration = self.max_episode_length * self.control_dt
+        self._traj_gen = TrajGenerator(self.num_envs, self.device, self.control_dt, episode_duration,
                                        speed_mean=1.0,      
                                        turn_speed_max=0.5,  # 不要太大，先设为0.5
                                        num_turns=2)         # 转向次数
@@ -102,7 +102,7 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
             self.gym.add_lines(self.viewer, self.envs[i], len(lines), lines, colors)
 
     def _compute_reward(self, actions):
-        current_time = self.progress_buf * self.dt
+        current_time = self.progress_buf * self.control_dt
         env_ids = torch.arange(self.num_envs, device=self.device)
         target_pos = self._traj_gen.get_position(env_ids, current_time)
         root_pos = self._root_states[..., 0:3]
@@ -117,7 +117,7 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
         super()._compute_reset()
 
         # 检测是否偏离轨迹太远
-        current_time = self.progress_buf * self.dt
+        current_time = self.progress_buf * self.control_dt
         env_ids = torch.arange(self.num_envs, device=self.device)
         target_pos = self._traj_gen.get_position(env_ids, current_time)
         root_pos = self._root_states[..., 0:3]
@@ -146,7 +146,7 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
         return self._amp_obs_space
 
     def fetch_amp_obs_demo(self, num_samples):
-        dt = self.dt
+        dt = self.control_dt
         motion_ids = self._motion_lib.sample_motions(num_samples)
 
         if (self._amp_obs_demo_buf is None):
@@ -201,12 +201,12 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
 
         if env_ids is None:
             env_ids_flat = torch.arange(self.num_envs, device=self.device)
-            current_time = self.progress_buf * self.dt
+            current_time = self.progress_buf * self.control_dt
             root_pos = self._root_states[:, 0:3]
             root_rot = self._root_states[:, 3:7]
         else:
             env_ids_flat = env_ids
-            current_time = self.progress_buf[env_ids] * self.dt
+            current_time = self.progress_buf[env_ids] * self.control_dt
             root_pos = self._root_states[env_ids, 0:3]
             root_rot = self._root_states[env_ids, 3:7]
 
@@ -316,7 +316,7 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
         return
 
     def _init_amp_obs_ref(self, env_ids, motion_ids, motion_times):
-        dt = self.dt
+        dt = self.control_dt
         motion_ids = np.tile(np.expand_dims(motion_ids, axis=-1), [1, self._num_amp_obs_steps - 1])
         motion_times = np.expand_dims(motion_times, axis=-1)
         time_steps = -dt * (np.arange(0, self._num_amp_obs_steps - 1) + 1)

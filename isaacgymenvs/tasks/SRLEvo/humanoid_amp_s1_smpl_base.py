@@ -72,7 +72,7 @@ class HumanoidAMP_s1_Smpl_Base(VecTask):
         super().__init__(config=self.cfg, rl_device=rl_device, sim_device=sim_device, graphics_device_id=graphics_device_id, headless=headless, virtual_screen_capture=virtual_screen_capture, force_render=force_render)
         
         dt = self.cfg["sim"]["dt"]
-        self.dt = self.control_freq_inv * dt
+        self.control_dt = self.control_freq_inv * dt
         
         # get gym GPU state tensors
         actor_root_state = self.gym.acquire_actor_root_state_tensor(self.sim)
