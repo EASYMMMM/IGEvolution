@@ -90,9 +90,11 @@ sim:
 
 task:
   randomize: False
+  vel_pertubation: False
+  vel_pertubation_range: [0.2, 0.8]
   randomization_params:
     # specify which attributes to randomize for each actor type and property
-    frequency: 600   # Define how many environment steps between generating new randomizations
+    frequency: 6000   # Define how many environment steps between generating new randomizations
     observations:
       range: [0, .002] # range for the white noise
       operation: "additive"

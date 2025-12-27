@@ -1,3 +1,5 @@
+# srl_hri_base.py
+# 胶囊体SRL+Humanoid 人机协同实验
 import numpy as np
 import os
 import torch

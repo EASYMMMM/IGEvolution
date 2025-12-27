@@ -95,6 +95,9 @@ class SRL_Real_Bot(VecTask):
 
         self.obs_frame_stack = self.cfg["env"]["obs_frame_stack"]  # 帧堆叠数量
         
+        self.vel_pertubation = self.cfg["task"].get("vel_pertubation", False)
+        self.vel_pertubation_range = self.cfg["task"].get("vel_pertubation_range", [0.2, 0.8])
+
         self.cfg["env"]["numObservations"] = 30 * self.obs_frame_stack + 3
         self.cfg["env"]["numActions"] = 6
         # self.default_joint_angles = [0*np.pi, 
@@ -584,8 +587,44 @@ class SRL_Real_Bot(VecTask):
 
         self._refresh_sim_tensors()
 
+    def _apply_velocity_perturbation(self):
+        """Randomly perturb velocity of the root state."""
+        if not self.vel_pertubation:
+            return
+            
+        # 1. 设定扰动概率 (例如每帧 0.5% 的概率)
+        perturb_prob = 1.0 / 500.0
+        
+        # 生成掩码
+        perturb_mask = torch.rand(self.num_envs, device=self.device) < perturb_prob
+        
+        if perturb_mask.any():
+            # 2. 刷新状态
+            self.gym.refresh_actor_root_state_tensor(self.sim)
+            
+            count = perturb_mask.sum().item()
+            min_v, max_v = self.vel_pertubation_range
+            
+            # 3. 生成随机速度
+            # 随机幅值
+            mag = (max_v - min_v) * torch.rand(count, device=self.device) + min_v
+            # 随机角度 (0 ~ 2pi)
+            angle = 2 * math.pi * torch.rand(count, device=self.device)
+            
+            vx = mag * torch.cos(angle)
+            vy = mag * torch.sin(angle)
+            
+            # 4. 注入状态 (root_states index 7, 8 are linear vel x, y)
+            self.root_states[perturb_mask, 7] += vx
+            self.root_states[perturb_mask, 8] += vy
+            
+            # 5. 写回物理引擎
+            # 注意: 使用 unwrap_tensor 传递给 isaac gym
+            self.gym.set_actor_root_state_tensor(self.sim, gymtorch.unwrap_tensor(self.root_states))
+
     def pre_physics_step(self, actions):
         self.actions = actions.to(self.device).clone()
+        
         if self._force_control:
             pd_tar = self._action_to_pd_targets(self.actions)
             torques = self.p_gains*(pd_tar - self.dof_pos) - self.d_gains*self.dof_vel
@@ -597,6 +636,11 @@ class SRL_Real_Bot(VecTask):
             self.gym.set_dof_position_target_tensor(self.sim, pd_tar_tensor)
 
     def post_physics_step(self):
+        # --- Apply Velocity Perturbation ---
+        # 移到这里是为了让 Observation 能够立刻反映出速度的变化 (Zero-latency perception)
+        self._apply_velocity_perturbation()
+        # -----------------------------------
+
         self.progress_buf += 1
         self.randomize_buf += 1
         self.phase_buf += 1
