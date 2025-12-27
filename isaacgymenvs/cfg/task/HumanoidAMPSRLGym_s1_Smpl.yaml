@@ -26,7 +26,8 @@ env:
   # animation files to learn from
   # these motions should use hyperparameters from HumanoidAMPPPO.yaml
   #motion_file: "test_humanoid_walk.npy"
-  motion_file: "56_01_cmu_amp.npy"
+  #motion_file: "56_01_cmu_amp.npy"
+  motion_file: "15_03_cmu_amp.npy"
   #motion_file: "amp_smpl_run.npy"
   #motion_file: "amp_smpl_dance.npy"
 
@@ -36,8 +37,8 @@ env:
   srl_endpos_obs: False
 
   asset:
-    assetFileName: "mjcf/amp_humanoid_180.xml"  # SMPL asset
-
+    #assetFileName: "mjcf/amp_humanoid_180.xml"  # SMPL asset
+    assetFileName: "mjcf/amp_humanoid_175.xml"
   plane:
     staticFriction: 1.0
     dynamicFriction: 1.0
