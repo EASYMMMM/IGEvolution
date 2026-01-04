@@ -916,10 +916,10 @@ def compute_srl_reward(
     torques_cost = 0 * torch.sum(actions ** 2, dim=-1)
 
     # --- DOF deviation cost ---
-    dof_pos = obs_buf[:, 10:16]
-    dof_pos[:,0] = dof_pos[:,0] * 3 # 
-    dof_pos[:,3] = dof_pos[:,3] * 3
-    dof_pos_cost = torch.sum(dof_pos ** 2, dim=-1)
+    srl_dof_pos = obs_buf[:, 10:16].clone()
+    srl_dof_pos[:,0] = srl_dof_pos[:,0] * 3 # 
+    srl_dof_pos[:,3] = srl_dof_pos[:,3] * 3
+    dof_pos_cost = torch.sum(srl_dof_pos ** 2, dim=-1)
 
     # --- DOF velocity cost ---
     dof_vel = obs_buf[:, 16:16+actions.shape[1]]
@@ -1257,7 +1257,7 @@ def set_task_target(
     # ================== 2️⃣ 高度随机化（stage≥2） ==================
     if task_training_stage >= 2:
         height_choices = torch.tensor(
-            [0.80, 0.85, 0.90, 0.95, 1.00, 1.00, 1.00, 1.00, 1.05],
+            [0.80, 0.85, 0.90, 0.95, 0.95, 1.00, 1.00, 1.00, 1.05],
             device=device,
             dtype=target_pelvis_height.dtype,
         )

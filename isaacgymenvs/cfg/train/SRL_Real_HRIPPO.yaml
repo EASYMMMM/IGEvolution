@@ -61,7 +61,7 @@ params:
     normalize_advantage: True
     gamma: 0.99
     tau: 0.95
-    learning_rate: 3e-5  # 5e-4
+    learning_rate: 1e-4  # 5e-4  3e-5
     lr_schedule: constant
     kl_threshold: 0.008 # 0.008
     entropy_coef: 0.005
@@ -76,9 +76,9 @@ params:
     grad_norm: 1.0
     truncate_grads: True
     e_clip: 0.2
-    horizon_length: 16 #16
-    minibatch_size: 32768 # 32768
-    mini_epochs: 6
+    horizon_length: 32 # 16
+    minibatch_size: 65536 # 32768
+    mini_epochs: 5 # 6
     clip_value: False
     seq_len: 4
     amp_obs_demo_buffer_size: 200000

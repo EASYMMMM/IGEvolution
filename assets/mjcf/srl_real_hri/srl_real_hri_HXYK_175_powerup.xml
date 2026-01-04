@@ -113,23 +113,23 @@
 
       <body name="right_thigh" pos="0.000000 -0.090546 0.000000">
         <site name="right_hip" class="force-torque" />
-        <joint name="right_hip_x" axis="1 0 0" range="-60 15" stiffness="300" damping="30" armature=".02" />
-        <joint name="right_hip_y" axis="0 1 0" range="-140 60" stiffness="300" damping="30" armature=".02" />
-        <joint name="right_hip_z" axis="0 0 1" range="-60 35" stiffness="300" damping="30" armature=".02" />
+        <joint name="right_hip_x" axis="1 0 0" range="-60 15" stiffness="600" damping="60" armature=".05" />
+        <joint name="right_hip_y" axis="0 1 0" range="-140 60" stiffness="600" damping="60" armature=".05" />
+        <joint name="right_hip_z" axis="0 0 1" range="-60 35" stiffness="600" damping="60" armature=".05" />
         <geom name="right_thigh" fromto="0.000000 0.000000 -0.064000 0.000000 0.000000 -0.424000" size="0.058667" density="1269" />
         <site name="right_thigh" class="touch" pos="0.000000 0.000000 -0.224000" size="0.059733 0.321067" zaxis="0 0 -1" />
 
         <body name="right_shin" pos="0.000000 0.000000 -0.489649">
           <site name="right_knee" class="force-torque" pos="0.000000 0.000000 0.000000" />
-          <joint name="right_knee" pos="0.000000 0.000000 0.000000" axis="0 1 0" range="0 160" stiffness="300" damping="30" armature=".02" />
+          <joint name="right_knee" pos="0.000000 0.000000 0.000000" axis="0 1 0" range="0 160" stiffness="600" damping="60" armature=".05" />
           <geom name="right_shin" fromto="0.000000 0.000000 -0.048000 0.000000 0.000000 -0.378667" size="0.053333" density="1014" />
           <site name="right_shin" class="touch" pos="0.000000 0.000000 -0.213333" size="0.054400 0.166400" zaxis="0 0 -1" />
 
           <body name="right_foot" pos="0.000000 0.000000 -0.437195">
             <site name="right_ankle" class="force-torque" />
-            <joint name="right_ankle_x" pos="0.000000 0.000000 0.000000" axis="1 0 0" range="-30 30" stiffness="200" damping="20" armature=".01" />
-            <joint name="right_ankle_y" pos="0.000000 0.000000 0.000000" axis="0 1 0" range="-55 55" stiffness="200" damping="20" armature=".01" />
-            <joint name="right_ankle_z" pos="0.000000 0.000000 0.000000" axis="0 0 1" range="-40 40" stiffness="200" damping="20" armature=".01" />
+            <joint name="right_ankle_x" pos="0.000000 0.000000 0.000000" axis="1 0 0" range="-30 30" stiffness="400" damping="40" armature=".05" />
+            <joint name="right_ankle_y" pos="0.000000 0.000000 0.000000" axis="0 1 0" range="-55 55" stiffness="400" damping="40" armature=".05" />
+            <joint name="right_ankle_z" pos="0.000000 0.000000 0.000000" axis="0 0 1" range="-40 40" stiffness="400" damping="40" armature=".05" />
             <geom name="right_foot" type="box" pos="0.018000 0.000000 -0.024000" size="0.064400 0.048000 0.029333" density="1141" />
             <geom name="right_toe" type="box" pos="0.078000 0.000000 -0.0384" size="0.064400 0.048000 0.015" density="1141" />
             <site name="right_foot" class="touch" type="box" pos="0.048000 0.000000 -0.024000" size="0.095467 0.058667 0.030400" />
@@ -139,23 +139,23 @@
 
       <body name="left_thigh" pos="0.000000 0.090546 0.000000">
         <site name="left_hip" class="force-torque" />
-        <joint name="left_hip_x" axis="1 0 0" range="-15 60" stiffness="300" damping="30" armature=".02" />
-        <joint name="left_hip_y" axis="0 1 0" range="-140 60" stiffness="300" damping="30" armature=".02" />
-        <joint name="left_hip_z" axis="0 0 1" range="-35 60" stiffness="300" damping="30" armature=".02" />
+        <joint name="left_hip_x" axis="1 0 0" range="-15 60" stiffness="600" damping="60" armature=".05" />
+        <joint name="left_hip_y" axis="0 1 0" range="-140 60" stiffness="600" damping="60" armature=".05" />
+        <joint name="left_hip_z" axis="0 0 1" range="-35 60" stiffness="600" damping="60" armature=".05" />
         <geom name="left_thigh" fromto="0.000000 0.000000 -0.064000 0.000000 0.000000 -0.424000" size="0.058667" density="1269" />
         <site name="left_thigh" class="touch" pos="0.000000 0.000000 -0.224000" size="0.059733 0.321067" zaxis="0 0 -1" />
 
         <body name="left_shin" pos="0.000000 0.000000 -0.489649">
           <site name="left_knee" class="force-torque" pos="0.000000 0.000000 0.021333" />
-          <joint name="left_knee" pos="0.000000 0.000000 0.000000" axis="0 1 0" range="0 160" stiffness="300" damping="30" armature=".02" />
+          <joint name="left_knee" pos="0.000000 0.000000 0.000000" axis="0 1 0" range="0 160" stiffness="600" damping="60" armature=".05" />
           <geom name="left_shin" fromto="0.000000 0.000000 -0.048000 0.000000 0.000000 -0.378667" size="0.053333" density="1014" />
           <site name="left_shin" class="touch" pos="0.000000 0.000000 -0.213333" size="0.054400 0.166400" zaxis="0 0 -1" />
 
           <body name="left_foot" pos="0.000000 0.000000 -0.437195">
             <site name="left_ankle" class="force-torque" />
-            <joint name="left_ankle_x" pos="0.000000 0.000000 0.000000" axis="1 0 0" range="-30 30" stiffness="200" damping="20" armature=".01" />
-            <joint name="left_ankle_y" pos="0.000000 0.000000 0.000000" axis="0 1 0" range="-55 55" stiffness="200" damping="20" armature=".01" />
-            <joint name="left_ankle_z" pos="0.000000 0.000000 0.000000" axis="0 0 1" range="-40 40" stiffness="200" damping="20" armature=".01" />
+            <joint name="left_ankle_x" pos="0.000000 0.000000 0.000000" axis="1 0 0" range="-30 30" stiffness="400" damping="40" armature=".05" />
+            <joint name="left_ankle_y" pos="0.000000 0.000000 0.000000" axis="0 1 0" range="-55 55" stiffness="400" damping="40" armature=".05" />
+            <joint name="left_ankle_z" pos="0.000000 0.000000 0.000000" axis="0 0 1" range="-40 40" stiffness="400" damping="40" armature=".05" />
             <geom name="left_foot" type="box" pos="0.018000 0.000000 -0.024000" size="0.064400 0.048000 0.029333" density="1141" />
             <geom name="left_toe" type="box" pos="0.078000 0.000000 -0.0384" size="0.064400 0.048000 0.015" density="1141"/>
             <site name="left_foot" class="touch" type="box" pos="0.048000 0.000000 -0.024000" size="0.095467 0.058667 0.030400" />
@@ -165,10 +165,10 @@
 
 
 
-      <body name="SRL" pos="-0.15 0 0.10">
+      <body name="SRL" pos="-0.15 0 0.15">
 		<!-- <joint armature="0.00" axis="1 0 0" damping="4" stiffness="100"  type="slide" name="SRL_damping_x" pos="0 0 0" range="-0.025 0.025" /> -->
         <geom name="board" pos="0 0 0" size="0.0005 0.1 0.1 " type="box" density='100'/> 
-        <body name="SRL_root" pos="-0.40 0 -0.10" euler="0 0 0">
+        <body name="SRL_root" pos="-0.30 0 -0.05" euler="0 0 0">
           <joint armature="0.00" axis="0 0 1" damping="0" name="SRL_freejoint_z" pos="0.60 0 0" range="-20 20" stiffness="0"/>
           <joint armature="0.00" axis="0 1 0" damping="0" name="SRL_freejoint_y" pos="0.60 0 0" range="-20 20" stiffness="0"/>
 
@@ -279,9 +279,9 @@
   </worldbody>
 
   <actuator>
-    <motor name="abdomen_x" gear="125" joint="abdomen_x" />
-    <motor name="abdomen_y" gear="125" joint="abdomen_y" />
-    <motor name="abdomen_z" gear="125" joint="abdomen_z" />
+    <motor name="abdomen_x" gear="200" joint="abdomen_x" />
+    <motor name="abdomen_y" gear="200" joint="abdomen_y" />
+    <motor name="abdomen_z" gear="200" joint="abdomen_z" />
     <motor name="neck_x" gear="20" joint="neck_x" />
     <motor name="neck_y" gear="20" joint="neck_y" />
     <motor name="neck_z" gear="20" joint="neck_z" />
@@ -293,20 +293,20 @@
     <motor name="left_shoulder_y" gear="70" joint="left_shoulder_y" />
     <motor name="left_shoulder_z" gear="70" joint="left_shoulder_z" />
     <motor name="left_elbow" gear="60" joint="left_elbow" />
-    <motor name="right_hip_x" gear="125" joint="right_hip_x" />
-    <motor name="right_hip_z" gear="125" joint="right_hip_z" />
-    <motor name="right_hip_y" gear="125" joint="right_hip_y" />
-    <motor name="right_knee" gear="100" joint="right_knee" />
-    <motor name="right_ankle_x" gear="50" joint="right_ankle_x" />
-    <motor name="right_ankle_y" gear="50" joint="right_ankle_y" />
-    <motor name="right_ankle_z" gear="50" joint="right_ankle_z" />
-    <motor name="left_hip_x" gear="125" joint="left_hip_x" />
-    <motor name="left_hip_z" gear="125" joint="left_hip_z" />
-    <motor name="left_hip_y" gear="125" joint="left_hip_y" />
-    <motor name="left_knee" gear="100" joint="left_knee" />
-    <motor name="left_ankle_x" gear="50" joint="left_ankle_x" />
-    <motor name="left_ankle_y" gear="50" joint="left_ankle_y" />
-    <motor name="left_ankle_z" gear="50" joint="left_ankle_z" />
+    <motor name="right_hip_x" gear="200" joint="right_hip_x" />
+    <motor name="right_hip_z" gear="200" joint="right_hip_z" />
+    <motor name="right_hip_y" gear="200" joint="right_hip_y" />
+    <motor name="right_knee" gear="200" joint="right_knee" />
+    <motor name="right_ankle_x" gear="100" joint="right_ankle_x" />
+    <motor name="right_ankle_y" gear="100" joint="right_ankle_y" />
+    <motor name="right_ankle_z" gear="100" joint="right_ankle_z" />
+    <motor name="left_hip_x" gear="200" joint="left_hip_x" />
+    <motor name="left_hip_z" gear="200" joint="left_hip_z" />
+    <motor name="left_hip_y" gear="200" joint="left_hip_y" />
+    <motor name="left_knee" gear="200" joint="left_knee" />
+    <motor name="left_ankle_x" gear="100" joint="left_ankle_x" />
+    <motor name="left_ankle_y" gear="100" joint="left_ankle_y" />
+    <motor name="left_ankle_z" gear="100" joint="left_ankle_z" />
     <motor name="left_hip_x_torque" joint="left_hip_x_jonit" gear="450"  />
     <motor name="left_hip_y_torque" joint="left_hip_y_jonit" gear="450"  />
     <motor name="left_knee_torque" joint="left_knee_jonit" gear="450"  />

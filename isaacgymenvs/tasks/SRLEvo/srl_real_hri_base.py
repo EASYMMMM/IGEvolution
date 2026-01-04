@@ -909,10 +909,8 @@ class SRL_Real_HRI_Base(VecTask):
         # SRL reward & Obs
         self.extras["srl_rewards"] = self.srl_rew_buf.to(self.rl_device)
         self.extras["x_velocity"] = self.obs_buf[:,7]                            
-        self.extras["obs_mirrored"] = self.srl_obs_mirrored_buf.to(self.rl_device)  # 镜像观测
-        self.extras["srl_priv_extra_obs"] = self.srl_priv_extra_obs_buf.to(self.rl_device)
-        self.extras["srl_priv_extra_obs_mirrored"] = self.srl_priv_extra_mirrored_obs_buf.to(self.rl_device)
-        self.extras["teacher_srl_obs"] = self.teacher_srl_obs_buf.to(self.rl_device)
+        # self.extras["obs_mirrored"] = self.srl_obs_mirrored_buf.to(self.rl_device)  # 镜像观测
+        # self.extras["teacher_srl_obs"] = self.teacher_srl_obs_buf.to(self.rl_device)
         # plotting
         self.extras["root_pos"] = self._root_states[0, 0:3].to(self.rl_device)
         srl_end_body_pos = self._rigid_body_pos[0, self._srl_end_ids, :]
@@ -1504,6 +1502,11 @@ def compute_humanoid_reward(obs_buf, dof_pos, dof_vel, dof_vel_prev, humanoid_ta
     dist_sq = torch.sum((humanoid_target_point[..., 0:2] - humanoid_root_pos[..., 0:2]) ** 2, dim=-1)
     pos_reward = 1 * torch.exp(-1.0 * dist_sq)
 
+    # --- Alive Reward ---
+    alive_reward_coef = torch.where(target_vel_x < 0.1, 4*torch.ones_like(target_vel_x), torch.ones_like(target_vel_x))
+    alive_reward = 1 * torch.ones_like(dist_sq)
+
+
     # --- Target Velocity ---
     root_vel = obs_buf[:, 7:10] 
     root_target_vel = torch.zeros((root_vel.shape[0], 3), device=root_vel.device)
@@ -1532,6 +1535,7 @@ def compute_humanoid_reward(obs_buf, dof_pos, dof_vel, dof_vel_prev, humanoid_ta
     dof_acc_cost = 0.01 * torch.sum(humanoid_dof_acc ** 2, dim=-1)
     # FIXME: HUMANOID奖励函数设定
     total_reward = vel_tracking_reward \
+                   + 0.5*alive_reward \
                    - 0*dof_pos_cost \
                    - 0*dof_vel_cost \
                    - 0*pelvis_penalty \
@@ -1612,10 +1616,10 @@ def compute_srl_reward(
     torques_cost = 0 * torch.sum(actions ** 2, dim=-1)
 
     # --- DOF deviation cost ---
-    dof_pos = obs_buf[:, 10:16]
-    dof_pos[:,0] = dof_pos[:,0] * 3 # 
-    dof_pos[:,3] = dof_pos[:,3] * 3
-    dof_pos_cost = torch.sum(dof_pos ** 2, dim=-1)
+    srl_joint_pos = obs_buf[:, 10:16].clone()  
+    srl_joint_pos[:,0] *= 3 
+    srl_joint_pos[:,3] *= 3
+    dof_pos_cost = torch.sum(srl_joint_pos ** 2, dim=-1)
 
     # --- DOF velocity cost ---
     dof_vel = obs_buf[:, 16:16+(actions.shape[1])]

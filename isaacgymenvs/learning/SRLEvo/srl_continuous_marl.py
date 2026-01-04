@@ -126,6 +126,10 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             # self.value_mean_std = self.central_value_net.model.value_mean_std if self.has_central_value else self.model.value_mean_std
             self.value_mean_std =  self.model.value_mean_std
             self.value_mean_std_srl =  self.model_srl.value_mean_std
+            # SRL 专用 advantage 归一化（避免和 humanoid 共用同一个 RMS）
+            # if self.normalize_advantage and self.normalize_rms_advantage:
+            #     # advantages 是标量，一般 shape = [*, 1] 或 [*]
+            #     self.advantage_mean_std_srl = RunningMeanStd((1,), self.ppo_device)
 
         if self._normalize_amp_input:
             self._amp_input_mean_std = RunningMeanStd(self._amp_observation_space.shape).to(self.ppo_device)
@@ -1390,7 +1394,11 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         obs = obs_dict['obs']
         
         processed_obs = self._preproc_obs(obs)
-        priv_srl_obs = processed_obs[:, -self.priv_obs_num_srl[0]:]
+
+        srl_priv_extra_obs = obs_dict['srl_priv_extra_obs']
+        srl_obs = processed_obs[:, -self.obs_num_srl[0]:]
+        priv_srl_obs = torch.cat((srl_priv_extra_obs, srl_obs), dim=-1)
+        # priv_srl_obs = processed_obs[:, -self.priv_obs_num_srl[0]:]
 
         # norm_obs 尺寸与priv obs不匹配
         # if self.normalize_input:
