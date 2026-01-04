@@ -973,7 +973,7 @@ def compute_srl_reward(
     # --- Feet Lateral Distance ---
     local_srl_end_body_pos = srl_end_body_pos - srl_root_pos.unsqueeze(-2)
     lateral_distance = torch.abs(local_srl_end_body_pos[:,0,1] - local_srl_end_body_pos[:,1,1])
-    min_d, max_d = 0.68, 0.85 # FIXME: Lateral Distance 
+    min_d, max_d = 0.40, 0.85 # FIXME: Lateral Distance 
     below_violation = torch.clamp(min_d - lateral_distance, min=0.0)
     above_violation = torch.clamp(lateral_distance - max_d, min=0.0)
     feet_lateral_penalty = below_violation + above_violation  

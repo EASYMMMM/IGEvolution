@@ -298,8 +298,8 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                     else:
                         episode_data['done'].append(0)
 
-
-                    if done_count > 0:
+                    # FIXME: 是否画图
+                    if done_count == -10: # if done_count > 0:
                         if 0 in done_indices:
                             # 转为 numpy 数组，shape: [T, D]
                             target_yaw = []

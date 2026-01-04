@@ -65,7 +65,7 @@ class HumanoidAMP_s1_Smpl_Base(VecTask):
         self._enable_early_termination = self.cfg["env"]["enableEarlyTermination"]
 
         self._humanoid_load_cell_obs = self.cfg["env"]["humanoid_load_cell_obs"]
-
+        self.train_stage = self.cfg["env"].get("train_stage", 2)  # 1: 原地站立，2: 直线行走，3: 曲线行走
         self.cfg["env"]["numObservations"] = self.get_obs_size()
         self.cfg["env"]["numActions"] = self.get_action_size()
 

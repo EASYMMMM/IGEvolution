@@ -40,7 +40,7 @@ python SRL_Evo_train.py task=HumanoidAMPSRLGym_s1 wandb_project=SRL_Evo experime
 python SRL_Evo_train.py task=HumanoidAMPSRLGym_s1 wandb_project=SRL_Evo experiment=AMP_Pretrain_Hybrid task.env.asset.assetFileName='mjcf/humanoid_srl_v3/hsrl_mode1_v3_s1.xml' headless=True wandb_activate=True max_iterations=2000  task.env.stateInit=Hybrid  checkpoint=saved_runs/AMP_Pretrain_18-16-52-24/nn/AMP_Pretrain_18-16-52-35.pth  sim_device=cuda:0 rl_device=cuda:0      
 
 # humanoid AMP check
-python SRL_Evo_train.py task=HumanoidAMPSRLGym_s1 test=True  num_envs=4   checkpoint=saved_runs/AMP_Pretrain_Hybrid_19-17-13-54/nn/AMP_Pretrain_Hybrid_19-17-14-05.pth  task.env.stateInit=Default  task.env.asset.assetFileName='mjcf/humanoid_srl_v3/hsrl_mode1_v3_s1.xml'
+python SRL_Evo_train.py task=HumanoidAMPSRLGym_s1 test=True  num_envs=4  force_render=True task.env.cameraFollow=True checkpoint=saved_runs/AMP_Pretrain_Hybrid_19-17-13-54/nn/AMP_Pretrain_Hybrid_19-17-14-05.pth  task.env.stateInit=Default  task.env.asset.assetFileName='mjcf/humanoid_srl_v3/hsrl_mode1_v3_s1.xml'
 
 # train 教师策略：静止站立
 python SRL_Evo_train.py task=SRLBot wandb_project=SRL_Evo experiment=SRL_teacher_standing  headless=True wandb_activate=True max_iterations=1000  train.params.config.a_sym_a_loss_coef=1.0    ;  

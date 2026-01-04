@@ -27,4 +27,4 @@ python SRL_Evo_train.py task=SRL_Real_Bot test=True force_render=True task.env.c
 # --- stage 4 --- Domain Randomization 
 python SRL_Evo_train.py task=SRL_Real_Bot wandb_project=SRL_Real experiment=SRL_Real_s4  task.env.task_training_stage=3 task.task.randomize=True task.task.vel_pertubation=True headless=True wandb_activate=True max_iterations=3500    checkpoint=runs/SRL_Real_s3_25-16-22-13/nn/SRL_Real_s3.pth  task.env.progress_reward_scale=0.0 task.env.alive_reward_scale=0.0;  
 # --- check ---
-python SRL_Evo_train.py task=SRL_Real_Bot test=True force_render=True task.env.cameraFollow=True num_envs=4 task.env.task_training_stage=3 task.task.randomize=True checkpoint=runs/SRL_Real_s3_26-11-28-15/nn/SRL_Real_s3.pth sim_device=cuda:1 rl_device=cuda:1  
+python SRL_Evo_train.py task=SRL_Real_Bot test=True force_render=True task.env.cameraFollow=True num_envs=4 task.env.task_training_stage=3 task.task.randomize=True checkpoint=runs/SRL_Real_s4_26-17-10-46/nn/SRL_Real_s4.pth  sim_device=cuda:1 rl_device=cuda:1  
