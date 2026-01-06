@@ -70,6 +70,7 @@ class SRL_Real_HRI_Base(VecTask):
         self.dof_acc_cost_scale = self.cfg["env"]["dof_acc_cost_scale"]
         self.dof_vel_cost_scale = self.cfg["env"]["dof_vel_cost_scale"]
         self.dof_pos_cost_sacle = self.cfg["env"]["dof_pos_cost_sacle"]
+        self.contact_force_cost_scale = self.cfg["env"]["contact_force_cost_scale"]
         self.no_fly_penalty_scale = self.cfg["env"]["no_fly_penalty_scale"]
         self.tracking_ang_vel_reward_scale = self.cfg["env"]["tracking_ang_vel_reward_scale"]
         self.vel_tracking_reward_scale = self.cfg["env"]["vel_tracking_reward_scale"]
@@ -625,7 +626,7 @@ class SRL_Real_HRI_Base(VecTask):
         humanoid_root_pos = self._root_states[..., 0:3]
         self.rew_buf[:] = compute_humanoid_reward(self.obs_buf, self._dof_pos, 
                                                   self._dof_vel, self._dof_vel_prev, 
-                                                  humanoid_target_point, humanoid_root_pos)
+                                                  humanoid_target_point, humanoid_root_pos, load_cell_sensor*self.obs_scales["load_cell"],)
         self.srl_rew_buf[:]  = compute_srl_reward(self.srl_obs_buf[:],
                                             clearance_reward,
                                             to_target,
@@ -647,6 +648,7 @@ class SRL_Real_HRI_Base(VecTask):
                                             dof_acc_cost_scale = self.dof_acc_cost_scale,
                                             dof_vel_cost_scale = self.dof_vel_cost_scale,
                                             dof_pos_cost_sacle = self.dof_pos_cost_sacle,
+                                            contact_force_cost_scale = self.contact_force_cost_scale,
                                             no_fly_penalty_scale = self.no_fly_penalty_scale,
                                             vel_tracking_reward_scale = self.vel_tracking_reward_scale,
                                             tracking_ang_vel_reward_scale = self.tracking_ang_vel_reward_scale,
@@ -1492,7 +1494,7 @@ def compute_priv_extra_observations_mirrored(root_states, dof_pos, dof_vel, key_
                      ), dim=-1)
     return obs
 
-def compute_humanoid_reward(obs_buf, dof_pos, dof_vel, dof_vel_prev, humanoid_target_point, humanoid_root_pos):
+def compute_humanoid_reward(obs_buf, dof_pos, dof_vel, dof_vel_prev, humanoid_target_point, humanoid_root_pos, load_cell_sensor):
     # --- Task Command ---
     target_pelvis_height = obs_buf[:, -1] 
     target_ang_vel_z = obs_buf[:, -2]
@@ -1533,13 +1535,31 @@ def compute_humanoid_reward(obs_buf, dof_pos, dof_vel, dof_vel_prev, humanoid_ta
     # --- Dof Acc cost ---
     humanoid_dof_acc = dof_vel[:,0:6] - dof_vel_prev[:,0:6]
     dof_acc_cost = 0.01 * torch.sum(humanoid_dof_acc ** 2, dim=-1)
+
+    # --- Load Cell Force ---
+    load_cell_force = -load_cell_sensor[:, 0:3]
+    f = torch.norm(load_cell_force, dim=-1)          # kN
+    F0 = 0.30   # deadband: <=50N basically no penalty (conservative)
+    Fs = 0.30   # scale: 50N scale of growth
+    F_hard = 1.50  # hard safety threshold: 300N
+    Fhs    = 0.5   # 100N  hard penalty ramp scale
+    x = torch.clamp((f - F0) / Fs, min=0.0)
+    soft = torch.tanh(x) ** 2
+    xh = torch.clamp((f - F_hard) / Fhs, min=0.0)
+    hard = torch.tanh(xh) ** 2
+    w_soft = 0.5   # conservative but not too dominating; can try 0.2~0.8
+    w_hard = 2.0   # makes big-force episodes unattractive
+    contact_force_cost = w_soft * soft + w_hard * hard
+    contact_force_cost = 0.3 * contact_force_cost
+
     # FIXME: HUMANOID奖励函数设定
     total_reward = vel_tracking_reward \
                    + 0.5*alive_reward \
-                   - 0*dof_pos_cost \
-                   - 0*dof_vel_cost \
-                   - 0*pelvis_penalty \
-                   - 0*dof_acc_cost
+                   - dof_pos_cost \
+                   - dof_vel_cost \
+                   - pelvis_penalty \
+                   - dof_acc_cost \
+                   - contact_force_cost
     return total_reward
 
 
@@ -1642,9 +1662,9 @@ def compute_srl_reward(
     angle_diff = ((euler_err + math.pi) % (2 * math.pi)) - math.pi
     cos_angle = torch.cos(2 * angle_diff)
     ori_error = 1 - torch.mean(cos_angle, dim=-1)
-    orientation_reward = torch.exp(-20 * ori_error   ) 
+    # orientation_reward = torch.exp(-20 * ori_error   ) 
     # TODO: 将朝向奖励改为惩罚
-    # orientation_reward = - 3*torch.sum((angle_diff) ** 2, dim=-1)
+    orientation_reward = - 3*torch.sum((angle_diff) ** 2, dim=-1)
 
     # --- Pelvis height ---
     pelvis_height = obs_buf[:,0]
@@ -1662,8 +1682,18 @@ def compute_srl_reward(
    
     # --- Interaction Force ---
     load_cell_force = obs_buf[:, 33:36]
-    contact_force_magnitude_sq = torch.sum(load_cell_force ** 2, dim=-1)
-    contact_force_cost = 0 * contact_force_magnitude_sq
+    f = torch.norm(load_cell_force, dim=-1)          # kN
+    F0 = 0.30   # deadband: <=50N basically no penalty (conservative)
+    Fs = 0.30   # scale: 50N scale of growth
+    F_hard = 1.50  # hard safety threshold: 300N
+    Fhs    = 0.5   # 100N  hard penalty ramp scale
+    x = torch.clamp((f - F0) / Fs, min=0.0)
+    soft = torch.tanh(x) ** 2
+    xh = torch.clamp((f - F_hard) / Fhs, min=0.0)
+    hard = torch.tanh(xh) ** 2
+    w_soft = 0.5   # conservative but not too dominating; can try 0.2~0.8
+    w_hard = 2.0   # makes big-force episodes unattractive
+    contact_force_cost = w_soft * soft + w_hard * hard
 
     # --- No fly --- 
     contact_threshold = 0.040  
@@ -1728,7 +1758,7 @@ def compute_srl_reward(
         - gait_phase_penalty \
         - clearance_penalty * clearance_penalty_scale \
         - lateral_distance_penalty_scale * feet_lateral_penalty \
-        - contact_force_cost
+        - contact_force_cost_scale*contact_force_cost
 
     # --- Handle termination ---
     total_reward = torch.where(obs_buf[:, 0] < termination_height, torch.ones_like(total_reward) * death_cost, total_reward)

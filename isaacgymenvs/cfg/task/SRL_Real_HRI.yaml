@@ -75,6 +75,7 @@ env:
   lateral_distance_penalty_scale: 30
   actions_rate_scale: 0.1
   actions_smoothness_scale: 0.1
+  contact_force_cost_scale: 0.0
   
   torque_threshold: 50  # 力矩惩罚施加阈值
   upper_reward_w: 1 
