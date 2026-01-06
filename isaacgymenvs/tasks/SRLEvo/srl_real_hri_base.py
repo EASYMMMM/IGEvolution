@@ -21,7 +21,7 @@ DOF_OFFSETS = [0, 3, 6, 9, 10, 13, 14, 17, 18, 21, 24, 25, 28]
 SRL_ROOT_BODY_NAMES = ["SRL", "SRL_root"]
 UPPER_BODY_NAMES = ["pelvis", "torso"]
 KEY_BODY_NAMES = ["right_hand", "left_hand", "right_foot", "left_foot"]  # body end + SRL end
-SRL_END_BODY_NAMES = ["SRL_right_end","SRL_left_end"] 
+SRL_END_BODY_NAMES = ["SRL_left_end","SRL_right_end"] 
 SRL_CONTACT_BODY_NAMES = ['SRL_root', 'right_knee_link', 'SRL_right_end', 'left_knee_link', 'SRL_left_end']
 
 
@@ -1666,7 +1666,7 @@ def compute_srl_reward(
     contact_force_cost = 0 * contact_force_magnitude_sq
 
     # --- No fly --- 
-    contact_threshold = 0.055  
+    contact_threshold = 0.040  
     left_foot_height = srl_end_body_pos[:, 0, 2]  # 获取左脚的位置 
     right_foot_height = srl_end_body_pos[:, 1, 2]  # 获取右脚的位置 
     # walking

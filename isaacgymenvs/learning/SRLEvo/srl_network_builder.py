@@ -42,6 +42,26 @@ import numpy as np
 DISC_LOGIT_INIT_SCALE = 1.0
 
 
+class CentralCritic(nn.Module):
+    def __init__(self, input_dim, hidden_dims=(256, 256)):
+        super().__init__()
+        layers_ = []
+        last = input_dim
+        for h in hidden_dims:
+            layers_.append(nn.Linear(last, h))
+            layers_.append(nn.ReLU())
+            last = h
+        self.trunk = nn.Sequential(*layers_)
+        # 两个 head：humanoid 和 SRL 各一个 value
+        self.v_hum = nn.Linear(last, 1)
+        self.v_srl = nn.Linear(last, 1)
+
+    def forward(self, x):
+        z = self.trunk(x)
+        v_h = self.v_hum(z)
+        v_s = self.v_srl(z)
+        return v_h, v_s
+    
 class HumanoidBuilder(network_builder.A2CBuilder):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

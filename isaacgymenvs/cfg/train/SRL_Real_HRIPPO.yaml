@@ -67,6 +67,7 @@ params:
     entropy_coef: 0.005
     critic_coef: 5
     bounds_loss_coef: 0.01
+    central_critic: False # 是否使用集中式Critic
 
     score_to_win: 2000000
     max_epochs: ${resolve_default:5000,${....max_iterations}}

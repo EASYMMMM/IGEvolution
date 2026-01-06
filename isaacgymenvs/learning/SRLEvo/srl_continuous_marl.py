@@ -33,7 +33,8 @@ from rl_games.common.diagnostics import DefaultDiagnostics, PpoDiagnostics
 import gym
 from .mp_util import WandbWriter
 from collections import deque
-
+from .srl_network_builder import CentralCritic
+import torch.nn.functional as F
 
 def my_safe_load(filename, **kwargs):
     return torch_ext.safe_filesystem_op(torch.load, filename, **kwargs)
@@ -143,6 +144,24 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         self.train_result = {}
 
         self.update_counter = 0
+
+        if self.use_central_critic:
+            self.obs_num = self.vec_env.env.get_obs_size()
+            cc_input_dim = self.obs_num  
+            self.central_critic = CentralCritic(
+                input_dim=cc_input_dim,
+                hidden_dims=params['network']['mlp']['srl_units']  # 复用 mlp 配置也行
+            ).to(self.ppo_device)
+
+            self.central_critic_opt = torch.optim.Adam(
+                self.central_critic.parameters(),
+                lr=self.config.get('central_critic_lr', self.last_lr)
+            )
+
+            self.central_critic_scaler = torch.cuda.amp.GradScaler(enabled=self.mixed_precision)
+        else:
+            self.central_critic = None
+
         return
 
     def init_tensors(self):
@@ -173,6 +192,9 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         self.experience_buffer_srl.tensor_dict['next_obses'] = torch.zeros_like(self.experience_buffer_srl.tensor_dict['obses'])
         self.experience_buffer_srl.tensor_dict['next_values'] = torch.zeros_like(self.experience_buffer_srl.tensor_dict['values'])
         self.experience_buffer_srl.tensor_dict['obs_mirrored'] = torch.zeros_like(self.experience_buffer_srl.tensor_dict['obses'])
+        self.experience_buffer.tensor_dict['terminated'] = torch.zeros_like(self.experience_buffer.tensor_dict['dones'])
+        self.experience_buffer_srl.tensor_dict['terminated'] = torch.zeros_like(self.experience_buffer_srl.tensor_dict['dones'])
+
         obs_shape = self.experience_buffer_srl.tensor_dict['obses'].shape
         self.experience_buffer_srl.tensor_dict['teacher_actions'] = torch.zeros(
             obs_shape[0], obs_shape[1], 6, 
@@ -348,7 +370,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
 
             if self._srl_teacher_checkpoint:
                 res_dict_teacher_srl = self.get_teacher_srl_action_values(self.obs)
-                self.experience_buffer_srl.update_data('teacher_actions', n, res_dict_teacher_srl['actions'])
+                self.experience_buffer_srl.update_data('teacher_actions', n, res_dict_teacher_srl['mus'])
             
             # if self.has_central_value:
             #     self.experience_buffer.update_data('states', n, self.obs['states'])
@@ -363,7 +385,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             humanoid_obs = {} 
             humanoid_obs['obs'] = total_obs[:, :self.obs_num_humanoid[0]]
             srl_obs = {}
-            srl_obs['obs'] = total_obs[:, self.obs_num_humanoid[0]:]
+            srl_obs['obs'] = total_obs[:, -self.obs_num_srl[0]:]
             
             # # srl reward
             rewards_srl = infos["srl_rewards"]
@@ -384,6 +406,8 @@ class SRL_MultiAgent(common_agent.CommonAgent):
 
 
             terminated = infos['terminate'].float()
+            self.experience_buffer.update_data('terminated', n, terminated)
+            self.experience_buffer_srl.update_data('terminated', n, terminated)
             terminated = terminated.unsqueeze(-1)
 
             # _velocity_penalty = infos['v_penalty']
@@ -445,6 +469,61 @@ class SRL_MultiAgent(common_agent.CommonAgent):
 
             if (self.vec_env.env.viewer and (n == (self.horizon_length - 1))):
                 self._amp_debug(infos)
+                
+        # Central Critic        
+        if self.use_central_critic:
+            # 形状: [horizon, num_envs, dim]
+            hum_obs = self.experience_buffer.tensor_dict['obses']         # humanoid obs
+            srl_obs = self.experience_buffer_srl.tensor_dict['obses']     # srl obs
+
+            hum_next_obs = self.experience_buffer.tensor_dict['next_obses']
+            srl_next_obs = self.experience_buffer_srl.tensor_dict['next_obses']
+
+            # 神经网络处理归一化后的数据（通常在 -5 到 5 之间）比处理原始物理量要稳定得多
+            with torch.no_grad():
+                hum_obs_n = self.model.norm_obs(hum_obs)
+                srl_obs_n = self.model_srl.norm_obs(srl_obs)
+                hum_next_obs_n = self.model.norm_obs(hum_next_obs)
+                srl_next_obs_n = self.model_srl.norm_obs(srl_next_obs)
+            # 拼 central state: [T, N, Dh+Ds]
+            joint_obs = torch.cat([hum_obs_n, srl_obs_n], dim=-1)
+            joint_next_obs = torch.cat([hum_next_obs_n, srl_next_obs_n], dim=-1)
+
+            T, N, D = joint_obs.shape
+            joint_flat = joint_obs.reshape(T * N, D)
+            joint_next_flat = joint_next_obs.reshape(T * N, D)
+
+            term = self.experience_buffer.tensor_dict.get('terminated', None)  # [T,N,1] if exists
+            if term is not None:
+                term = term.view(T, N, 1)
+
+            with torch.no_grad():
+                self.central_critic.eval()
+                v_h_flat, v_s_flat = self.central_critic(joint_flat)
+                v_hn_flat, v_sn_flat = self.central_critic(joint_next_flat)
+
+                # 关键修复1：如果训练时 returns/value 是 normalized，这里必须 denorm 回奖励尺度再算 GAE
+                if self.normalize_value:
+                    v_h_flat  = self.value_mean_std(v_h_flat, True)
+                    v_hn_flat = self.value_mean_std(v_hn_flat, True)
+                    v_s_flat  = self.value_mean_std_srl(v_s_flat, True)
+                    v_sn_flat = self.value_mean_std_srl(v_sn_flat, True)
+
+            v_h  = v_h_flat.view(T, N, 1)
+            v_s  = v_s_flat.view(T, N, 1)
+            v_hn = v_hn_flat.view(T, N, 1)
+            v_sn = v_sn_flat.view(T, N, 1)
+
+            # 终止步 next_value 不能 bootstrap 到 reset 后的新 episode
+            if term is not None:
+                v_hn = v_hn * (1.0 - term)
+                v_sn = v_sn * (1.0 - term)
+
+            # 覆盖 buffer 里的 values / next_values，后面 discount_values 用的就是这些
+            self.experience_buffer.tensor_dict['values'] = v_h
+            self.experience_buffer.tensor_dict['next_values'] = v_hn
+            self.experience_buffer_srl.tensor_dict['values'] = v_s
+            self.experience_buffer_srl.tensor_dict['next_values'] = v_sn
 
         # calculate Humanoid minibatch returns
         mb_fdones = self.experience_buffer.tensor_dict['dones'].float()  # 获取完成标志
@@ -474,7 +553,8 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         batch_dict = self.experience_buffer.get_transformed_list(a2c_common.swap_and_flatten01, self.tensor_list) # 获取转换后的批次字典
         batch_dict['returns'] = a2c_common.swap_and_flatten01(mb_returns) # 设置返回值
         batch_dict['played_frames'] = self.batch_size
-
+        batch_dict['cc_srl_obs'] = a2c_common.swap_and_flatten01( self.experience_buffer_srl.tensor_dict['obses'] )
+        batch_dict['cc_srl_returns'] = a2c_common.swap_and_flatten01(mb_returns_srl)
         # srl batch
         srl_tensor_dict = self.tensor_list + ['teacher_actions']
         batch_dict_srl = self.experience_buffer_srl.get_transformed_list(a2c_common.swap_and_flatten01, srl_tensor_dict) # 获取转换后的批次字典
@@ -555,6 +635,14 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         self.dataset.values_dict['amp_obs'] = batch_dict['amp_obs'] # 设置 AMP 观测
         self.dataset.values_dict['amp_obs_demo'] = batch_dict['amp_obs_demo']
         self.dataset.values_dict['amp_obs_replay'] = batch_dict['amp_obs_replay']
+        if self.use_central_critic:
+            self.dataset.values_dict['cc_srl_obs'] = batch_dict['cc_srl_obs']
+            cc_ret = batch_dict['cc_srl_returns']
+            if self.normalize_value:
+                self.value_mean_std_srl.train()
+                cc_ret = self.value_mean_std_srl(cc_ret)
+                self.value_mean_std_srl.eval()
+            self.dataset.values_dict['cc_srl_returns'] = cc_ret
         return
 
     def train_epoch(self):
@@ -642,13 +730,20 @@ class SRL_MultiAgent(common_agent.CommonAgent):
 
     def train_actor_critic(self, input_dict, input_dict_srl):
         self.update_counter += 1
+        # 每个 mini-batch 从空结果开始，避免沿用上一次的 key
+        self.train_result = {}
         if self._train_humanoid:
             if self.update_counter % self._train_humanoid_freq == 0:
                 self.calc_gradients(input_dict)
-                if self.update_counter%20 == 0:
+                if self.update_counter % 20 == 0:
                     self._train_humanoid_freq += 0
         self.calc_gradients_srl(input_dict_srl)
-        
+
+        if self.use_central_critic:
+            cc_info = self.calc_central_critic_gradients(input_dict)
+            # 追加到 train_result 里，方便上层 log
+            self.train_result.update(cc_info)
+
         return self.train_result
 
     def calc_gradients_srl(self, input_dict):
@@ -1011,6 +1106,13 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         self.mirror_loss = config.get('mirror_loss', False)
 
         self.normalize_srl_input = config['normalize_srl_input']
+
+        self.use_central_critic = config.get('central_critic', False)
+        if self.use_central_critic:
+            # local critic 只当 baseline head 用，不再训练它
+            self.critic_coef = 0.0
+            self.critic_coef_srl = 0.0
+            self.sym_critic_loss_coef = 0.0
         return
 
     def _build_net_config(self, params):
@@ -1193,6 +1295,48 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         state['optimizer_srl'] = self.optimizer_srl.state_dict()
         torch_ext.save_checkpoint(fn, state)
 
+ 
+    def calc_central_critic_gradients(self, input_dict):
+        if not self.use_central_critic:
+            return {}
+
+        hum_obs = input_dict['obs']
+        returns_h = input_dict['returns']
+        srl_obs = input_dict['cc_srl_obs']
+        returns_s = input_dict['cc_srl_returns']
+
+        with torch.no_grad():
+            hum_obs_n = self.model.norm_obs(hum_obs)
+            srl_obs_n = self.model_srl.norm_obs(srl_obs)
+        joint_obs = torch.cat([hum_obs_n, srl_obs_n], dim=-1)
+
+        self.central_critic.train()
+        self.central_critic_opt.zero_grad(set_to_none=True)
+
+        with torch.cuda.amp.autocast(enabled=self.mixed_precision):
+            v_h, v_s = self.central_critic(joint_obs)
+            # 用 batch 标准差做尺度归一化，避免 SRL return 方差更大导致梯度主导
+            std_h = returns_h.std(unbiased=False).clamp_min(1e-3)
+            std_s = returns_s.std(unbiased=False).clamp_min(1e-3)
+
+            critic_loss_h = F.mse_loss(v_h / std_h, returns_h / std_h)
+            critic_loss_s = F.mse_loss(v_s / std_s, returns_s / std_s)
+
+            cc_coef = float(self.config.get('central_critic_coef', 1.0))
+            critic_loss = cc_coef * (critic_loss_h + critic_loss_s)
+
+        self.central_critic_scaler.scale(critic_loss).backward()
+        self.central_critic_scaler.unscale_(self.central_critic_opt)
+        nn.utils.clip_grad_norm_(self.central_critic.parameters(), self.grad_norm)
+        self.central_critic_scaler.step(self.central_critic_opt)
+        self.central_critic_scaler.update()
+
+        return {
+            'central_critic_loss': critic_loss.detach(),
+            'central_critic_loss_h': critic_loss_h.detach(),
+            'central_critic_loss_s': critic_loss_s.detach(),
+        }
+
     def _disc_loss_neg(self, disc_logits):
         bce = torch.nn.BCEWithLogitsLoss()
         loss = bce(disc_logits, torch.zeros_like(disc_logits))
@@ -1359,6 +1503,23 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         if self.mirror_loss:
             self.writer.add_scalar('losses/sym_loss_srl', torch_ext.mean_list(train_info['sym_loss']).item(), frame)
             self.writer.add_scalar('losses/sym_value_loss_srl', torch_ext.mean_list(train_info['sym_value_loss']).item(), frame)
+        # Central Critic logging
+        if self.use_central_critic and 'central_critic_loss' in train_info:
+            self.writer.add_scalar(
+                'losses/central_critic_loss',
+                torch_ext.mean_list(train_info['central_critic_loss']).item(),
+                frame,
+            )
+            self.writer.add_scalar(
+                'losses/central_critic_loss_h',
+                torch_ext.mean_list(train_info['central_critic_loss_h']).item(),
+                frame,
+            )
+            self.writer.add_scalar(
+                'losses/central_critic_loss_s',
+                torch_ext.mean_list(train_info['central_critic_loss_s']).item(),
+                frame,
+            )
         return
 
     def _amp_debug(self, info):
