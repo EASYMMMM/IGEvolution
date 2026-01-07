@@ -1148,7 +1148,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         # logit reg
         logit_weights = self.model.a2c_network.get_disc_logit_weights()
         disc_logit_loss = torch.sum(torch.square(logit_weights))
-        disc_loss += self._disc_logit_reg * disc_logit_loss
+        disc_logit_loss += self._disc_logit_reg * disc_logit_loss
 
         # grad penalty
         disc_demo_grad = torch.autograd.grad(disc_demo_logit, obs_demo, grad_outputs=torch.ones_like(disc_demo_logit),
@@ -1282,6 +1282,12 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         checkpoint = my_load_checkpoint(fn,map_location=self.device)
         self.model.load_state_dict(checkpoint['model'])
         self.model_srl.load_state_dict(checkpoint['model_srl'])
+        
+        # Add central critic load
+        if self.use_central_critic and 'central_critic' in checkpoint:
+            self.central_critic.load_state_dict(checkpoint['central_critic'])
+            if 'central_critic_opt' in checkpoint:
+                self.central_critic_opt.load_state_dict(checkpoint['central_critic_opt'])
 
     def _load_srl_teacher_checkpoint(self, fn,):
         # restore nn of humanoid & srl
@@ -1293,6 +1299,10 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         state = self.get_full_state_weights()
         state['model_srl'] = self.model_srl.state_dict()
         state['optimizer_srl'] = self.optimizer_srl.state_dict()
+        # Add central critic save
+        if self.use_central_critic:
+            state['central_critic'] = self.central_critic.state_dict()
+            state['central_critic_opt'] = self.central_critic_opt.state_dict()
         torch_ext.save_checkpoint(fn, state)
 
  

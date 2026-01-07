@@ -36,7 +36,7 @@ env:
   motion_file: "amp_humanoid_walk_175.npy"
 
   asset:
-    assetFileName: "mjcf/srl_real_hri/srl_real_hri_HXYK_175.xml"
+    assetFileName: "mjcf/srl_real_hri/srl_real_hri_HXYK_175_mesh.xml"
 
   plane:
     staticFriction: 1.0
@@ -71,7 +71,7 @@ env:
   orientation_reward_scale: 3.0
   tracking_ang_vel_reward_scale: 2.0
   vel_tracking_reward_scale: 6.0
-  clearance_penalty_scale: 50
+  clearance_penalty_scale: 10
   lateral_distance_penalty_scale: 30
   actions_rate_scale: 0.1
   actions_smoothness_scale: 0.1

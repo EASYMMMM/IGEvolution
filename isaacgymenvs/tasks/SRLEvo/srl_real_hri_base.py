@@ -1630,7 +1630,7 @@ def compute_srl_reward(
     root_target_vel = torch.zeros((root_vel.shape[0], 3), device=root_vel.device)
     root_target_vel[:, 0] = target_vel_x   
     vel_error_vec = root_vel - root_target_vel
-    vel_tracking_reward =  vel_tracking_reward_scale *  torch.exp(-4 * torch.norm(vel_error_vec, dim=-1))  # α = 1.5
+    vel_tracking_reward =  torch.exp(-4 * torch.norm(vel_error_vec, dim=-1))  # α = 1.5
 
     # --- Torques cost ---
     torques_cost = 0 * torch.sum(actions ** 2, dim=-1)
@@ -1663,8 +1663,13 @@ def compute_srl_reward(
     cos_angle = torch.cos(2 * angle_diff)
     ori_error = 1 - torch.mean(cos_angle, dim=-1)
     # orientation_reward = torch.exp(-20 * ori_error   ) 
+    # 分轴权重
+    w_roll  = 6.0
+    w_pitch = 6.0
+    w_yaw   = 3.0
+    orientation_reward = - (w_roll  * angle_diff[:, 0]**2 + w_pitch * angle_diff[:, 1]**2 + w_yaw * angle_diff[:, 2]**2 )
     # TODO: 将朝向奖励改为惩罚
-    orientation_reward = - 3*torch.sum((angle_diff) ** 2, dim=-1)
+    # orientation_reward = - 3*torch.sum((angle_diff) ** 2, dim=-1)
 
     # --- Pelvis height ---
     pelvis_height = obs_buf[:,0]
@@ -1678,7 +1683,7 @@ def compute_srl_reward(
     root_target_ang_vel[:, 2] = target_ang_vel_z   
     root_ang_vel[:,2] = root_ang_vel[:,2] 
     ang_vel_error_vec = root_ang_vel - root_target_ang_vel
-    ang_vel_tracking_reward = tracking_ang_vel_reward_scale * torch.exp(-3 * torch.norm(ang_vel_error_vec, dim=-1))   
+    ang_vel_tracking_reward = torch.exp(-3 * torch.norm(ang_vel_error_vec, dim=-1))   
    
     # --- Interaction Force ---
     load_cell_force = obs_buf[:, 33:36]
@@ -1744,8 +1749,8 @@ def compute_srl_reward(
     # --- Total reward ---
     total_reward = alive_reward_scale * alive_reward  \
         + progress_reward_scale * progress_reward \
-        + vel_tracking_reward \
-        + ang_vel_tracking_reward \
+        + vel_tracking_reward_scale *  vel_tracking_reward \
+        + tracking_ang_vel_reward_scale * ang_vel_tracking_reward \
         + orientation_reward_scale * orientation_reward  \
         + pelvis_height_reward_scale * pelvis_height_reward \
         - torques_cost_scale * torques_cost \
