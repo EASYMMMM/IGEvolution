@@ -74,6 +74,8 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
         self.obs_log = []
         self.target_yaw_log = []
         self.load_cell_fd_log = []
+        self.srl_virtual_passive_pos_log = []
+        self.srl_virtual_load_cell_log = []
         self.load_cell_log = []
         self.obs_num_humanoid = self.env.get_humanoid_obs_size()
         self.obs_num_srl = self.env.get_srl_obs_size()
@@ -259,6 +261,8 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                     self.target_yaw_log.append(info['target_yaw'].cpu().numpy())
                     self.load_cell_fd_log.append(info['load_cell_fd'].cpu().numpy())
                     self.load_cell_log.append(info['load_cell'].cpu().numpy())
+                    self.srl_virtual_passive_pos_log.append(info['srl_virtual_passive_pos'].cpu().numpy())
+                    self.srl_virtual_load_cell_log.append(info['srl_virtual_load_cell'].cpu().numpy())
                     self._post_step(info)
                     
                     # 只记录第一个环境的动作
@@ -307,10 +311,14 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                             target_yaw = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.target_yaw_log], axis=0)
                             load_cell_fd_array = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.load_cell_fd_log], axis=0)
                             load_cell_array = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.load_cell_log], axis=0)
+                            srl_virtual_passive_pos_array = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.srl_virtual_passive_pos_log], axis=0)
+                            srl_virtual_load_cell_array = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.srl_virtual_load_cell_log], axis=0)
                             self.obs_log.clear()
                             self.target_yaw_log.clear()
                             self.load_cell_fd_log.clear()
                             self.load_cell_log.clear()
+                            self.srl_virtual_passive_pos_log.clear()
+                            self.srl_virtual_load_cell_log.clear()
                             num_dims = 51 
                             split1 = 17  # Part 1 包含 0 到 16 (共 17 维)
                             split2 = 34  # Part 2 包含 17 到 33 (共 17 维)
@@ -401,17 +409,17 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
 
                             # Load Cell Forces
                             fig4, axs4 = plt.subplots(4, 1, figsize=(10, 4 * 2.5), sharex=True)
-                            axs4[0].plot(load_cell_fd_array[:, 0], label='Force X')
-                            axs4[0].plot(load_cell_fd_array[:, 1], label='Force Y')
-                            axs4[0].plot(load_cell_fd_array[:, 2], label='Force Z')                          
-                            axs4[0].set_ylabel('Load Cell FD Forces')
+                            axs4[0].plot(srl_virtual_passive_pos_array[:, 0], label='Pos X')
+                            axs4[0].plot(srl_virtual_passive_pos_array[:, 1], label='Pos Y')
+                            axs4[0].plot(srl_virtual_passive_pos_array[:, 2], label='Pos Z')                          
+                            axs4[0].set_ylabel('srl virtual passive pos')
                             axs4[0].legend()
                             axs4[0].grid(True)
-                            axs4[0].set_ylim([-400, 400])
-                            axs4[1].plot(load_cell_fd_array[:, 3], label='Torque X')
-                            axs4[1].plot(load_cell_fd_array[:, 4], label='Torque Y')
-                            axs4[1].plot(load_cell_fd_array[:, 5], label='Torque Z')
-                            axs4[1].set_ylabel('Load Cell FD Torques')
+                            axs4[0].set_ylim([-0.005, 0.005])
+                            axs4[1].plot(srl_virtual_load_cell_array[:, 0], label='Pos X')
+                            axs4[1].plot(srl_virtual_load_cell_array[:, 1], label='Pos Y')
+                            axs4[1].plot(srl_virtual_load_cell_array[:, 2], label='Pos Z')
+                            axs4[1].set_ylabel('Virtual Load Cell Torques')
                             axs4[1].legend()
                             axs4[1].grid(True)
                             axs4[2].plot(load_cell_array[:, 0], label='Force X')
@@ -421,12 +429,13 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                             axs4[2].legend()
                             axs4[2].grid(True)
                             axs4[2].set_ylim([-400, 400])
-                            axs4[3].plot(load_cell_array[:, 3], label='Torque X')
-                            axs4[3].plot(load_cell_array[:, 4], label='Torque Y')
-                            axs4[3].plot(load_cell_array[:, 5], label='Torque Z')
-                            axs4[3].set_ylabel('Load Cell Torques')
+                            axs4[3].plot(srl_virtual_load_cell_array[:, 0], label='Torque X')
+                            axs4[3].plot(srl_virtual_load_cell_array[:, 1], label='Torque Y')
+                            axs4[3].plot(srl_virtual_load_cell_array[:, 2], label='Torque Z')
+                            axs4[3].set_ylabel('Virtual Load Cell Torques')
                             axs4[3].legend()
                             axs4[3].grid(True)
+                            axs4[3].set_ylim([-400, 400])
                             plt.suptitle("Load Cell Data")
                             plt.tight_layout()
                             plt.show()

@@ -166,7 +166,10 @@
 
 
       <body name="SRL" pos="-0.15 0 0.15">
-		<!-- <joint armature="0.00" axis="1 0 0" damping="4" stiffness="100"  type="slide" name="SRL_damping_x" pos="0 0 0" range="-0.025 0.025" /> -->
+		    <joint armature="0.00" axis="1 0 0" damping="3500" stiffness="150000"  type="slide" name="SRL_virtual_damping_x" pos="0 0 0" range="-0.005 0.005" />
+		    <joint armature="0.00" axis="0 1 0" damping="3500" stiffness="150000"  type="slide" name="SRL_virtual_damping_y" pos="0 0 0" range="-0.005 0.005" />
+        <joint armature="0.00" axis="0 0 1" damping="3500" stiffness="150000"  type="slide" name="SRL_virtual_damping_z" pos="0 0 0" range="-0.005 0.005" />
+
         <geom name="board" pos="0 0 0" size="0.0005 0.1 0.1 " type="box" density='100'/> 
         <body name="SRL_root" pos="-0.60 0 -0.05" euler="0 0 0">
           <joint armature="0.00" axis="0 0 1" damping="0" name="SRL_freejoint_z" pos="0.60 0 0" range="-20 20" stiffness="0"/>

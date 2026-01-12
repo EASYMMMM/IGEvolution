@@ -24,8 +24,8 @@ class AssetDesc:
 
 asset_descriptors = [
     # AssetDesc("mjcf/humanoid_srl_v2/hsrl_v2_pretrain.xml", False),
-    AssetDesc("mjcf/humanoid_srl/hsrl_mode1_v3.xml", False),
-    # AssetDesc("mjcf/humanoid_srl/hsrl_mode1_prismatic_test.xml", False),
+    # AssetDesc("mjcf/humanoid_srl/hsrl_mode1_v3.xml", False),
+    AssetDesc("mjcf/humanoid_srl/hsrl_mode1_prismatic_test.xml", False),
     AssetDesc("mjcf/humanoid_srl/hsrl_mode1.xml", False),
     # AssetDesc("mjcf/amp_humanoid_srl_V2_1.xml", False),
     AssetDesc("mjcf/nv_humanoid.xml", False),

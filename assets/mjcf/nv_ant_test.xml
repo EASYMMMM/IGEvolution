@@ -50,11 +50,11 @@
 
       <!-- 顶部加小球 -->
       <body name="board" pos = "0.0  0.0  1.4"  >
-        <site class="force-torque" name="board_sensor"/>
+        <!-- <site class="force-torque" name="board_sensor"/> -->
         <geom name="board" pos="0 0 0" size="0.2 0.2 0.0005" type="box" density='100'/> 
         <body name="upper_head" pos="0.0 0.0 0.5">
-          <joint axis="1 0 0" name="neck" pos="0.0 0.0 0.0" range="-0.5 0.5"  />
-          <geom name="head_geom" pos="0  0  0.5" size="0.2" type="sphere" density='2000' /> 
+          <joint axis="0 0 1" name="neck" pos="0.0 0.0 0.0" range="-0.01 0.01" type="slide" />
+          <geom name="head_geom" pos="0  0  0.5" size="0.1 0.1 0.1" type="box" density='4000' /> 
         </body>
       </body>
 
@@ -105,7 +105,8 @@
   </worldbody>
 
   <actuator>
-    <motor ctrllimited="true" ctrlrange="-1.0 1.0" joint="neck" gear="15"/>
+    <motor ctrllimited="true" ctrlrange="-0.5 0.5" joint="neck" gear="15"/>
+    <!-- <motor ctrllimited="true" ctrlrange="-1.0 1.0" joint="neck" gear="15"/>
     <motor ctrllimited="true" ctrlrange="-1.0 1.0" joint="hip_4" gear="15"/>
     <motor ctrllimited="true" ctrlrange="-1.0 1.0" joint="ankle_4" gear="15"/>
     <motor ctrllimited="true" ctrlrange="-1.0 1.0" joint="hip_1" gear="15"/>
@@ -113,6 +114,6 @@
     <motor ctrllimited="true" ctrlrange="-1.0 1.0" joint="hip_2" gear="15"/>
     <motor ctrllimited="true" ctrlrange="-1.0 1.0" joint="ankle_2" gear="15"/>
     <motor ctrllimited="true" ctrlrange="-1.0 1.0" joint="hip_3" gear="15"/>
-    <motor ctrllimited="true" ctrlrange="-1.0 1.0" joint="ankle_3" gear="15"/>
+    <motor ctrllimited="true" ctrlrange="-1.0 1.0" joint="ankle_3" gear="15"/> -->
   </actuator>
 </mujoco>

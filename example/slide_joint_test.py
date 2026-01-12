@@ -9,6 +9,7 @@ from isaacgym import gymapi, gymutil
 from isaacgym import gymtorch
 import torch
 import matplotlib.pyplot as plt
+import time
 
 def clamp(x, min_value, max_value):
     return max(min(x, max_value), min_value)
@@ -49,7 +50,9 @@ gym = gymapi.acquire_gym()
 
 # configure sim
 sim_params = gymapi.SimParams()
-sim_params.dt = dt = 1.0 / 60.0
+sim_params.gravity = gymapi.Vec3(0.0, -10, 0)
+# print(sim_params.gravity)
+sim_params.dt = dt = 1.0 / 200.0
 if args.physics_engine == gymapi.SIM_FLEX:
     pass
 elif args.physics_engine == gymapi.SIM_PHYSX:
@@ -181,8 +184,8 @@ sensor_pose = gymapi.Transform()
 
 # sensor props
 sensor_props = gymapi.ForceSensorProperties()
-sensor_props.enable_forward_dynamics_forces = True
-sensor_props.enable_constraint_solver_forces = False
+sensor_props.enable_forward_dynamics_forces = False
+sensor_props.enable_constraint_solver_forces = True
 sensor_props.use_world_frame = False
 
 board_ssidx = gym.create_asset_force_sensor(asset, board_idx, sensor_pose, sensor_props)
@@ -220,8 +223,8 @@ for i in range(num_envs):
 
     # 位控
     dof_prop["driveMode"] = gymapi.DOF_MODE_POS
-    dof_prop["stiffness"].fill(0)
-    dof_prop["damping"].fill(0)
+    dof_prop["stiffness"].fill(100000)
+    dof_prop["damping"].fill(3000)
     gym.set_actor_dof_properties(env, actor_handle, dof_prop)
 
     # 力控
@@ -292,6 +295,7 @@ force_data = []
 sensor_data_x = []
 sensor_data_y = []
 sensor_data_z = []
+dof_pos_data = []
 
 
 while not gym.query_viewer_has_closed(viewer):
@@ -301,19 +305,21 @@ while not gym.query_viewer_has_closed(viewer):
     sensor_value_x = vec_sensor_tensor[0,head_geom_ssidx, 0].item()  #board_ssidx  head_geom_ssidx 
     sensor_value_y = vec_sensor_tensor[0,head_geom_ssidx, 1].item() 
     sensor_value_z = vec_sensor_tensor[0,head_geom_ssidx, 2].item() 
-    print(f"Step {step_count} | Joint: {force_value}, Sensor: {sensor_value_z}, Pos: {position_value}")
+    dof_pos = _dof_pos[0,0].item() 
+    print(f"Step {step_count} | Joint: {force_value}, Sensor: {sensor_value_z},  DofPos: {dof_pos}, Pos: {position_value}")
     force_data.append(force_value)
     position_data.append(position_value)
     sensor_data_x.append(sensor_value_x)
     sensor_data_y.append(sensor_value_y)
     sensor_data_z.append(sensor_value_z)
+    dof_pos_data.append(dof_pos)
     step_count += 1
 
         # 添加外部力
-    if step_count > 180:
+    if step_count > 400:
         forces = torch.zeros((num_envs, num_bodies, 3),   dtype=torch.float)
         torques = torch.zeros((num_envs, num_bodies, 3),  dtype=torch.float)
-        forces[:, head_geom_idx, 1] = 200
+        forces[:, head_geom_idx, 1] = 1000
         gym.apply_rigid_body_force_tensors(sim, gymtorch.unwrap_tensor(forces), gymtorch.unwrap_tensor(torques), gymapi.ENV_SPACE)
 
     pd_tar[:,0] = 0.0
@@ -333,8 +339,9 @@ while not gym.query_viewer_has_closed(viewer):
     gym.simulate(sim)
     gym.fetch_results(sim, True)
 
+    time.sleep(1/200)
 
-    dof_positions[current_dof] = 0.05
+    # dof_positions[current_dof] = 0.05
  
     # update the viewer
     gym.step_graphics(sim)
@@ -370,13 +377,13 @@ ax1.set_xlabel("Time (s)")
 ax1.set_ylabel("Joint Force (N)", color="red")
 ax1.tick_params(axis="y", labelcolor="red")
 ax1.grid(True)
-ax1.set_ylim(-20, 0)
+ax1.set_ylim(-2000, 1000)
 
 
 # 右边 Y 轴：刚体位移
 ax2 = ax1.twinx()  # 创建共享 X 轴的第二个 Y 轴
-ax2.plot(time_axis, position_data, label="Body Position (m)", color="blue", linewidth=2)
-ax2.set_ylabel("Body Position (m)", color="blue")
+ax2.plot(time_axis, dof_pos_data, label="Dof Position (m)", color="blue", linewidth=2)
+ax2.set_ylabel("Dof Position (m)", color="blue")
 ax2.tick_params(axis="y", labelcolor="blue")
 
 # 标题和图例
@@ -397,7 +404,7 @@ ax4.set_ylabel("Force (N)", color="red")
 ax4.legend()
 ax4.tick_params(axis="y", labelcolor="red")
 ax4.grid(True)
-ax4.set_ylim(-1000, 1000)
+ax4.set_ylim(-3000, 3000)
 
 # 标题和图例
 plt.title("Rigid Body Sensor Force ")
