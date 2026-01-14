@@ -74,6 +74,7 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
         self.obs_log = []
         self.target_yaw_log = []
         self.load_cell_fd_log = []
+        self.srl_torques_log = []
         self.srl_virtual_passive_pos_log = []
         self.srl_virtual_load_cell_log = []
         self.load_cell_log = []
@@ -254,7 +255,7 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
 
                     obs = obs_dict['obs']  # shape: [num_envs, obs_dim]
                     if isinstance(obs, torch.Tensor):
-                        obs_np = obs.detach().cpu().numpy()[0, self.env.get_humanoid_obs_size():]  # 取第一个环境
+                        obs_np = obs.detach().cpu().numpy()[0, -self.obs_num_srl:]  # 取第一个环境
                     else:
                         obs_np = np.array(obs[0, :])
                     self.obs_log.append(obs_np)
@@ -263,6 +264,7 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                     self.load_cell_log.append(info['load_cell'].cpu().numpy())
                     self.srl_virtual_passive_pos_log.append(info['srl_virtual_passive_pos'].cpu().numpy())
                     self.srl_virtual_load_cell_log.append(info['srl_virtual_load_cell'].cpu().numpy())
+                    self.srl_torques_log.append(info['srl_torques'].cpu().numpy())
                     self._post_step(info)
                     
                     # 只记录第一个环境的动作
@@ -313,12 +315,14 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                             load_cell_array = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.load_cell_log], axis=0)
                             srl_virtual_passive_pos_array = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.srl_virtual_passive_pos_log], axis=0)
                             srl_virtual_load_cell_array = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.srl_virtual_load_cell_log], axis=0)
+                            srl_torques_array = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.srl_torques_log], axis=0)
                             self.obs_log.clear()
                             self.target_yaw_log.clear()
                             self.load_cell_fd_log.clear()
                             self.load_cell_log.clear()
                             self.srl_virtual_passive_pos_log.clear()
                             self.srl_virtual_load_cell_log.clear()
+                            self.srl_torques_log.clear()
                             num_dims = 51 
                             split1 = 17  # Part 1 包含 0 到 16 (共 17 维)
                             split2 = 34  # Part 2 包含 17 到 33 (共 17 维)
@@ -439,6 +443,99 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                             plt.suptitle("Load Cell Data")
                             plt.tight_layout()
                             plt.show()
+
+                            # srl torques
+                            # --- compute metrics ---
+                            dt = getattr(self.env, "control_dt", 0.015)  # 如果 env 里有 control_dt 就用它；没有就用你默认的 0.015
+                            metrics = torque_episode_metrics(
+                                srl_torques_array,         # (T,6)
+                                dt=dt,
+                                peak_nm=320.0,
+                                rated_nm=85.0,
+                                rated_cont_s=240.0,
+                                rms_window_s=1.0
+                            )
+
+                            J = srl_torques_array.shape[1]
+                            wj = metrics["worst_joint_by_equiv"]
+
+                            # --- pretty print to console ---
+                            print("\n========== SRL Motor Torque Episode Metrics ==========")
+                            print(f"episode_len = {metrics['episode_len_s']:.2f}s, dt = {metrics['dt']:.4f}s, win_steps = {metrics['win_steps']}")
+                            for j in range(J):
+                                print(
+                                    f"[J{j}] peak={metrics['peak_nm'][j]:.1f}  "
+                                    f"rms={metrics['rms_nm'][j]:.1f}  "
+                                    f"roll_rms_max(1s)={metrics['rolling_rms_max_nm'][j]:.1f}  "
+                                    f"t>rated={metrics['t_above_rated_s'][j]:.2f}s  "
+                                    f"max_cont>rated={metrics['max_cont_above_rated_s'][j]:.2f}s  "
+                                    f"t>peak={metrics['t_above_peak_s'][j]:.2f}s  "
+                                    f"equiv_rated_time={metrics['equiv_rated_time_s'][j]:.1f}s  "
+                                    f"margin_to_240s={metrics['thermal_margin_s'][j]:.1f}s"
+                                )
+                            print(f"worst_joint_by_equiv = J{wj}")
+                            print("======================================================\n")
+
+                            srl_dof_vel_array = obs_array[:, 16:22]   
+                            pmet = power_episode_metrics(srl_torques_array, srl_dof_vel_array, dt=dt, window_s=1.0)
+
+                            print("\n========== SRL Power Metrics (Mechanical) ==========")
+                            print(f"win_steps={pmet['win_steps']}")
+                            for j in range(srl_torques_array.shape[1]):
+                                print(
+                                    f"[J{j}] meanP={pmet['mean_P'][j]:.1f}W  "
+                                    f"mean|P|={pmet['mean_abs_P'][j]:.1f}W  "
+                                    f"rmsP={pmet['rms_P'][j]:.1f}W  "
+                                    f"roll_rms_max(1s)={pmet['rolling_rms_max_P'][j]:.1f}W  "
+                                    f"peak|P|={pmet['peak_abs_P'][j]:.1f}W  "
+                                    f"E_abs={pmet['E_abs'][j]:.1f}J  "
+                                    f"E_pos={pmet['E_pos'][j]:.1f}J  "
+                                    f"E_neg={pmet['E_neg'][j]:.1f}J"
+                                )
+                            print("TOTAL:",
+                                f"meanP={pmet['total']['mean_total_P']:.1f}W,",
+                                f"mean|P|={pmet['total']['mean_total_abs_P']:.1f}W,",
+                                f"rmsP={pmet['total']['rms_total_P']:.1f}W,",
+                                f"peak|P|={pmet['total']['peak_total_abs_P']:.1f}W,",
+                                f"E_abs={pmet['total']['E_total_abs']:.1f}J")
+                            print("====================================================\n")
+                            
+                            # --- plot ---
+                            fig5, axs5 = plt.subplots(2, 1, figsize=(10, 4 * 2.5), sharex=True)
+                            axs5[0].plot(srl_torques_array[:, 0], label='Joint 0')
+                            axs5[0].plot(srl_torques_array[:, 1], label='Joint 1')
+                            axs5[0].plot(srl_torques_array[:, 2], label='Joint 2')
+                            axs5[0].set_ylabel('srl torques')
+                            axs5[0].legend()
+                            axs5[0].grid(True)
+                            axs5[0].set_ylim([-300, 300])
+
+                            axs5[1].plot(srl_torques_array[:, 3], label='Joint 3')
+                            axs5[1].plot(srl_torques_array[:, 4], label='Joint 4')
+                            axs5[1].plot(srl_torques_array[:, 5], label='Joint 5')
+                            axs5[1].set_ylabel('srl torques')
+                            axs5[1].legend()
+                            axs5[1].grid(True)
+                            axs5[1].set_ylim([-300, 300])
+
+                            # --- add a compact summary box on the plot ---
+                            summary = (
+                                f"len={metrics['episode_len_s']:.1f}s  dt={metrics['dt']:.4f}s\n"
+                                f"Worst(J{wj}): peak={metrics['peak_nm'][wj]:.1f}  rms={metrics['rms_nm'][wj]:.1f}\n"
+                                f"t>rated={metrics['t_above_rated_s'][wj]:.2f}s  max_cont>rated={metrics['max_cont_above_rated_s'][wj]:.2f}s\n"
+                                f"equiv_rated_time={metrics['equiv_rated_time_s'][wj]:.1f}s  margin_to_240s={metrics['thermal_margin_s'][wj]:.1f}s"
+                            )
+                            axs5[0].text(
+                                0.01, 0.98, summary,
+                                transform=axs5[0].transAxes,
+                                va='top', ha='left',
+                                fontsize=9,
+                                bbox=dict(facecolor='white', alpha=0.75, edgecolor='none')
+                            )
+
+                            plt.suptitle("Srl Torques + Episode Metrics")
+                            plt.tight_layout()  
+                            plt.show()                           
 
 
                         if self._save_data:
@@ -903,3 +1000,153 @@ def lowpass_filter(data, cutoff=2.5, fs=30.0, order=4):
     b, a = butter(order, normal_cutoff, btype='low', analog=False)
     filtered = filtfilt(b, a, data)
     return filtered
+
+
+def torque_episode_metrics(tau: np.ndarray,
+                           dt: float,
+                           peak_nm: float = 320.0,
+                           rated_nm: float = 85.0,
+                           rated_cont_s: float = 240.0,
+                           rms_window_s: float = 1.0):
+    """
+    tau: (T, J) torque in N*m
+    dt : seconds per step
+    returns: dict of per-joint metrics + some episode-level helpers
+    """
+    tau = np.asarray(tau)
+    assert tau.ndim == 2, f"tau should be (T,J), got {tau.shape}"
+    T, J = tau.shape
+    abs_tau = np.abs(tau)
+
+    # basic
+    peak = abs_tau.max(axis=0)                      # (J,)
+    mean_abs = abs_tau.mean(axis=0)
+    rms_all = np.sqrt(np.mean(tau**2, axis=0))
+
+    # threshold times
+    above_rated = abs_tau > rated_nm
+    above_peak  = abs_tau > peak_nm
+    t_above_rated = above_rated.sum(axis=0) * dt
+    t_above_peak  = above_peak.sum(axis=0) * dt
+
+    # max continuous time above rated
+    max_cont_above_rated = np.zeros(J, dtype=np.float64)
+    for j in range(J):
+        run = 0
+        best = 0
+        for m in above_rated[:, j]:
+            run = run + 1 if m else 0
+            best = max(best, run)
+        max_cont_above_rated[j] = best * dt
+
+    # rolling RMS over window (e.g. 1 second)
+    win = max(1, int(round(rms_window_s / max(dt, 1e-9))))
+    if win <= 1:
+        rolling_rms_max = rms_all.copy()
+    else:
+        kernel = np.ones(win, dtype=np.float64) / win
+        # valid conv on tau^2, then sqrt
+        rolling_rms = np.sqrt(np.vstack([
+            np.convolve(tau[:, j]**2, kernel, mode="valid")
+            for j in range(J)
+        ]).T)  # (T-win+1, J)
+        rolling_rms_max = rolling_rms.max(axis=0)
+
+    # I^2 t style "rated-equivalent time" (heuristic thermal accumulation)
+    # equiv_time = ∫ (|tau|/rated)^2 dt
+    equiv_rated_time = np.sum((abs_tau / rated_nm)**2, axis=0) * dt
+    margin_s = rated_cont_s - equiv_rated_time  # >0 means "below 4-min rated thermal budget" under this heuristic
+
+    # helpers
+    episode_len_s = T * dt
+    worst_joint_by_equiv = int(np.argmax(equiv_rated_time))
+
+    return {
+        "dt": dt,
+        "T": T,
+        "episode_len_s": episode_len_s,
+        "peak_nm": peak,
+        "mean_abs_nm": mean_abs,
+        "rms_nm": rms_all,
+        "rolling_rms_max_nm": rolling_rms_max,
+        "t_above_rated_s": t_above_rated,
+        "max_cont_above_rated_s": max_cont_above_rated,
+        "t_above_peak_s": t_above_peak,
+        "equiv_rated_time_s": equiv_rated_time,
+        "thermal_margin_s": margin_s,
+        "worst_joint_by_equiv": worst_joint_by_equiv,
+        "win_steps": win,
+    }
+
+
+def power_episode_metrics(tau: np.ndarray,
+                          omega: np.ndarray,
+                          dt: float,
+                          window_s: float = 1.0):
+    """
+    tau:   (T,J) N*m
+    omega: (T,J) rad/s
+    dt: seconds per step
+    """
+    tau = np.asarray(tau)
+    omega = np.asarray(omega)
+    assert tau.shape == omega.shape and tau.ndim == 2, f"shape mismatch: {tau.shape} vs {omega.shape}"
+
+    P = tau * omega                       # mechanical power, W
+    P_abs = np.abs(P)
+
+    mean_P = P.mean(axis=0)               # signed average power (regen can cancel)
+    mean_abs_P = P_abs.mean(axis=0)       # average absolute power (better for “effort”)
+    rms_P = np.sqrt(np.mean(P**2, axis=0))
+    peak_abs_P = P_abs.max(axis=0)
+
+    # positive/negative power split (useful: drive vs braking/regen)
+    P_pos = np.clip(P, 0.0, None)
+    P_neg = np.clip(P, None, 0.0)
+    mean_P_pos = P_pos.mean(axis=0)
+    mean_P_neg = P_neg.mean(axis=0)       # negative number
+
+    # energies (J)
+    E_pos = np.sum(P_pos, axis=0) * dt
+    E_neg = np.sum(P_neg, axis=0) * dt    # negative
+    E_abs = np.sum(P_abs, axis=0) * dt
+
+    # rolling RMS power
+    win = max(1, int(round(window_s / max(dt, 1e-9))))
+    if win <= 1:
+        rolling_rms_max = rms_P.copy()
+    else:
+        kernel = np.ones(win, dtype=np.float64) / win
+        rolling_rms = np.sqrt(np.vstack([
+            np.convolve(P[:, j]**2, kernel, mode="valid")
+            for j in range(P.shape[1])
+        ]).T)
+        rolling_rms_max = rolling_rms.max(axis=0)
+
+    # episode-level total power (sum joints)
+    P_total = P.sum(axis=1)               # (T,)
+    metrics_total = {
+        "mean_total_P": float(P_total.mean()),
+        "mean_total_abs_P": float(np.abs(P_total).mean()),
+        "rms_total_P": float(np.sqrt(np.mean(P_total**2))),
+        "peak_total_abs_P": float(np.max(np.abs(P_total))),
+        "E_total_pos": float(np.sum(np.clip(P_total, 0.0, None)) * dt),
+        "E_total_neg": float(np.sum(np.clip(P_total, None, 0.0)) * dt),
+        "E_total_abs": float(np.sum(np.abs(P_total)) * dt),
+    }
+
+    return {
+        "P": P,
+        "mean_P": mean_P,
+        "mean_abs_P": mean_abs_P,
+        "rms_P": rms_P,
+        "peak_abs_P": peak_abs_P,
+        "mean_P_pos": mean_P_pos,
+        "mean_P_neg": mean_P_neg,
+        "E_pos": E_pos,
+        "E_neg": E_neg,
+        "E_abs": E_abs,
+        "rolling_rms_max_P": rolling_rms_max,
+        "win_steps": win,
+        "total": metrics_total,
+    }

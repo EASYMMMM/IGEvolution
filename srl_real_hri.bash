@@ -56,13 +56,13 @@ python SRL_Evo_train.py test=True task=SRL_Real_HRI  num_envs=4  checkpoint=runs
 
 # (1.9) 添加虚拟阻尼传感
 python SRL_Evo_train.py task=SRL_Real_HRI headless=True wandb_project=SRL_Evo wandb_activate=True \
-    experiment=SRL_Real_HRI   max_iterations=3000   train.params.config.humanoid_checkpoint=runs/Humanoid_175_Pretrain_s2_30-13-53-51/nn/Humanoid_175_Pretrain_s2_30-13-53-56.pth \
+    experiment=SRL_Real_HRI   max_iterations=2000   train.params.config.humanoid_checkpoint=runs/Humanoid_175_Pretrain_s2_30-13-53-51/nn/Humanoid_175_Pretrain_s2_30-13-53-56.pth \
     train.params.config.srl_teacher_checkpoint=runs/SRL_Real_s4_04-21-00-44/nn/SRL_Real_s4.pth \
     train.params.config.dagger_loss_coef=1 train.params.config.sym_a_loss_coef=1.0  \
-    task.env.contact_force_cost_scale=2.0  task.env.pelvis_height_reward_scale=2.0 \
+    task.env.contact_force_cost_scale=0.5  task.env.pelvis_height_reward_scale=2.0 \
     task.env.no_fly_penalty_scale=5.0  task.env.gait_similarity_penalty_scale=5.0 \
     task.env.progress_reward_scale=0.0 task.env.vel_tracking_reward_scale=3.0\
     train.params.config.dagger_anneal_k=1e-5  task.env.srl_free_actions_num=5   task.env.clearance_penalty_scale=10 \
-    task.env.asset.assetFileName="mjcf/srl_real_hri/srl_real_hri_HXYK_175_06dis.xml"  train.params.config.central_critic=True 
+    task.env.asset.assetFileName="mjcf/srl_real_hri/srl_real_hri_HXYK_175_mesh.xml"   
 # check 
-python SRL_Evo_train.py test=True task=SRL_Real_HRI  num_envs=4  checkpoint=runs/SRL_Real_HRI_5free_11-20-58-44/nn/SRL_Real_HRI_5free_11-20-58-53.pth    force_render=True task.env.cameraFollow=True  task.env.srl_free_actions_num=5  task.env.asset.assetFileName="mjcf/srl_real_hri/srl_real_hri_HXYK_175_06dis.xml"
+python SRL_Evo_train.py test=True task=SRL_Real_HRI  num_envs=4  checkpoint=runs/SRL_Real_HRI_13-19-53-53/nn/SRL_Real_HRI_13-19-54-05.pth   task.env.episodeLength=2000    force_render=True task.env.cameraFollow=True  task.env.srl_free_actions_num=5  task.env.asset.assetFileName="mjcf/srl_real_hri/srl_real_hri_HXYK_175_mesh.xml"

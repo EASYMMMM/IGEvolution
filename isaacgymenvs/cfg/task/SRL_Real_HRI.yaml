@@ -77,6 +77,17 @@ env:
   actions_smoothness_scale: 0.1
   contact_force_cost_scale: 0.0
   
+  srl_motor_opt:
+    srl_max_effort: 300     # 最大力矩限制
+    peak_start_ratio: 0.65   # 从 65% 额定扭矩开始惩罚“接近峰值”
+    peak_window_tau_s: 0.30  # 峰值窗口衰减时间常数（秒）
+    peak_cost_scale: 1.0    # near-peak 惩罚权重（先别太大）
+    thermal_tau_s: 1.5       # 热 EMA 时间常数（秒）
+    thermal_cost_scale: 0.05 # 过热惩罚权重（通常比 peak 小）
+    power_cost_scale: 0.00  # 如果你想省电再开（比如 0.01）
+    omega_ref: 14.0         # 你的 SRL velocity fill(14.0) 对齐
+    rated_ratio: 0.28      # 额定扭矩比率（用于热计算）
+
   torque_threshold: 50  # 力矩惩罚施加阈值
   upper_reward_w: 1 
   srl_torque_reward_w: 0.0005 # 外肢体力矩惩罚 torque cost 
