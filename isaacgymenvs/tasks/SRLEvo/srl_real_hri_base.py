@@ -62,6 +62,9 @@ class SRL_Real_HRI_Base(VecTask):
         self.foot_clearance = self.cfg["env"]["foot_clearance"]
         self.death_cost = self.cfg["env"]["deathCost"]
         self.srl_termination_height = self.cfg["env"]["srlTerminationHeight"]
+        self.hri_virtual_stiffness = self.cfg["env"].get("hri_virtual_stiffness", 150000.0)
+        self.hri_virtual_damping = self.cfg["env"].get("hri_virtual_damping", 3000.0)
+        self.hri_virtual_force_max = self.cfg["env"].get("hri_virtual_force_max", 1000.0)
 
         # --- reward ---
         self.alive_reward_scale = self.cfg["env"]["alive_reward_scale"]
@@ -532,22 +535,34 @@ class SRL_Real_HRI_Base(VecTask):
                 dof_prop[-srl_start_id:]["effort"].fill(self._srl_max_effort)
                 dof_prop[-srl_start_id:]["driveMode"] = gymapi.DOF_MODE_EFFORT
                 if not srl_free_joint_x_idx == -1:
-                    dof_prop[srl_free_joint_x_idx]["effort"].fill(200.0)
-                    dof_prop[srl_free_joint_x_idx]["driveMode"] = gymapi.DOF_MODE_NONE
+                    dof_prop[srl_free_joint_x_idx]["effort"] = 200.0
+                    dof_prop[srl_free_joint_x_idx]["stiffness"] = 0.0
+                    dof_prop[srl_free_joint_x_idx]["damping"] = 0.0
+                    dof_prop[srl_free_joint_x_idx]["driveMode"] = gymapi.DOF_MODE_EFFORT
                 if not srl_free_joint_y_idx == -1:
-                    dof_prop[srl_free_joint_y_idx]["effort"].fill(200.0)
-                    dof_prop[srl_free_joint_y_idx]["driveMode"] = gymapi.DOF_MODE_NONE
+                    dof_prop[srl_free_joint_y_idx]["effort"] = 200.0
+                    dof_prop[srl_free_joint_y_idx]["stiffness"] = 0.0
+                    dof_prop[srl_free_joint_y_idx]["damping"] = 0.0
+                    dof_prop[srl_free_joint_y_idx]["driveMode"] = gymapi.DOF_MODE_EFFORT
                 if not srl_free_joint_z_idx == -1:
-                    dof_prop[srl_free_joint_z_idx]["effort"].fill(200.0)
-                    dof_prop[srl_free_joint_z_idx]["driveMode"] = gymapi.DOF_MODE_NONE
+                    dof_prop[srl_free_joint_z_idx]["effort"] = 200.0
+                    dof_prop[srl_free_joint_z_idx]["stiffness"] = 0.0
+                    dof_prop[srl_free_joint_z_idx]["damping"] = 0.0
+                    dof_prop[srl_free_joint_z_idx]["driveMode"] = gymapi.DOF_MODE_EFFORT
                 if not self.srl_virtual_damping_x_idx == -1:
-                    dof_prop[self.srl_virtual_damping_x_idx]["effort"].fill(50000.0)
+                    dof_prop[self.srl_virtual_damping_x_idx]["effort"] = 5000
+                    dof_prop[self.srl_virtual_damping_x_idx]["stiffness"] = self.hri_virtual_stiffness
+                    dof_prop[self.srl_virtual_damping_x_idx]["damping"] = self.hri_virtual_damping
                     dof_prop[self.srl_virtual_damping_x_idx]["driveMode"] = gymapi.DOF_MODE_POS
                 if not self.srl_virtual_damping_y_idx == -1:
-                    dof_prop[self.srl_virtual_damping_y_idx]["effort"].fill(50000.0)
+                    dof_prop[self.srl_virtual_damping_y_idx]["effort"] = 5000
+                    dof_prop[self.srl_virtual_damping_y_idx]["stiffness"] = self.hri_virtual_stiffness
+                    dof_prop[self.srl_virtual_damping_y_idx]["damping"] = self.hri_virtual_damping
                     dof_prop[self.srl_virtual_damping_y_idx]["driveMode"] = gymapi.DOF_MODE_POS
                 if not self.srl_virtual_damping_z_idx == -1:
-                    dof_prop[self.srl_virtual_damping_z_idx]["effort"].fill(50000.0)
+                    dof_prop[self.srl_virtual_damping_z_idx]["effort"] = 5000
+                    dof_prop[self.srl_virtual_damping_z_idx]["stiffness"] = self.hri_virtual_stiffness
+                    dof_prop[self.srl_virtual_damping_z_idx]["damping"] = self.hri_virtual_damping
                     dof_prop[self.srl_virtual_damping_z_idx]["driveMode"] = gymapi.DOF_MODE_POS
             self.gym.set_actor_dof_properties(env_ptr, handle, dof_prop)
 
@@ -781,7 +796,7 @@ class SRL_Real_HRI_Base(VecTask):
         # PD force: q_tar = 0
         F = -k * q - c * qd     # [N,3] (N)
         # effort 上限（你设为 50000）
-        F = torch.clamp(F, -50000.0, 50000.0)
+        F = torch.clamp(F,-self.hri_virtual_force_max, self.hri_virtual_force_max)
 
         wrench = torch.zeros((dof_pos.shape[0], 6), device=dof_pos.device, dtype=dof_pos.dtype)
         wrench[:, 0:3] = - F
@@ -974,6 +989,12 @@ class SRL_Real_HRI_Base(VecTask):
             torques = self.p_gains*(pd_tar - self._dof_pos) - self.d_gains*self._dof_vel
             self.torques = torch.clip(torques, -self.torque_limits, self.torque_limits).view(self.torques.shape)
             self.torques[:,:self.get_humanoid_action_size()+self.get_srl_free_action_size()] = 0.00
+            # --- virtual interaction force: F = -k*q - c*qdot, clamp to max ---
+            # q  = self._dof_pos[:, self.srl_virtual_damping_ids]
+            # qd = self._dof_vel[:, self.srl_virtual_damping_ids]
+            # Fv = - self.hri_virtual_stiffness * q - self.hri_virtual_damping * qd
+            # Fv = torch.clamp(Fv, -self.hri_virtual_force_max, self.hri_virtual_force_max)
+            # self.torques[:, self.srl_virtual_damping_ids] = Fv
             self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(self.torques))
         if self._pd_control:
             pd_tar = self._action_to_pd_targets(_action) # pd_tar.shape: [num_actors, num_dofs]
@@ -1397,6 +1418,11 @@ def compute_srl_observations(
     left_thigh_rel_euler  = quat_to_euler_ypr(humanoid_legs_rel_rot[ :, 2, :])
     left_shin_rel_euler   = quat_to_euler_ypr(humanoid_legs_rel_rot[ :, 3, :])
 
+    right_thigh_rel_pitch = right_thigh_rel_euler[:,1:2] 
+    right_shin_rel_pitch  = right_shin_rel_euler[:,1:2]
+    left_thigh_rel_pitch  = left_thigh_rel_euler[:,1:2]
+    left_shin_rel_pitch   = left_shin_rel_euler[:,1:2]
+
     yaw   = euler[:, 0]
     delta   = target_yaw - yaw                 
     yaw_err = torch.atan2(torch.sin(delta), torch.cos(delta))  # (-pi, pi]
@@ -1453,10 +1479,10 @@ def compute_srl_observations(
                      cos_phase,                          # 1    29
                      humanoid_euler_err,                 # 3    30:32
                      load_cell_force * obs_scales[4],    # 6    33:38
-                     right_thigh_rel_euler,              # 3    39:41
-                     right_shin_rel_euler,               # 3    42:44
-                     left_thigh_rel_euler,               # 3    45:47
-                     left_shin_rel_euler,                # 3    48:50
+                     right_thigh_rel_pitch,              # 3    39
+                     right_shin_rel_pitch,               # 3    40
+                     left_thigh_rel_pitch,               # 3    41
+                     left_shin_rel_pitch,                # 3    42
                     ), dim=-1)
     
     teacher_obs = torch.cat((root_h,                             # 1    0
@@ -1528,6 +1554,11 @@ def compute_srl_observations_mirrored(
     left_thigh_rel_euler  = quat_to_euler_ypr(humanoid_legs_rel_rot[ :, 2, :])
     left_shin_rel_euler   = quat_to_euler_ypr(humanoid_legs_rel_rot[ :, 3, :])
 
+    right_thigh_rel_pitch = right_thigh_rel_euler[:,1:2] 
+    right_shin_rel_pitch  = right_shin_rel_euler[:,1:2]
+    left_thigh_rel_pitch  = left_thigh_rel_euler[:,1:2]
+    left_shin_rel_pitch   = left_shin_rel_euler[:,1:2]
+
     yaw   = euler[:, 0]
     delta   = target_yaw - yaw                 
     yaw_err = torch.atan2(torch.sin(delta), torch.cos(delta))  # (-pi, pi]
@@ -1554,14 +1585,15 @@ def compute_srl_observations_mirrored(
     load_cell_force[:,5] =  -load_cell_force[:,5]
     humanoid_euler_err[:,0] = -humanoid_euler_err[:,0]
     humanoid_euler_err[:,2] = -humanoid_euler_err[:,2]
-    right_thigh_rel_euler[:,0] = -right_thigh_rel_euler[:,0]
-    right_thigh_rel_euler[:,2] = -right_thigh_rel_euler[:,2]
-    right_shin_rel_euler[:,0]  = -right_shin_rel_euler[:,0]
-    right_shin_rel_euler[:,2]  = -right_shin_rel_euler[:,2]
-    left_thigh_rel_euler[:,0]  = -left_thigh_rel_euler[:,0]
-    left_thigh_rel_euler[:,2]  = -left_thigh_rel_euler[:,2]
-    left_shin_rel_euler[:,0]  = -left_shin_rel_euler[:,0]
-    left_shin_rel_euler[:,2]  = -left_shin_rel_euler[:,2]
+
+    # right_thigh_rel_euler[:,0] = -right_thigh_rel_euler[:,0]
+    # right_thigh_rel_euler[:,2] = -right_thigh_rel_euler[:,2]
+    # right_shin_rel_euler[:,0]  = -right_shin_rel_euler[:,0]
+    # right_shin_rel_euler[:,2]  = -right_shin_rel_euler[:,2]
+    # left_thigh_rel_euler[:,0]  = -left_thigh_rel_euler[:,0]
+    # left_thigh_rel_euler[:,2]  = -left_thigh_rel_euler[:,2]
+    # left_shin_rel_euler[:,0]  = -left_shin_rel_euler[:,0]
+    # left_shin_rel_euler[:,2]  = -left_shin_rel_euler[:,2]
 
     # heading_proj[:,1] = -heading_proj[:,1]
 
@@ -1589,11 +1621,11 @@ def compute_srl_observations_mirrored(
                      sin_phase,    
                      cos_phase,     
                      humanoid_euler_err,                  
-                     load_cell_force * obs_scales[4],       # 6      
-                     right_thigh_rel_euler,              # 3    39:41
-                     right_shin_rel_euler,               # 3    42:44
-                     left_thigh_rel_euler,               # 3    45:47
-                     left_shin_rel_euler,                # 3    48:50              
+                     load_cell_force * obs_scales[4],       # 6   
+                     right_thigh_rel_pitch,              
+                     right_shin_rel_pitch,      
+                     left_thigh_rel_pitch,               
+                     left_shin_rel_pitch,                      
                     ), dim=-1)
     return obs  
 
@@ -1783,10 +1815,10 @@ def compute_srl_reward(
     #                  cos_phase,                          # 1    29
     #                  humanoid_euler_err,                 # 3    30:32
     #                  load_cell_force * obs_scales[4],    # 6    33:38
-    #                  right_thigh_rel_euler,              # 3    39:41
-    #                  right_shin_rel_euler,               # 3    42:44
-    #                  left_thigh_rel_euler,               # 3    45:47
-    #                  left_shin_rel_euler,                # 3    48:50
+    #                  right_thigh_rel_euler,              # 3    39
+    #                  right_shin_rel_euler,               # 3    40
+    #                  left_thigh_rel_euler,               # 3    41
+    #                  left_shin_rel_euler,                # 3    42
     #                 ), dim=-1)
 
     # --- Task Command ---
@@ -1876,43 +1908,34 @@ def compute_srl_reward(
     # contact_force_cost = w_soft * soft + w_hard * hard
 
     # --- Interaction Force (support upward Z around +50N) ---
-    load_cell_force = obs_buf[:, 33:36]  # (Fx, Fy, Fz) in OBS units (maybe already scaled)
-    Fx, Fy, Fz = load_cell_force[:, 0], load_cell_force[:, 1], load_cell_force[:, 2]
-
-    # ====== IMPORTANT: choose target in the SAME unit as obs_buf ======
-    # If obs_scales["load_cell"] = 0.01 and raw force is in Newton:
-    Fz_target = 0.50   # +50N -> 50 * 0.01 = 0.50
-    # If your obs is already in Newton, use: Fz_target = 50.0
-    # 允许误差带（越小越“硬”）
-    Fz_tol = 0.20      # ~20N -> 0.20 in obs units (if scale=0.01)
-    # 1) 支撑目标：Fz 逼近 Fz_target（最小在目标处）
-    Fz_band = 0.20   # ~20N (if scale=0.01)
-    err = torch.abs(Fz - Fz_target)
-    support_cost = torch.tanh(torch.clamp(err - Fz_band, min=0.0) / Fz_tol) ** 2
-    # 2) 反向力：强惩罚 Fz < 0（向下拉/压反方向）
-    Fz_neg_tol = 0.10  # ~10N
-    neg_cost = torch.tanh(torch.clamp(-Fz, min=0.0) / Fz_neg_tol) ** 2
-    # 3) 剪切力：抑制 Fx,Fy（避免横向拖拽/摩擦）
+    load_cell_force = obs_buf[:, 33:36]
+    Fx, Fy, Fz = load_cell_force[:,0], load_cell_force[:,1], load_cell_force[:,2]
+    # 支撑：至少 30N，超过 100N 不再额外追求（可按你想要的力度改）
+    Fz_min  = 0.30   # 30N
+    Fz_cap  = 1.00   # 100N
+    Fz_tol  = 0.20   # 20N
+    # 低于 Fz_min 才罚（鼓励“给够就行”）
+    lack = torch.clamp(Fz_min - Fz, min=0.0)
+    support_cost = torch.tanh(lack / Fz_tol) ** 2
+    # 反向力（强罚）
+    neg_cost = torch.tanh(torch.clamp(-Fz, min=0.0) / 0.10) ** 2   # 10N
+    # 剪切：稍微放宽，并可用剪切比（推荐）
     shear = torch.sqrt(Fx**2 + Fy**2)
-    shear_dead = 0.10  # ~10N
-    shear_scale = 0.20 # ~20N
+    shear_dead  = 0.20   # 20N
+    shear_scale = 0.20   # 20N
     shear_cost = torch.tanh(torch.clamp(shear - shear_dead, min=0.0) / shear_scale) ** 2
-    # 4) 过大力硬约束：避免“为了凑Fz而猛顶”
+    # 过大力（硬约束按 400N）
     f_norm = torch.sqrt(Fx**2 + Fy**2 + Fz**2)
-    F_hard = 1.50      # ~150N (if scale=0.01)
-    Fhs    = 0.50      # ramp
+    F_hard = 4.00   # 400N
+    Fhs    = 0.50   # 50N ramp
     hard_cost = torch.tanh(torch.clamp(f_norm - F_hard, min=0.0) / Fhs) ** 2
-    # task-aware：站立更需要稳定支撑；行走稍微放松（可按需要改成 1.0 恒定）
-    support_coef = torch.where(target_vel_x < 0.1,
-                            torch.ones_like(Fz) * 1.0,   # standing
-                            torch.ones_like(Fz) * 0.5)   # walking
-    # 总 force cost（你后面会乘 contact_force_cost_scale 再减掉）
+    # 人机交互力惩罚项
     contact_force_cost = (
-        1.0 * support_coef * support_cost +
-        0.6 * shear_cost +
+        1.0 * support_cost +
+        0.8 * shear_cost +
         2.0 * neg_cost +
         2.0 * hard_cost
-        )
+    )
 
     # --- No fly --- 
     contact_threshold = 0.040  

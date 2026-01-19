@@ -44,7 +44,7 @@ env:
     restitution: 0.0
 
   humanoid_obs_num: 117 # 111 + 6D轨迹跟踪观测
-  srl_obs_num: 51
+  srl_obs_num: 43
   srl_obs_frame_stack: 5  
   srl_command_num: 3
   teacher_srl_obs_num: 30
@@ -57,6 +57,10 @@ env:
 
   deathCost: -0.0
   srlTerminationHeight: 0.75
+
+  hri_virtual_stiffness: 20000
+  hri_virtual_damping: 1200
+  hri_virtual_force_max: 5000
 
   # reward weights
   alive_reward_scale: 1.0

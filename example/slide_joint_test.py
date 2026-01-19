@@ -302,9 +302,9 @@ while not gym.query_viewer_has_closed(viewer):
     # get_actor_dof_forces
     force_value = dof_force_tensor[0, 0].item()       # 关节0的受力
     position_value = rigid_body_pos[0, 1, 1].item()   # 第二个刚体的y轴位移
-    sensor_value_x = vec_sensor_tensor[0,head_geom_ssidx, 0].item()  #board_ssidx  head_geom_ssidx 
-    sensor_value_y = vec_sensor_tensor[0,head_geom_ssidx, 1].item() 
-    sensor_value_z = vec_sensor_tensor[0,head_geom_ssidx, 2].item() 
+    sensor_value_x = vec_sensor_tensor[0,board_ssidx, 0].item()  #board_ssidx  head_geom_ssidx 
+    sensor_value_y = vec_sensor_tensor[0,board_ssidx, 1].item() 
+    sensor_value_z = vec_sensor_tensor[0,board_ssidx, 2].item() 
     dof_pos = _dof_pos[0,0].item() 
     print(f"Step {step_count} | Joint: {force_value}, Sensor: {sensor_value_z},  DofPos: {dof_pos}, Pos: {position_value}")
     force_data.append(force_value)
@@ -319,7 +319,7 @@ while not gym.query_viewer_has_closed(viewer):
     if step_count > 400:
         forces = torch.zeros((num_envs, num_bodies, 3),   dtype=torch.float)
         torques = torch.zeros((num_envs, num_bodies, 3),  dtype=torch.float)
-        forces[:, head_geom_idx, 1] = 1000
+        forces[:, head_geom_idx, 1] = 3000
         gym.apply_rigid_body_force_tensors(sim, gymtorch.unwrap_tensor(forces), gymtorch.unwrap_tensor(torques), gymapi.ENV_SPACE)
 
     pd_tar[:,0] = 0.0
