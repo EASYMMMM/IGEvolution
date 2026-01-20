@@ -54,7 +54,7 @@ python SRL_Evo_train.py task=SRL_Real_HRI headless=True wandb_project=SRL_Evo wa
 # check 
 python SRL_Evo_train.py test=True task=SRL_Real_HRI  num_envs=4  checkpoint=runs/SRL_Real_HRI_07-17-41-11/nn/SRL_Real_HRI_07-17-41-17.pth    force_render=True task.env.cameraFollow=True  task.env.srl_free_actions_num=2  task.env.asset.assetFileName="mjcf/srl_real_hri/srl_real_hri_HXYK_175_mesh.xml"
 
-# (1.9) 添加虚拟阻尼传感
+# (1.20) 添加虚拟阻尼传感
 python SRL_Evo_train.py task=SRL_Real_HRI headless=True wandb_project=SRL_Evo wandb_activate=True \
     experiment=SRL_Real_HRI   max_iterations=2000   train.params.config.humanoid_checkpoint=runs/Humanoid_175_Pretrain_s2_30-13-53-51/nn/Humanoid_175_Pretrain_s2_30-13-53-56.pth \
     train.params.config.srl_teacher_checkpoint=runs/SRL_Real_s4_04-21-00-44/nn/SRL_Real_s4.pth \
@@ -65,4 +65,4 @@ python SRL_Evo_train.py task=SRL_Real_HRI headless=True wandb_project=SRL_Evo wa
     train.params.config.dagger_anneal_k=1e-5  task.env.srl_free_actions_num=5   task.env.clearance_penalty_scale=10 \
     task.env.asset.assetFileName="mjcf/srl_real_hri/srl_real_hri_HXYK_175_mesh.xml"   
 # check 
-python SRL_Evo_train.py test=True task=SRL_Real_HRI  num_envs=4  checkpoint=runs/SRL_Real_HRI_mirror_19-16-16-00/nn/SRL_Real_HRI_mirror_19-16-16-06.pth     task.env.episodeLength=2000    force_render=True task.env.cameraFollow=True  task.env.srl_free_actions_num=5  task.env.asset.assetFileName="mjcf/srl_real_hri/srl_real_hri_HXYK_175_mesh.xml"
+python SRL_Evo_train.py test=True task=SRL_Real_HRI  num_envs=4  checkpoint=runs/SRL_Real_HRI_20-11-27-59/nn/SRL_Real_HRI_20-11-28-05.pth     task.env.episodeLength=2000    force_render=True task.env.cameraFollow=True  task.env.srl_free_actions_num=5  task.env.asset.assetFileName="mjcf/srl_real_hri/srl_real_hri_HXYK_175_mesh.xml"

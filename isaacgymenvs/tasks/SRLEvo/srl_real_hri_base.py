@@ -1740,19 +1740,33 @@ def compute_humanoid_reward(obs_buf, dof_pos, dof_vel, dof_vel_prev, humanoid_ta
 
     # --- Load Cell Force ---
     load_cell_force = load_cell_sensor[:, 0:3]
-    f = torch.norm(load_cell_force, dim=-1)          # kN
-    F0 = 0.30   # deadband: <=50N basically no penalty (conservative)
-    Fs = 0.30   # scale: 50N scale of growth
-    F_hard = 1.50  # hard safety threshold: 300N
-    Fhs    = 0.5   # 100N  hard penalty ramp scale
-    x = torch.clamp((f - F0) / Fs, min=0.0)
-    soft = torch.tanh(x) ** 2
-    xh = torch.clamp((f - F_hard) / Fhs, min=0.0)
-    hard = torch.tanh(xh) ** 2
-    w_soft = 0.5   # conservative but not too dominating; can try 0.2~0.8
-    w_hard = 2.0   # makes big-force episodes unattractive
-    contact_force_cost = w_soft * soft + w_hard * hard
-    contact_force_cost = 0.3 * contact_force_cost
+    Fx, Fy, Fz = load_cell_force[:,0], load_cell_force[:,1], load_cell_force[:,2]
+    # 支撑：至少 30N，超过 100N 不再额外追求（可按你想要的力度改）
+    Fz_min  = 0.30   # 30N
+    Fz_cap  = 1.00   # 100N
+    Fz_tol  = 0.20   # 20N
+    # 低于 Fz_min 才罚（鼓励“给够就行”）
+    lack = torch.clamp(Fz_min - Fz, min=0.0)
+    support_cost = torch.tanh(lack / Fz_tol) ** 2
+    # 反向力（强罚）
+    neg_cost = torch.tanh(torch.clamp(-Fz, min=0.0) / 0.10) ** 2   # 10N
+    # 剪切：稍微放宽，并可用剪切比（推荐）
+    shear = torch.sqrt(Fx**2 + Fy**2)
+    shear_dead  = 0.20   # 20N
+    shear_scale = 0.20   # 20N
+    shear_cost = torch.tanh(torch.clamp(shear - shear_dead, min=0.0) / shear_scale) ** 2
+    # 过大力（硬约束按 400N）
+    f_norm = torch.sqrt(Fx**2 + Fy**2 + Fz**2)
+    F_hard = 4.00   # 400N
+    Fhs    = 0.50   # 50N ramp
+    hard_cost = torch.tanh(torch.clamp(f_norm - F_hard, min=0.0) / Fhs) ** 2
+    # 人机交互力惩罚项
+    contact_force_cost = (
+        1.0 * support_cost +
+        0.8 * shear_cost +
+        2.0 * neg_cost +
+        2.0 * hard_cost
+    )
 
     # FIXME: HUMANOID奖励函数设定
     total_reward = vel_tracking_reward \
@@ -1761,7 +1775,7 @@ def compute_humanoid_reward(obs_buf, dof_pos, dof_vel, dof_vel_prev, humanoid_ta
                    - dof_vel_cost \
                    - pelvis_penalty \
                    - dof_acc_cost \
-                   - contact_force_cost
+                   - 0.2*contact_force_cost
     return total_reward
 
 
