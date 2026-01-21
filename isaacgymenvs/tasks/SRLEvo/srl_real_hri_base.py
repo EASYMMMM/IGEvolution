@@ -68,6 +68,7 @@ class SRL_Real_HRI_Base(VecTask):
 
         # --- reward ---
         self.alive_reward_scale = self.cfg["env"]["alive_reward_scale"]
+        self.humanoid_share_reward_scale = self.cfg["env"]["humanoid_share_reward_scale"]
         self.progress_reward_scale = self.cfg["env"]["progress_reward_scale"]
         self.torques_cost_scale = self.cfg["env"]["torques_cost_scale"]
         self.dof_acc_cost_scale = self.cfg["env"]["dof_acc_cost_scale"]
@@ -271,6 +272,8 @@ class SRL_Real_HRI_Base(VecTask):
         self.teacher_srl_obs_buffer = torch.zeros((self.num_envs, self.srl_obs_frame_stack, self.teacher_srl_obs_num), device=self.device)
 
 
+        self.humanoid_task_rew_buf = torch.zeros(
+            self.num_envs, device=self.device, dtype=torch.float)
         self.srl_rew_buf = torch.zeros(
             self.num_envs, device=self.device, dtype=torch.float)
         self.rew_joint_cost_buf = torch.zeros(      # 关节力矩惩罚
@@ -705,7 +708,7 @@ class SRL_Real_HRI_Base(VecTask):
         current_time = self.progress_buf * self.control_dt
         humanoid_target_point = self._traj_gen.get_position(env_ids, current_time)
         humanoid_root_pos = self._root_states[..., 0:3]
-        self.rew_buf[:] = compute_humanoid_reward(self.obs_buf, self._dof_pos, 
+        self.rew_buf[:], self.humanoid_task_rew_buf[:] = compute_humanoid_reward(self.obs_buf, self._dof_pos, 
                                                   self._dof_vel, self._dof_vel_prev, 
                                                   humanoid_target_point, humanoid_root_pos, load_cell_sensor*self.obs_scales["load_cell"],)
         self.srl_rew_buf[:]  = compute_srl_reward(self.srl_obs_buf[:],
@@ -722,8 +725,10 @@ class SRL_Real_HRI_Base(VecTask):
                                             self.death_cost,
                                             self.max_episode_length,
                                             self.gait_period,
+                                            self.humanoid_task_rew_buf,
                                             srl_obs_num = self.srl_obs_num,
                                             alive_reward_scale = self.alive_reward_scale,
+                                            humanoid_share_reward_scale = self.humanoid_share_reward_scale,
                                             progress_reward_scale = self.progress_reward_scale,
                                             torques_cost_scale = self.torques_cost_scale,
                                             dof_acc_cost_scale = self.dof_acc_cost_scale,
@@ -1776,7 +1781,8 @@ def compute_humanoid_reward(obs_buf, dof_pos, dof_vel, dof_vel_prev, humanoid_ta
                    - pelvis_penalty \
                    - dof_acc_cost \
                    - 0.2*contact_force_cost
-    return total_reward
+    humanoid_task_reward = vel_tracking_reward
+    return total_reward, humanoid_task_reward
 
 
 
@@ -1796,8 +1802,10 @@ def compute_srl_reward(
     death_cost,
     max_episode_length,
     gait_period,
+    humanoid_task_reward,
     srl_obs_num: int = 0,
     alive_reward_scale: float = 0,
+    humanoid_share_reward_scale: float = 0,
     progress_reward_scale: float = 0,
     torques_cost_scale: float = 0,
     dof_acc_cost_scale: float = 0,
@@ -1888,7 +1896,7 @@ def compute_srl_reward(
     w_roll  = 6.0
     w_pitch = 6.0
     w_yaw   = 3.0
-    orientation_reward = - (w_roll  * angle_diff[:, 0]**2 + w_pitch * angle_diff[:, 1]**2 + w_yaw * angle_diff[:, 2]**2 )
+    orientation_reward = - (w_yaw  * angle_diff[:, 0]**2 + w_pitch * angle_diff[:, 1]**2 + w_roll * angle_diff[:, 2]**2 )
     # TODO: 将朝向奖励改为惩罚
     # orientation_reward = - 3*torch.sum((angle_diff) ** 2, dim=-1)
 
@@ -1995,10 +2003,17 @@ def compute_srl_reward(
     # standing
     gait_phase_penalty_coef = torch.where(target_vel_x < 0.1, torch.zeros_like(target_vel_x), torch.ones_like(target_vel_x))
     gait_phase_penalty =  gait_phase_penalty*gait_phase_penalty_coef
-   
+    
+    # --- foot clearance penalty ---
+    # TODO: 0.3也可以work
+    clearance_penalty = torch.clamp(clearance_penalty, max=1.0) 
+
+    # --- SRL Motor Cost ---
+    srl_motor_cost = torch.clamp(srl_motor_cost, max=3.0)
 
     # --- Total reward ---
-    total_reward = alive_reward_scale * alive_reward  \
+    total_reward = humanoid_share_reward_scale * humanoid_task_reward \
+        + alive_reward_scale * alive_reward  \
         + progress_reward_scale * progress_reward \
         + vel_tracking_reward_scale *  vel_tracking_reward \
         + tracking_ang_vel_reward_scale * ang_vel_tracking_reward \

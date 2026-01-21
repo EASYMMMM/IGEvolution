@@ -1,0 +1,177 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SRL 实机模型 髋旋自由度放开 -->
+<mujoco model="srl_real_bot_v2">
+  <statistic center="0 0 1" extent="2"/>
+  
+  <!-- 修改为角度制 -->
+  <compiler angle="degree" meshdir="meshes/" />
+
+  <!-- 
+       积分器：RK4 
+       时间步：0.005 (200Hz)
+  -->
+  <option timestep="0.005" integrator="RK4"/>
+
+  <asset>
+    <!-- 网格文件：请确保文件名与 meshes 文件夹内一致 -->
+    <mesh name="base_link" file="base_link.STL"/>
+    <mesh name="left_hip_x_link" file="left_hip_x_link.STL"/>
+    <mesh name="left_hip_y_link" file="left_hip_y_link.STL"/>
+    <mesh name="left_knee_link" file="left_knee_link.STL"/>
+    <mesh name="right_hip_x_link" file="right_hip_x_link.STL"/>
+    <mesh name="right_hip_y_link" file="right_hip_y_link.STL"/>
+    <mesh name="right_knee_link" file="right_knee_link.STL"/>
+    
+    <material name="blue_mat" rgba="0.86 0.91 1 1"/>
+    <material name="white_mat" rgba="1 1 1 1"/>
+    <material name="collision_mat" rgba="0.8 0.5 0.3 0.5"/>
+  </asset>
+
+  <default>
+    <!-- 关节阻尼与参考文件保持一致 -->
+    <joint damping="2.0" armature="0.01" limited="true" stiffness="5" type="hinge"/>
+    <!-- 几何体物理属性：高摩擦力适应足式机器人 -->
+    <geom solref="0.005 1" solimp="0.9 0.95 0.001" friction="1.0 0.005 0.0001" condim="3"/>
+    
+    <default class="visual">
+        <geom type="mesh" contype="0" conaffinity="0" group="2" material="blue_mat"/>
+    </default>
+    
+    <default class="collision">
+        <geom contype="1" conaffinity="1" group="3" material="collision_mat"/>
+    </default>
+    
+    <motor ctrllimited="true" ctrlrange="-1 1"/>
+  </default>
+
+  <worldbody>
+    <light pos="0 0 3" dir="0 0 -1" directional="true"/>
+    <geom  pos="0 0 0" name="floor" type="plane" size="0 0 0.1" material="white_mat" rgba="0.5 0.5 0.5 1"/>
+    
+    <!-- ================= BASE LINK ================= -->
+    <body name="base_link" pos="0 0 1.15" euler="0 0 0">
+      <freejoint />
+      <!-- Updated Mass: 10.665 -->
+      <inertial pos="-0.00060591 -1.445E-17 0.1" mass="10.665" fullinertia="0.163 0.109 0.201 0 0 0"/>
+      
+      <geom mesh="base_link" class="visual"/>
+      <geom type="box" size="0.15 0.05 0.08" pos="0 0 0.1" class="collision"/>
+
+      <!-- ================= LEFT LEG CHAIN ================= -->
+      <!-- Left Hip X (Roll) -->
+      <!-- Euler converted: 3.1416 rad -> 180 deg -->
+      <body name="left_hip_x_link" pos="-0.065 0.2475 0.1" euler="0 0 180">
+        <inertial pos="-0.024642 -0.0076065 0" mass="2.832" fullinertia="0.006 0.007 0.007 0.001 0 0"/>
+        
+        <!-- Range converted: -0.2 rad -> -11.46 deg, 0.65 rad -> 37.24 deg -->
+        <joint name="left_hip_x_jonit" axis="-1 0 0" range="-45.0 45.0" damping="30" stiffness="300" armature="0.1"/>
+        
+        <geom mesh="left_hip_x_link" material="white_mat" class="visual"/>
+        <geom type="capsule" size="0.05" fromto="-0.05 0 0 0.05 0 0" class="collision"/>
+
+        <!-- Left Hip Y (Pitch - Thigh) -->
+        <!-- URDF: 0.0725 -0.075 0 -->
+        <body name="left_hip_y_link" pos="0.0725 -0.075 0">
+          <inertial pos="0.030377 -0.029787 -0.083461" mass="6.144" fullinertia="0.145 0.144 0.043 0.008 0.043 -0.022"/>
+          
+          <!-- Range converted: +/- 1.05 rad -> +/- 60.16 deg -->
+          <joint name="left_hip_y_jonit" axis="0 1 0" range="-60.16 60.16" damping="25" stiffness="250" armature="0.1"/>
+          
+          <geom mesh="left_hip_y_link" material="white_mat" class="visual"/>
+          <!-- 碰撞体：从HipY原点指向Knee连接点 (0.237, -0.104, -0.65) -->
+          <geom type="capsule" size="0.06" fromto="0 0 0 0.237 -0.104 -0.65" class="collision"/>
+
+          <!-- Left Knee (Pitch - Shank) -->
+          <!-- URDF: 0.23761 -0.1045 -0.65284, RPY 0.698 0 1.57 -->
+          <!-- 使用四元数消除旋转歧义: Roll=40deg, Yaw=90deg -->
+          <body name="left_knee_link" pos="0.23761 -0.1045 -0.65284" quat="0.66446 0.24184 0.24184 0.66446">
+            <inertial pos="-1.16e-7 8.95e-8 -0.312" mass="0.697" fullinertia="0.039 0.039 0.00024 0 0 0"/>
+            
+            <!-- Range converted: +/- 1.05 rad -> +/- 60.16 deg -->
+            <joint name="left_knee_jonit" axis="1 0 0" range="-60.16 60.16" damping="40" stiffness="350" armature="0.1"/>
+            
+            <geom mesh="left_knee_link" class="visual"/>
+            <!-- 碰撞体：小腿约长 0.6m -->
+            <geom type="capsule" size="0.04" fromto="0 0 0 0 0 -0.6" class="collision"/>
+            
+            <!-- 脚底接触球 -->
+            <body name="left_foot" pos="0 0 -0.645">
+                <inertial pos="0 0 0" mass="0.06" diaginertia="0.0001 0.0001 0.0001"/>
+                <geom name="left_foot_contact" type="sphere" size="0.038" 
+                      friction="0.9 0.01 0.005" 
+                      contype="1" conaffinity="1" 
+                      rgba="0.9 0.1 0.1 1"/>
+                <site name="left_foot_touch" size="0.05" rgba="0 1 0 0.2"/>
+            </body>
+
+          </body>
+        </body>
+      </body>
+
+      <!-- ================= RIGHT LEG CHAIN ================= -->
+      <!-- Right Hip X -->
+      <!-- URDF: -0.065 -0.2475 0.1, RPY 0 0 3.1416 -->
+      <!-- Euler converted: 3.1416 rad -> 180 deg -->
+      <body name="right_hip_x_link" pos="-0.065 -0.2475 0.1" euler="0 0 180">
+        <inertial pos="-0.024642 0.0076065 0" mass="2.832" fullinertia="0.006 0.007 0.007 -0.001 0 0"/>
+        
+        <!-- Range converted: -0.2 rad -> -11.46 deg, 0.65 rad -> 37.24 deg -->
+        <joint name="right_hip_x_jonit" axis="1 0 0" range="-45.0 45.0" damping="30" stiffness="300" armature="0.1"/>
+        
+        <geom mesh="right_hip_x_link" material="white_mat" class="visual"/>
+        <geom type="capsule" size="0.05" fromto="-0.05 0 0 0.05 0 0" class="collision"/>
+
+        <!-- Right Hip Y -->
+        <!-- URDF: 0.0725 0.075 0 -->
+        <body name="right_hip_y_link" pos="0.0725 0.075 0">
+          <inertial pos="0.030377 0.029786 -0.083461" mass="6.144" fullinertia="0.145 0.144 0.043 -0.008 0.043 0.022"/>
+          
+          <!-- Range converted: +/- 1.05 rad -> +/- 60.16 deg -->
+          <joint name="right_hip_y_jonit" axis="0 1 0" range="-60.16 60.16" damping="25" stiffness="250" armature="0.1"/>
+          
+          <geom mesh="right_hip_y_link" material="white_mat" class="visual"/>
+          <!-- 碰撞体：指向右腿膝盖位置 (0.237, 0.104, -0.65) -->
+          <geom type="capsule" size="0.06" fromto="0 0 0 0.237 0.104 -0.65" class="collision"/>
+
+          <!-- Right Knee -->
+          <!-- URDF: 0.23761 0.1045 -0.65284 -->
+          <body name="right_knee_link" pos="0.23761 0.1045 -0.65284" quat="0.66446 0.24184 0.24184 0.66446">
+            <inertial pos="-1.16e-7 8.92e-8 -0.312" mass="0.697" fullinertia="0.039 0.039 0.00024 0 0 0"/>
+            
+            <!-- Range converted: +/- 1.05 rad -> +/- 60.16 deg -->
+            <joint name="right_knee_jonit" axis="1 0 0" range="-60.16 60.16" damping="40" stiffness="350" armature="0.1"/>
+            
+            <geom mesh="right_knee_link" class="visual"/>
+            <geom type="capsule" size="0.04" fromto="0 0 0 0 0 -0.6" class="collision"/>
+            
+            <!-- 脚底接触球 -->
+            <body name="right_foot" pos="0 0 -0.645">
+                <inertial pos="0 0 0" mass="0.06" diaginertia="0.0001 0.0001 0.0001"/>
+                <geom name="right_foot_contact" type="sphere" size="0.038" 
+                      friction="0.9 0.01 0.005" 
+                      contype="1" conaffinity="1" 
+                      rgba="0.9 0.1 0.1 1"/>
+                <site name="right_foot_touch" size="0.05" rgba="0 1 0 0.2"/>
+            </body>
+
+          </body>
+        </body>
+      </body>
+
+    </body>
+  </worldbody>
+
+  <actuator>
+    <!-- 
+      Action Space: [-1, 1]
+      Max Torque: 450 Nm
+    -->
+    <motor name="left_hip_x_torque" joint="left_hip_x_jonit" gear="450"  />
+    <motor name="left_hip_y_torque" joint="left_hip_y_jonit" gear="450"  />
+    <motor name="left_knee_torque" joint="left_knee_jonit" gear="450"  />
+
+    <motor name="right_hip_x_torque" joint="right_hip_x_jonit" gear="450"  />
+    <motor name="right_hip_y_torque" joint="right_hip_y_jonit" gear="450"  />
+    <motor name="right_knee_torque" joint="right_knee_jonit" gear="450"  />
+  </actuator>
+</mujoco>

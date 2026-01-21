@@ -63,6 +63,7 @@ env:
   hri_virtual_force_max: 5000
 
   # reward weights
+  humanoid_share_reward_scale: 0.0
   alive_reward_scale: 1.0
   torques_cost_scale: 5e-6
   progress_reward_scale: 1
