@@ -2005,7 +2005,6 @@ def compute_srl_reward(
     gait_phase_penalty =  gait_phase_penalty*gait_phase_penalty_coef
     
     # --- foot clearance penalty ---
-    # TODO: 0.3也可以work
     clearance_penalty = torch.clamp(clearance_penalty, max=1.0) 
 
     # --- SRL Motor Cost ---

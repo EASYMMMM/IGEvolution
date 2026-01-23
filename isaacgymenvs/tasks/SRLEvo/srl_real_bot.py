@@ -92,35 +92,49 @@ class SRL_Real_Bot(VecTask):
         self.actions_rate_scale = self.cfg["env"]["actions_rate_scale"]
         self.actions_smoothness_scale = self.cfg["env"]["actions_smoothness_scale"]
         self.task_training_stage = self.cfg["env"].get("task_training_stage", 0)
+        self.srl_motor_cost_scale = self.cfg["env"].get("srl_motor_cost_scale", 0)
 
-        self.obs_frame_stack = self.cfg["env"]["obs_frame_stack"]  # 帧堆叠数量
+        self.obs_frame_stack = self.cfg["env"]["obs_frame_stack"]  
         
         self.vel_pertubation = self.cfg["task"].get("vel_pertubation", False)
         self.vel_pertubation_range = self.cfg["task"].get("vel_pertubation_range", [0.2, 0.8])
 
+        self._srl_max_effort = self.cfg["env"].get("srl_max_effort", 400.0)
+
         self.cfg["env"]["numObservations"] = 30 * self.obs_frame_stack + 3
         self.cfg["env"]["numActions"] = 6
-        # self.default_joint_angles = [0*np.pi, 
-        #                              0.15*np.pi,
-        #                              0.25*np.pi,
-        #                              0*np.pi,
-        #                              0.15*np.pi,
-        #                              0.25*np.pi]
-        self.default_joint_angles = [0*np.pi, 
-                                     -0.1,
-                                     0.2,
-                                     0*np.pi,
-                                     -0.1,
-                                     0.2,]
+        self.default_joint_angles = [0*np.pi, -0.1, 0.2, 0*np.pi, -0.1, 0.2,]
 
+        # ==========================================================
+        # 1. 新增电机优化参数 (针对 RI80 设计)
+        # ==========================================================
+        self.srl_rated_nm = 60.0    # RI80 额定扭矩
+        self.srl_peak_nm = 180.0    # RI80 峰值扭矩
+        self.srl_peak_start_ratio = 0.7  # 超过 70% 峰值扭矩开始惩罚
+        self.srl_thermal_start = 0.7     # 热量 EMA 超过 0.7 开始惩罚
+        
+        self.srl_peak_cost_scale = 0.5    # 峰值惩罚权重
+        self.srl_thermal_cost_scale = 0.8 # 热量惩罚权重 (这对选型至关重要)
+        
+        # EMA 时间常数
+        self.srl_thermal_tau_s = 1.5      # 热量累积 EMA 周期 (秒)
+        self.srl_peak_window_tau_s = 0.3  # 峰值窗口 EMA 周期 (秒)
 
-       
         super().__init__(config=self.cfg, rl_device=rl_device, sim_device=sim_device, graphics_device_id=graphics_device_id, headless=headless, virtual_screen_capture=virtual_screen_capture, force_render=force_render)
+
+        # EMA 衰减系数计算
+        dt = self.cfg["sim"]["dt"]
+        self.control_dt = self.control_freq_inv * dt
+        self._srl_thermal_gamma = float(np.exp(-self.control_dt / self.srl_thermal_tau_s))
+        self._srl_peak_decay = float(np.exp(-self.control_dt / self.srl_peak_window_tau_s))
+
+        # 初始化运行统计数据
+        self.srl_tau2_ema = torch.zeros(self.num_envs, device=self.device)
+        self.srl_peak_ratio_window = torch.zeros(self.num_envs, device=self.device)
 
         self.obs_buffer = torch.zeros((self.num_envs, self.obs_frame_stack, np.int32(self.num_obs/self.obs_frame_stack)), device=self.device)
         self.obs_mirrored_buffer = torch.zeros((self.num_envs, self.obs_frame_stack, np.int32(self.num_obs/self.obs_frame_stack)), device=self.device)
-        self.phase_buf = torch.zeros(
-            self.num_envs, device=self.device, dtype=torch.long)
+        self.phase_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
 
         if self.viewer != None:
             cam_pos = gymapi.Vec3(50.0, 25.0, 2.4)
@@ -128,7 +142,7 @@ class SRL_Real_Bot(VecTask):
             self.gym.viewer_camera_look_at(self.viewer, None, cam_pos, cam_target)
 
         # get gym GPU state tensors
-        rigid_body_state = self.gym.acquire_rigid_body_state_tensor(self.sim) #  State for each rigid body contains position([0:3]), rotation([3:7]), linear velocity([7:10]), and angular velocity([10:13])
+        rigid_body_state = self.gym.acquire_rigid_body_state_tensor(self.sim) 
         actor_root_state = self.gym.acquire_actor_root_state_tensor(self.sim)
         dof_state_tensor = self.gym.acquire_dof_state_tensor(self.sim)
         sensor_tensor = self.gym.acquire_force_sensor_tensor(self.sim)
@@ -148,21 +162,14 @@ class SRL_Real_Bot(VecTask):
         self.initial_root_states = self.root_states.clone()
         self.initial_root_states[:, 7:13] = 0
 
-        # create some wrapper tensors for different slices
         self.dof_state = gymtorch.wrap_tensor(dof_state_tensor)
         self.dof_pos = self.dof_state.view(self.num_envs, self.num_dof, 2)[..., 0]
         self.dof_vel = self.dof_state.view(self.num_envs, self.num_dof, 2)[..., 1]
-        # self.initial_dof_pos = torch.zeros_like(self.dof_pos, device=self.device, dtype=torch.float)
-        # zero_tensor = torch.tensor([0.0], device=self.device)
-        # self.initial_dof_pos = torch.where(self.dof_limits_lower > zero_tensor, self.dof_limits_lower,
-        #                                    torch.where(self.dof_limits_upper < zero_tensor, self.dof_limits_upper, self.initial_dof_pos))
-        # MLY: user define
-        self.actions = torch.zeros(
-            (self.num_envs, self.num_actions), device=self.device, dtype=torch.float)
+
+        self.actions = torch.zeros((self.num_envs, self.num_actions), device=self.device, dtype=torch.float)
         self.initial_dof_pos = torch.tensor(self.default_joint_angles, device=self.device).unsqueeze(0).repeat(self.num_envs, 1)
         self.initial_dof_vel = torch.zeros_like(self.dof_vel, device=self.device, dtype=torch.float)
 
-        # initialize some data used later on
         self.up_vec = to_torch(get_axis_params(1., self.up_axis_idx), device=self.device).repeat((self.num_envs, 1))
         self.heading_vec = to_torch([1, 0, 0], device=self.device).repeat((self.num_envs, 1))
         self.inv_start_rot = quat_conjugate(self.start_rotation).repeat((self.num_envs, 1))
@@ -172,17 +179,15 @@ class SRL_Real_Bot(VecTask):
 
         self.targets = to_torch([1000, 0, 0], device=self.device).repeat((self.num_envs, 1))
         self.target_dirs = to_torch([1, 0, 0], device=self.device).repeat((self.num_envs, 1))
-        dt = self.cfg["sim"]["dt"]
-        self.control_dt = self.control_freq_inv * dt
+        
         self.potentials = to_torch([-1000./self.control_dt], device=self.device).repeat(self.num_envs)
         self.prev_potentials = self.potentials.clone()
 
-        # ----- user define -----
         self.prev_srl_end_body_pos = torch.zeros((self.num_envs,2,3), device=self.device)
         self.target_yaw = torch.zeros(self.num_envs, device=self.device)
         self.target_ang_vel_z = torch.zeros(self.num_envs, device=self.device)
-        self.target_pelvis_height = torch.full((self.num_envs,), 1.00, device=self.device)  # 0.84
-        self.target_vel_x = torch.full((self.num_envs,), 1.0, device=self.device)  # 1.0
+        self.target_pelvis_height = torch.full((self.num_envs,), 1.00, device=self.device)  
+        self.target_vel_x = torch.full((self.num_envs,), 1.0, device=self.device)  
 
         self._terminate_buf = torch.ones(self.num_envs, device=self.device, dtype=torch.long)
 
@@ -193,11 +198,9 @@ class SRL_Real_Bot(VecTask):
         self._rigid_body_ang_vel = self._rigid_body_state.view(self.num_envs, self.num_bodies, 13)[..., 10:13]
 
         self.srl_root_states = self._rigid_body_state.view(self.num_envs, self.num_bodies, 13)[:, self.srl_root_index ,  :]
-
-        self.contact_forces = gymtorch.wrap_tensor(net_contact_forces).view(self.num_envs, -1, 3) # shape: num_envs, num_bodies, xyz axis
+        self.contact_forces = gymtorch.wrap_tensor(net_contact_forces).view(self.num_envs, -1, 3) 
         self.gravity_vec = to_torch(get_axis_params(-1., self.up_axis_idx), device=self.device).repeat((self.num_envs, 1))
 
-        # mirror matrix
         self.mirror_idx_srl_dof = np.array([3,4,5,0.01,1,2])
         self.mirror_mat_srl_dof = torch.zeros((self.mirror_idx_srl_dof.shape[0], self.mirror_idx_srl_dof.shape[0]), dtype=torch.float32, device=self.device)
         for i, perm in enumerate(self.mirror_idx_srl_dof):
@@ -332,7 +335,7 @@ class SRL_Real_Bot(VecTask):
                 dof_prop["stiffness"].fill(0.0)
                 dof_prop["damping"].fill(0.0)
                 dof_prop["velocity"].fill(14.0)
-                dof_prop["effort"].fill(400.0)
+                dof_prop["effort"].fill(self._srl_max_effort)
                 dof_prop["driveMode"] = gymapi.DOF_MODE_EFFORT
                 self.gym.set_actor_dof_properties(env_ptr, handle, dof_prop)
             elif (self._pd_control):
@@ -389,11 +392,37 @@ class SRL_Real_Bot(VecTask):
         body_ids = to_torch(body_ids, device=self.device, dtype=torch.long)
         return body_ids
     
+    def _compute_srl_motor_costs(self):
+        tau = self.torques  # (N, 6)
+        tau_abs = torch.abs(tau)
+
+        # (1) 峰值惩罚 - 限制瞬时大电流
+        tau_ratio_peak = tau_abs / self.srl_peak_nm
+        peak_ratio_inst = torch.max(tau_ratio_peak, dim=1).values
+        self.srl_peak_ratio_window = torch.maximum(peak_ratio_inst, self.srl_peak_ratio_window * self._srl_peak_decay)
+        
+        peak_cost = torch.clamp((self.srl_peak_ratio_window - self.srl_peak_start_ratio) / (1.0 - self.srl_peak_start_ratio), min=0.0) ** 2
+
+        # (2) 热量惩罚 - 限制长期超额定功率运行
+        tau_ratio_rated = tau_abs / self.srl_rated_nm
+        tau2_mean = torch.mean(tau_ratio_rated ** 2, dim=1) # 均方力矩比值，代表热耗散
+        g = self._srl_thermal_gamma
+        self.srl_tau2_ema = g * self.srl_tau2_ema + (1.0 - g) * tau2_mean
+        
+        thermal_cost = torch.clamp((self.srl_tau2_ema - self.srl_thermal_start) / (1.0 - self.srl_thermal_start), min=0.0) ** 2
+
+        return peak_cost, thermal_cost
+
     def compute_reward(self, actions):
         clearance_reward = self.compute_foot_clearance_reward()
         to_target = self.targets - self.initial_root_states[:, 0:3]
         srl_root_pos = self.srl_root_states[:, 0:3]
         srl_end_body_pos = self._rigid_body_pos[:, self._srl_end_ids, :]
+        
+        # 计算电机优化成本
+        peak_cost, thermal_cost = self._compute_srl_motor_costs()
+        srl_motor_cost = (self.srl_peak_cost_scale * peak_cost + self.srl_thermal_cost_scale * thermal_cost)
+
         self.rew_buf[:], self.reset_buf, self._terminate_buf[:] = compute_srl_reward(
             self.obs_buf,
             self.reset_buf,
@@ -410,6 +439,7 @@ class SRL_Real_Bot(VecTask):
             self.death_cost,
             self.max_episode_length,
             self.gait_period,
+            srl_motor_cost = srl_motor_cost, # 传入新增惩罚
             alive_reward_scale = self.alive_reward_scale,
             progress_reward_scale = self.progress_reward_scale,
             torques_cost_scale = self.torques_cost_scale,
@@ -426,6 +456,7 @@ class SRL_Real_Bot(VecTask):
             lateral_distance_penalty_scale = self.lateral_distance_penalty_scale,
             actions_rate_scale = self.actions_rate_scale,
             actions_smoothness_scale = self.actions_smoothness_scale,
+            srl_motor_cost_scale = self.srl_motor_cost_scale,
         )   
 
     def compute_observations(self, env_ids=None):
@@ -542,18 +573,14 @@ class SRL_Real_Bot(VecTask):
         return self.obs_dict, done_env_ids
     
     def reset_idx(self, env_ids):
-        # Randomization can happen only at reset time, since it can reset actor positions on GPU
         if self.randomize:
             self.apply_randomizations(self.randomization_params)
+        
+        # 重置电机统计 EMA
+        self.srl_tau2_ema[env_ids] = 0.0
+        self.srl_peak_ratio_window[env_ids] = 0.0
 
- 
-        position_noise = torch.zeros((len(env_ids), self.num_dof), device=self.device)
-        positions = torch_rand_float(-0.2, 0.2, (len(env_ids), 1), device=self.device)
-        position_noise[:,1] = positions.squeeze(-1)
-        position_noise[:,4] = - positions.squeeze(-1)
         velocities = torch_rand_float(-0.1, 0.1, (len(env_ids), self.num_dof), device=self.device)
-        # TODO: random init
-        self.dof_pos[env_ids] = tensor_clamp(self.initial_dof_pos[env_ids] + positions, self.dof_limits_lower, self.dof_limits_upper)
         self.dof_pos[env_ids] = tensor_clamp(self.initial_dof_pos[env_ids] , self.dof_limits_lower, self.dof_limits_upper)
         self.dof_vel[env_ids] = velocities
 
@@ -577,8 +604,6 @@ class SRL_Real_Bot(VecTask):
 
         srl_end_body_pos = self._rigid_body_pos[:, self._srl_end_ids, :].clone()
         self.prev_srl_end_body_pos[env_ids] = srl_end_body_pos[env_ids,:,:].clone()
-        
-
         self.phase_buf[env_ids] = torch.randint(0, int(self.gait_period), (len(env_ids),), device=self.device, dtype=torch.long)
 
         for env_id in env_ids:
@@ -631,7 +656,10 @@ class SRL_Real_Bot(VecTask):
             self.torques = torch.clip(torques, -self.torque_limits, self.torque_limits).view(self.torques.shape)
             self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(self.torques))
         elif (self._pd_control):
-            pd_tar = self._action_to_pd_targets(self.actions) # pd_tar.shape: [num_actors, num_dofs]
+            pd_tar = self._action_to_pd_targets(self.actions)
+            # 即使是位置控制，我们也可以近似计算输出力矩用于惩罚项
+            self.torques = self.p_gains*(pd_tar - self.dof_pos) - self.d_gains*self.dof_vel
+            self.torques = torch.clip(self.torques, -self.torque_limits, self.torque_limits)
             pd_tar_tensor = gymtorch.unwrap_tensor(pd_tar)
             self.gym.set_dof_position_target_tensor(self.sim, pd_tar_tensor)
 
@@ -648,6 +676,7 @@ class SRL_Real_Bot(VecTask):
     
         self.extras["terminate"] = self._terminate_buf
         self.extras["target_yaw"] = self.target_yaw
+        self.extras["srl_torques"] = self.torques[0,:]
         env_ids = self.reset_buf.nonzero(as_tuple=False).flatten()
         if len(env_ids) > 0:
             self.reset_idx(env_ids)
@@ -847,7 +876,7 @@ def quat_to_euler_xyz(q):
     return torch.stack((yaw_z, pitch_y, roll_x), dim=-1)
 
 
-@torch.jit.script
+# @torch.jit.script
 def compute_srl_reward(
     obs_buf,
     reset_buf,
@@ -864,6 +893,7 @@ def compute_srl_reward(
     death_cost,
     max_episode_length,
     gait_period,
+    srl_motor_cost: float = 0, 
     alive_reward_scale: float = 0,
     progress_reward_scale: float = 0,
     torques_cost_scale: float = 0,
@@ -881,6 +911,7 @@ def compute_srl_reward(
     lateral_distance_penalty_scale: float = 0,
     actions_rate_scale: float = 0,
     actions_smoothness_scale: float = 0,
+    srl_motor_cost_scale: float = 0,
 ):
     # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, float, float, float, float, float, float, float,  float, float, float, float, float, float, float, float, float, float, float, float, float) -> Tuple[Tensor, Tensor, Tensor]
 
@@ -1016,7 +1047,8 @@ def compute_srl_reward(
         - no_fly_penalty \
         - gait_phase_penalty \
         - clearance_penalty * clearance_penalty_scale \
-        - lateral_distance_penalty_scale * feet_lateral_penalty
+        - lateral_distance_penalty_scale * feet_lateral_penalty\
+        - srl_motor_cost_scale * srl_motor_cost
 
     # --- Handle termination ---
     total_reward = torch.where(obs_buf[:, 0] < termination_height, torch.ones_like(total_reward) * death_cost, total_reward)

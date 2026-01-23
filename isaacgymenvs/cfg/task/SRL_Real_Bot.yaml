@@ -33,6 +33,7 @@ env:
   jointsAtLimitCost: 0.25
   deathCost: -1.0
   terminationHeight: 0.70
+  srl_max_effort: 400
 
   # gait parameters
   gait_period: 54.0
@@ -55,6 +56,7 @@ env:
   lateral_distance_penalty_scale: 30
   actions_rate_scale: 0.1
   actions_smoothness_scale: 0.1
+  srl_motor_cost_scale: 0.0
 
   asset:
     assetFileName: "mjcf/srl_real/srl_real_bot.xml"

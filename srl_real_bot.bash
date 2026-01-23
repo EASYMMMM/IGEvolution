@@ -33,15 +33,19 @@ python SRL_Evo_train.py task=SRL_Real_Bot test=True force_render=True task.env.c
 
 
 # ========= SRL REAL BOT 1.20 ===========
-# 放开髋旋自由度
+# 放开髋旋自由度 使用峰值160的电机
 # --- stage 1 --- vel
-python SRL_Evo_train.py task=SRL_Real_Bot wandb_project=SRL_Real experiment=SRL_Real_s1  task.env.task_training_stage=1 headless=True wandb_activate=True max_iterations=1000   task.env.vel_tracking_reward_scale=8  task.env.progress_reward_scale=1.0 task.env.alive_reward_scale=1.0 task.env.asset.assetFileName="mjcf/srl_real/srl_real_bot_full_rotate.xml" ;  
+python SRL_Evo_train.py task=SRL_Real_Bot wandb_project=SRL_Real experiment=SRL_Real_s1  task.env.task_training_stage=1 headless=True wandb_activate=True max_iterations=1000   task.env.vel_tracking_reward_scale=8  task.env.progress_reward_scale=1.0 task.env.alive_reward_scale=1.0 task.env.asset.assetFileName="mjcf/srl_real/srl_real_bot_full_rotate.xml"  task.env.srl_max_effort=180;  
 # --- check ---
-python SRL_Evo_train.py task=SRL_Real_Bot test=True force_render=True task.env.cameraFollow=True num_envs=4 task.env.task_training_stage=1 checkpoint=runs/SRL_Real_s1_04-15-15-24/nn/SRL_Real_s1.pth  sim_device=cuda:1 rl_device=cuda:1  
+python SRL_Evo_train.py task=SRL_Real_Bot test=True force_render=True task.env.cameraFollow=True num_envs=4 task.env.task_training_stage=1 checkpoint=runs/SRL_Real_s1_22-15-22-12/nn/SRL_Real_s1.pth  sim_device=cuda:1 rl_device=cuda:1  task.env.asset.assetFileName="mjcf/srl_real/srl_real_bot_full_rotate.xml" task.env.srl_max_effort=180
+# --- stage 1.5 --- motor
+python SRL_Evo_train.py task=SRL_Real_Bot wandb_project=SRL_Real experiment=SRL_Real_s1.5  task.env.task_training_stage=1 headless=True wandb_activate=True max_iterations=1500   task.env.vel_tracking_reward_scale=8  task.env.progress_reward_scale=1.0 task.env.alive_reward_scale=1.0 task.env.asset.assetFileName="mjcf/srl_real/srl_real_bot_full_rotate.xml"  checkpoint=runs/SRL_Real_s1_21-17-52-23/nn/SRL_Real_s1.pth task.env.srl_motor_cost_scale=1.0  task.env.srl_max_effort=180 ;  
+# --- check ---
+python SRL_Evo_train.py task=SRL_Real_Bot test=True force_render=True task.env.cameraFollow=True num_envs=4 task.env.task_training_stage=1 checkpoint=runs/SRL_Real_s1.5_22-15-39-19/nn/SRL_Real_s1.5.pth  sim_device=cuda:1 rl_device=cuda:1  task.env.asset.assetFileName="mjcf/srl_real/srl_real_bot_full_rotate.xml" task.env.srl_max_effort=180
 # --- stage 2 --- vel+hei
-python SRL_Evo_train.py task=SRL_Real_Bot wandb_project=SRL_Real experiment=SRL_Real_s2  task.env.task_training_stage=2 headless=True wandb_activate=True max_iterations=1500    checkpoint=runs/SRL_Real_s1_04-15-15-24/nn/SRL_Real_s1.pth  task.env.pelvis_height_reward_scale=8.0 task.env.vel_tracking_reward_scale=8.0  task.env.progress_reward_scale=0.0 ;  
+python SRL_Evo_train.py task=SRL_Real_Bot wandb_project=SRL_Real experiment=SRL_Real_s2  task.env.task_training_stage=2 headless=True wandb_activate=True max_iterations=1500    checkpoint=runs/SRL_Real_s1_21-17-52-23/nn/SRL_Real_s1.pth  task.env.pelvis_height_reward_scale=8.0 task.env.vel_tracking_reward_scale=8.0  task.env.progress_reward_scale=0.0 task.env.asset.assetFileName="mjcf/srl_real/srl_real_bot_full_rotate.xml" task.env.srl_max_effort=160;  
 # --- check ---
-python SRL_Evo_train.py task=SRL_Real_Bot test=True force_render=True task.env.cameraFollow=True num_envs=4 task.env.task_training_stage=2 checkpoint=runs/SRL_Real_s2_04-17-54-32/nn/SRL_Real_s2.pth  sim_device=cuda:1 rl_device=cuda:1  
+python SRL_Evo_train.py task=SRL_Real_Bot test=True force_render=True task.env.cameraFollow=True num_envs=4 task.env.task_training_stage=2 checkpoint=runs/SRL_Real_s2_22-13-05-11/nn/SRL_Real_s2.pth   sim_device=cuda:1 rl_device=cuda:1  task.env.srl_max_effort=160;
 # --- stage 3 --- vel+hei+ori
 python SRL_Evo_train.py task=SRL_Real_Bot wandb_project=SRL_Real experiment=SRL_Real_s3  task.env.task_training_stage=3 headless=True wandb_activate=True max_iterations=2500    checkpoint=runs/SRL_Real_s2_04-17-54-32/nn/SRL_Real_s2.pth  task.env.orientation_reward_scale=7 task.env.pelvis_height_reward_scale=5.0 task.env.progress_reward_scale=0.0 task.env.alive_reward_scale=0.0;  
 # --- check ---

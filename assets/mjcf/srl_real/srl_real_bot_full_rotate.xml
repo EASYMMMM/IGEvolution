@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- SRL 实机模型 髋旋自由度放开 -->
+<!-- 使用更小的电机 -->
 <mujoco model="srl_real_bot_v2">
   <statistic center="0 0 1" extent="2"/>
   
@@ -61,7 +62,7 @@
       <!-- Left Hip X (Roll) -->
       <!-- Euler converted: 3.1416 rad -> 180 deg -->
       <body name="left_hip_x_link" pos="-0.065 0.2475 0.1" euler="0 0 180">
-        <inertial pos="-0.024642 -0.0076065 0" mass="2.832" fullinertia="0.006 0.007 0.007 0.001 0 0"/>
+        <inertial pos="-0.024642 -0.0076065 0" mass="2.092" fullinertia="0.006 0.007 0.007 0.001 0 0"/>
         
         <!-- Range converted: -0.2 rad -> -11.46 deg, 0.65 rad -> 37.24 deg -->
         <joint name="left_hip_x_jonit" axis="-1 0 0" range="-45.0 45.0" damping="30" stiffness="300" armature="0.1"/>
@@ -72,7 +73,7 @@
         <!-- Left Hip Y (Pitch - Thigh) -->
         <!-- URDF: 0.0725 -0.075 0 -->
         <body name="left_hip_y_link" pos="0.0725 -0.075 0">
-          <inertial pos="0.030377 -0.029787 -0.083461" mass="6.144" fullinertia="0.145 0.144 0.043 0.008 0.043 -0.022"/>
+          <inertial pos="0.030377 -0.029787 -0.083461" mass="4.664" fullinertia="0.145 0.144 0.043 0.008 0.043 -0.022"/>
           
           <!-- Range converted: +/- 1.05 rad -> +/- 60.16 deg -->
           <joint name="left_hip_y_jonit" axis="0 1 0" range="-60.16 60.16" damping="25" stiffness="250" armature="0.1"/>
@@ -113,7 +114,7 @@
       <!-- URDF: -0.065 -0.2475 0.1, RPY 0 0 3.1416 -->
       <!-- Euler converted: 3.1416 rad -> 180 deg -->
       <body name="right_hip_x_link" pos="-0.065 -0.2475 0.1" euler="0 0 180">
-        <inertial pos="-0.024642 0.0076065 0" mass="2.832" fullinertia="0.006 0.007 0.007 -0.001 0 0"/>
+        <inertial pos="-0.024642 0.0076065 0" mass="2.092" fullinertia="0.006 0.007 0.007 -0.001 0 0"/>
         
         <!-- Range converted: -0.2 rad -> -11.46 deg, 0.65 rad -> 37.24 deg -->
         <joint name="right_hip_x_jonit" axis="1 0 0" range="-45.0 45.0" damping="30" stiffness="300" armature="0.1"/>
@@ -124,7 +125,7 @@
         <!-- Right Hip Y -->
         <!-- URDF: 0.0725 0.075 0 -->
         <body name="right_hip_y_link" pos="0.0725 0.075 0">
-          <inertial pos="0.030377 0.029786 -0.083461" mass="6.144" fullinertia="0.145 0.144 0.043 -0.008 0.043 0.022"/>
+          <inertial pos="0.030377 0.029786 -0.083461" mass="4.664" fullinertia="0.145 0.144 0.043 -0.008 0.043 0.022"/>
           
           <!-- Range converted: +/- 1.05 rad -> +/- 60.16 deg -->
           <joint name="right_hip_y_jonit" axis="0 1 0" range="-60.16 60.16" damping="25" stiffness="250" armature="0.1"/>

@@ -808,6 +808,7 @@ class SRL_Bot_PlayerContinuous(common_player.CommonPlayer):
         super().__init__(params)
         self.obs_log = []
         self.target_yaw_log = []
+        self.srl_torques_log = []
 
     def run(self):
         n_games = self.games_num
@@ -864,6 +865,7 @@ class SRL_Bot_PlayerContinuous(common_player.CommonPlayer):
                     obs_np = np.array(obs[0, :])
                 self.obs_log.append(obs_np)
                 self.target_yaw_log.append(info['target_yaw'].cpu().numpy())
+                self.srl_torques_log.append(info['srl_torques'].cpu().numpy())
 
                 cr += r
                 steps += 1
@@ -885,8 +887,10 @@ class SRL_Bot_PlayerContinuous(common_player.CommonPlayer):
                         target_yaw = []
                         obs_array = np.stack(self.obs_log, axis=0)
                         target_yaw = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.target_yaw_log], axis=0)
+                        srl_torques_array = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.srl_torques_log], axis=0)
                         self.obs_log.clear()
                         self.target_yaw_log.clear()
+                        self.srl_torques_log.clear()
 
                         num_dims = 30
                         mid = num_dims // 2
@@ -943,17 +947,66 @@ class SRL_Bot_PlayerContinuous(common_player.CommonPlayer):
                         axs3[2].set_ylabel('AngVel Z')
                         axs3[2].legend()
                         axs3[2].grid(True)
-
                         axs3[3].plot(target_yaw[:, 0]-obs_array[:, 7], label='Actual Value')
                         axs3[3].plot(target_yaw[:, 0], label='Target Value', linestyle='--')
                         axs3[3].set_ylabel('AngVel Z')
                         axs3[3].legend()
                         axs3[3].grid(True)
-
-
                         plt.suptitle("Target Tracking")
                         plt.tight_layout()
                         plt.show()
+
+                        # --- plot ---
+                        # srl torques
+                        # --- compute metrics ---
+                        dt = getattr(self.env, "control_dt", 0.015)  # 如果 env 里有 control_dt 就用它；没有就用你默认的 0.015
+                        metrics = torque_episode_metrics(
+                            srl_torques_array,         # (T,6)
+                            dt=dt,
+                            peak_nm=160.0,
+                            rated_nm=60.0,
+                            rated_cont_s=240.0,
+                            rms_window_s=1.0
+                        )
+
+                        J = srl_torques_array.shape[1]
+                        wj = metrics["worst_joint_by_equiv"]
+
+                        # --- pretty print to console ---
+                        print("\n========== SRL Motor Torque Episode Metrics ==========")
+                        print(f"episode_len = {metrics['episode_len_s']:.2f}s, dt = {metrics['dt']:.4f}s, win_steps = {metrics['win_steps']}")
+                        for j in range(J):
+                            print(
+                                f"[J{j}] peak={metrics['peak_nm'][j]:.1f}  "
+                                f"rms={metrics['rms_nm'][j]:.1f}  "
+                                f"roll_rms_max(1s)={metrics['rolling_rms_max_nm'][j]:.1f}  "
+                                f"t>rated={metrics['t_above_rated_s'][j]:.2f}s  "
+                                f"max_cont>rated={metrics['max_cont_above_rated_s'][j]:.2f}s  "
+                                f"t>peak={metrics['t_above_peak_s'][j]:.2f}s  "
+                                f"equiv_rated_time={metrics['equiv_rated_time_s'][j]:.1f}s  "
+                                f"margin_to_240s={metrics['thermal_margin_s'][j]:.1f}s"
+                            )
+                        print(f"worst_joint_by_equiv = J{wj}")
+                        print("======================================================\n")
+                        fig5, axs5 = plt.subplots(2, 1, figsize=(10, 4 * 2.5), sharex=True)
+                        axs5[0].plot(srl_torques_array[:, 0], label='Joint 0')
+                        axs5[0].plot(srl_torques_array[:, 1], label='Joint 1')
+                        axs5[0].plot(srl_torques_array[:, 2], label='Joint 2')
+                        axs5[0].set_ylabel('srl torques')
+                        axs5[0].legend()
+                        axs5[0].grid(True)
+                        axs5[0].set_ylim([-300, 300])
+
+                        axs5[1].plot(srl_torques_array[:, 3], label='Joint 3')
+                        axs5[1].plot(srl_torques_array[:, 4], label='Joint 4')
+                        axs5[1].plot(srl_torques_array[:, 5], label='Joint 5')
+                        axs5[1].set_ylabel('srl torques')
+                        axs5[1].legend()
+                        axs5[1].grid(True)
+                        axs5[1].set_ylim([-300, 300])
+                        plt.suptitle("Srl Torques + Episode Metrics")
+                        plt.tight_layout()  
+                        plt.show()   
 
                     if self.is_rnn:
                         for s in self.states:
