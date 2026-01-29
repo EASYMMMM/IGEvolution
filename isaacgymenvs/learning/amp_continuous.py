@@ -117,6 +117,13 @@ class AMPAgent(common_agent.CommonAgent):
             self.experience_buffer.update_data('dones', n, self.dones)
             self.experience_buffer.update_data('amp_obs', n, infos['amp_obs'])
 
+            # ========== 【站立奖励修改开始】 ==========
+            # 从 extras (infos) 中读取 amp_mask
+            # 如果环境没传这个参数，默认全为 1.0 (开启 AMP)，保证兼容性
+            amp_mask = infos.get('amp_mask', torch.ones(rewards.shape, device=self.ppo_device))
+            self.experience_buffer.update_data('amp_masks', n, amp_mask)
+            # ========== 【站立奖励修改结束】 ==========
+
             terminated = infos['terminate'].float()
             terminated = terminated.unsqueeze(-1)
             next_vals = self._eval_critic(self.obs)
@@ -146,8 +153,17 @@ class AMPAgent(common_agent.CommonAgent):
 
         mb_rewards = self.experience_buffer.tensor_dict['rewards']
         mb_amp_obs = self.experience_buffer.tensor_dict['amp_obs']
+        # ========== 【修改开始】 ==========
+        # 取出 mask
+        mb_amp_masks = self.experience_buffer.tensor_dict['amp_masks']
+        
         amp_rewards = self._calc_amp_rewards(mb_amp_obs)
-        mb_rewards = self._combine_rewards(mb_rewards, amp_rewards)
+        
+        # 把 mask 传给 _combine_rewards 函数
+        mb_rewards = self._combine_rewards(mb_rewards, amp_rewards, mb_amp_masks)
+        # ========== 【修改结束】 ==========
+        #amp_rewards = self._calc_amp_rewards(mb_amp_obs)
+        #mb_rewards = self._combine_rewards(mb_rewards, amp_rewards)
 
         mb_advs = self.discount_values(mb_fdones, mb_values, mb_rewards, mb_next_values)
         mb_returns = mb_advs + mb_values
@@ -454,6 +470,10 @@ class AMPAgent(common_agent.CommonAgent):
         batch_shape = self.experience_buffer.obs_base_shape
         self.experience_buffer.tensor_dict['amp_obs'] = torch.zeros(batch_shape + self._amp_observation_space.shape,
                                                                     device=self.ppo_device)
+         # ========== 【站立奖励修改开始】 ==========
+        # 新增：初始化 amp_masks 的 buffer，大小和 reward 一样
+        self.experience_buffer.tensor_dict['amp_masks'] = torch.zeros(batch_shape, device=self.ppo_device)
+        # ========== 【站立奖励修改结束】 ==========
         
         amp_obs_demo_buffer_size = int(self.config['amp_obs_demo_buffer_size'])
         self._amp_obs_demo_buffer = replay_buffer.ReplayBuffer(amp_obs_demo_buffer_size, self.ppo_device)
@@ -485,8 +505,12 @@ class AMPAgent(common_agent.CommonAgent):
             amp_obs = self._amp_input_mean_std(amp_obs)
         return amp_obs
 
-    def _combine_rewards(self, task_rewards, amp_rewards):
+    def _combine_rewards(self, task_rewards, amp_rewards, amp_masks=None):
         disc_r = amp_rewards['disc_rewards']
+         # 核心逻辑：如果有 mask，就乘上去
+        if amp_masks is not None:
+            disc_r = disc_r * amp_masks.unsqueeze(-1)
+                
         combined_rewards = self._task_reward_w * task_rewards + \
                          + self._disc_reward_w * disc_r
         return combined_rewards

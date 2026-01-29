@@ -52,7 +52,10 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
         self._reset_ref_env_ids = []
 
         super().__init__(config=self.cfg, rl_device=rl_device, sim_device=sim_device, graphics_device_id=graphics_device_id, headless=headless, virtual_screen_capture=virtual_screen_capture, force_render=force_render)
-
+        
+        # 确定当前是否为测试模式 (用于控制 Stage 4 的日志打印)
+        is_testing = (not headless) or force_render
+        
         # 2轨迹生成器参数
         self.forward_vec_local = torch.tensor([1.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1)
         episode_duration = self.max_episode_length * self.control_dt
@@ -60,7 +63,8 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
                                        speed_mean=1.0,      
                                        turn_speed_max=0.5,  # 不要太大，先设为0.5
                                        num_turns=2,
-                                       train_stage=self.train_stage)         # 转向次数
+                                       train_stage=self.train_stage, # 转向次数
+                                       is_test=is_testing)         #stage4日志打印标志
 
         motion_file = cfg['env'].get('motion_file', "amp_humanoid_backflip.npy")
         motion_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../assets/amp/motions/" + motion_file)
@@ -120,6 +124,7 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
         
         # 目标速度 = (未来点 - 当前目标点) 的距离 / 时间差 0.5s
         target_dist = torch.norm(target_pos_05s - target_pos[..., 0:2], dim=-1)
+        is_standing_phase = target_dist < 1e-3 # 判断是否处于站立
         implied_target_speed = target_dist / 0.5 
         
         # ---------------------------------------------------------
@@ -173,10 +178,43 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
                 * torch.exp(-1.0 * joint_penalty)
                 * torch.exp(-0.001 * act_penalty)
             )
+            self.extras['amp_mask'] = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
+        # --- 分支 2: Stage 4 (混合训练) ---
+        # 新增逻辑：根据 is_standing_phase 动态切换
+        elif self.train_stage == 4:
+            # 1. 计算站立/归位奖励 (Pose Matching)
+            root_vel_s4 = self._root_states[..., 7:10]
+            vel_penalty_s4 = torch.sum(root_vel_s4[:, 0:2] ** 2, dim=-1)
+            
+            root_ang_vel_s4 = self._root_states[..., 10:13]
+            ang_penalty_s4 = root_ang_vel_s4[:, 2] ** 2 # 保持朝向
+            
+            dof_diff_s4 = self._dof_pos - self._initial_dof_pos
+            joint_penalty_s4 = torch.sum(dof_diff_s4 ** 2, dim=-1) # 回归初始姿态
+            
+            act_penalty_s4 = torch.sum(actions ** 2, dim=-1)
+
+            # 站立时的强力奖励 (乘法结构)
+            stand_reward_s4 = (
+                pos_reward
+                * torch.exp(-2.0 * vel_penalty_s4)
+                * torch.exp(-1.0 * ang_penalty_s4)
+                * torch.exp(-1.0 * joint_penalty_s4)
+                * torch.exp(-0.001 * act_penalty_s4)
+            )
+
+            # 2. 计算行走奖励 (Tracking)
+            # 采用叠加结构
+            walk_reward_s4 = pos_reward + vel_reward + heading_reward
+
+            # 3. 动态切换
+            self.rew_buf[:] = torch.where(is_standing_phase, stand_reward_s4, walk_reward_s4)
+            self.extras['amp_mask'] = (~is_standing_phase).float()
+
+        # --- 分支 3: Stage 2 & 3 (直线/曲线行走) ---
+        # 推荐权重分配: 速度匹配最重要(0.4)，位置与朝向辅助(各0.3)
+        # 这样既能保证“跟得上速度”，又能保证“走得准”且“面朝前”
         else:
-            # 阶段 2 & 3: 直线/曲线行走
-            # 推荐权重分配: 速度匹配最重要(0.4)，位置与朝向辅助(各0.3)
-            # 这样既能保证“跟得上速度”，又能保证“走得准”且“面朝前”
             self.rew_buf[:] = pos_reward + vel_reward + heading_reward
 
     def _compute_reset(self):
