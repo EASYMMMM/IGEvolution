@@ -17,7 +17,7 @@ python SRL_Evo_train.py task=HumanoidAMPSRLGym_s1_Smpl test=True force_render=Tr
 
 # ------ Humanoid 预训练流程 ------
 # Humanoid Stage1: 直线 Random （175cm amp_175）
-python SRL_Evo_train.py task=HumanoidAMPSRLGym_s1_Smpl experiment=Humanoid_175_Pretrain_s1 wandb_project=SRL wandb_activate=True max_iterations=1500 task.env.episodeLength=2000 sim_device=cuda:1 rl_device=cuda:1   headless=True seed=$RANDOM task.env.train_stage=2  
+python SRL_Evo_train.py task=HumanoidAMPSRLGym_s1_Smpl experiment=Humanoid_175_Pretrain_s1 wandb_project=SRL wandb_activate=True max_iterations=1500 task.env.episodeLength=2000 sim_device=cuda:1 rl_device=cuda:1   headless=True seed=$RANDOM task.env.train_stage=1  
 # check
 python SRL_Evo_train.py task=HumanoidAMPSRLGym_s1_Smpl test=True force_render=True task.env.cameraFollow=True num_envs=1 task.env.train_stage=2  sim_device=cuda:0 rl_device=cuda:0 checkpoint=runs/Humanoid_175_Pretrain_s1_30-13-15-51/nn/Humanoid_175_Pretrain_s1_30-13-15-57.pth  seed=$RANDOM
 # Humanoid Stage2: 直线 Hybrid（175cm amp_175）
@@ -28,8 +28,14 @@ python SRL_Evo_train.py task=HumanoidAMPSRLGym_s1_Smpl test=True force_render=Tr
 python SRL_Evo_train.py task=HumanoidAMPSRLGym_s1_Smpl experiment=Humanoid_175_Pretrain_s3 task.env.stateInit=Hybrid wandb_project=SRL wandb_activate=True max_iterations=2500 task.env.episodeLength=4000 sim_device=cuda:1 rl_device=cuda:1 num_envs=4096 headless=True seed=$RANDOM task.env.train_stage=3  checkpoint=runs/Humanoid_175_Pretrain_s2_30-13-53-51/nn/Humanoid_175_Pretrain_s2_30-13-53-56.pth   
 # check
 python SRL_Evo_train.py task=HumanoidAMPSRLGym_s1_Smpl test=True force_render=True task.env.cameraFollow=True task.env.stateInit=Default num_envs=1 task.env.train_stage=3  sim_device=cuda:0 rl_device=cuda:0 checkpoint=runs/Humanoid_175_Pretrain_s3_23-17-13-25/nn/Humanoid_175_Pretrain_s3_23-17-13-30.pth  task.env.episodeLength=4000  seed=$RANDOM 
-
-
+# Humanoid Stage4: 混合任务（175cm amp_175）
+python SRL_Evo_train.py task=HumanoidAMPSRLGym_s1_Smpl experiment=Humanoid_175_Pretrain_s4 task.env.stateInit=Hybrid wandb_project=SRL wandb_activate=True max_iterations=3500 task.env.episodeLength=4000 sim_device=cuda:1 rl_device=cuda:1 num_envs=4096 headless=True seed=$RANDOM task.env.train_stage=4  checkpoint=runs/Humanoid_175_Pretrain_s3_26-17-10-45/nn/Humanoid_175_Pretrain_s3_26-17-10-50.pth
+# check
+python SRL_Evo_train.py task=HumanoidAMPSRLGym_s1_Smpl test=True force_render=True task.env.cameraFollow=True task.env.stateInit=Default num_envs=1 task.env.train_stage=4  sim_device=cuda:0 rl_device=cuda:0 checkpoint=runs/Humanoid_175_Pretrain_s4_26-20-11-17/nn/Humanoid_175_Pretrain_s4_26-20-11-23.pth task.env.episodeLength=4000  seed=$RANDOM 
+runs/Humanoid_175_Pretrain_s4_28-17-55-13/nn/Humanoid_175_Pretrain_s4_28-17-55-19.pth
+runs/Humanoid_175_Pretrain_s4_28-21-16-06/nn/Humanoid_175_Pretrain_s4_28-21-16-11.pth
+runs/Humanoid_175_Pretrain_s1_29-15-13-35/nn/Humanoid_175_Pretrain_s1_29-15-13-42.pth
+runs/Humanoid_175_Pretrain_s1_29-17-32-44/nn/Humanoid_175_Pretrain_s1_29-17-33-34.pth
 # =========== Real HRI ==========
 # (1.4) 关节力矩更大的humanoid  
 python SRL_Evo_train.py task=SRL_Real_HRI headless=True wandb_project=SRL_Evo wandb_activate=True experiment=SRL_Real_HRI   max_iterations=2000   train.params.config.humanoid_checkpoint=runs/Humanoid_175_Pretrain_s2_30-13-53-51/nn/Humanoid_175_Pretrain_s2_30-13-53-56.pth   train.params.config.srl_teacher_checkpoint=runs/SRL_Real_s4_26-17-10-46/nn/SRL_Real_s4.pth   train.params.config.dagger_loss_coef=0.5 train.params.config.sym_a_loss_coef=1.0 train.params.config.sym_c_loss_coef=0.5  train.params.config.dagger_anneal_k=1e-4  task.env.srl_free_actions_num=2   task.env.clearance_penalty_scale=0 task.env.asset.assetFileName="mjcf/srl_real_hri/srl_real_hri_HXYK_175_powerup.xml" ;    
@@ -81,3 +87,21 @@ python SRL_Evo_train.py task=SRL_Real_HRI headless=True wandb_project=SRL_Evo wa
     train.params.config.dagger_anneal_k=1e-5  task.env.srl_free_actions_num=5   task.env.clearance_penalty_scale=10 \
     task.env.humanoid_share_reward_scale=2.0 \
     task.env.asset.assetFileName="mjcf/srl_real_hri/srl_real_hri_HXYK_175_mesh.xml"  
+
+Error executing job with overrides: ['task=HumanoidAMPSRLGym_s1_Smpl', 'experiment=Humanoid_175_Pretrain_s1', 'wandb_project=SRL', 'wandb_activate=True', 'max_iterations=500', 'task.env.episodeLength=200', 'task.env.stateInit=Random', 'sim_device=cuda:0', 'rl_device=cuda:0', 'headless=True', 'seed=26473', 'task.env.train_stage=1']
+Traceback (most recent call last):
+  File "SRL_Evo_train.py", line 228, in launch_rlg_hydra
+    'sigma': cfg.sigma if cfg.sigma != '' else None
+  File "/home/ps/anaconda3/envs/Mrlgpu/lib/python3.7/site-packages/rl_games/torch_runner.py", line 221, in run
+    self.run_train(args)
+  File "/home/ps/anaconda3/envs/Mrlgpu/lib/python3.7/site-packages/rl_games/torch_runner.py", line 166, in run_train
+    agent.train()
+  File "/home/ps/pan1/files/zjh/zdh/IGEvolution/isaacgymenvs/learning/common_agent.py", line 134, in train
+    train_info = self.train_epoch()
+  File "/home/ps/pan1/files/zjh/zdh/IGEvolution/isaacgymenvs/learning/amp_continuous.py", line 193, in train_epoch
+    batch_dict = self.play_steps()
+  File "/home/ps/pan1/files/zjh/zdh/IGEvolution/isaacgymenvs/learning/amp_continuous.py", line 163, in play_steps
+    mb_rewards = self._combine_rewards(mb_rewards, amp_rewards, mb_amp_masks)
+  File "/home/ps/pan1/files/zjh/zdh/IGEvolution/isaacgymenvs/learning/amp_continuous.py", line 512, in _combine_rewards
+    disc_r = disc_r * amp_masks
+RuntimeError: The size of tensor a (8192) must match the size of tensor b (64) at non-singleton dimension 1
