@@ -37,7 +37,7 @@ python SRL_Evo_train.py task=SRL_Real_Bot test=True force_render=True task.env.c
 # --- stage 1 --- vel
 python SRL_Evo_train.py task=SRL_Real_Bot wandb_project=SRL_Real experiment=SRL_Real_s1  task.env.task_training_stage=1 headless=True wandb_activate=True max_iterations=1000   task.env.vel_tracking_reward_scale=8  task.env.progress_reward_scale=1.0 task.env.alive_reward_scale=1.0 task.env.asset.assetFileName="mjcf/srl_real/srl_real_bot_full_rotate.xml"  task.env.srl_max_effort=180;  
 # --- check ---
-python SRL_Evo_train.py task=SRL_Real_Bot test=True force_render=True task.env.cameraFollow=True num_envs=4 task.env.task_training_stage=1 checkpoint=runs/SRL_Real_s1_22-15-22-12/nn/SRL_Real_s1.pth  sim_device=cuda:1 rl_device=cuda:1  task.env.asset.assetFileName="mjcf/srl_real/srl_real_bot_full_rotate.xml" task.env.srl_max_effort=180
+python SRL_Evo_train.py task=SRL_Real_Bot test=True force_render=True task.env.cameraFollow=True num_envs=4 task.env.task_training_stage=1 checkpoint=runs/SRL_Real_s1_29-15-09-59/nn/SRL_Real_s1.pth  sim_device=cuda:1 rl_device=cuda:1  task.env.asset.assetFileName="mjcf/srl_real/srl_real_bot_full_rotate.xml" task.env.srl_max_effort=180
 # --- stage 1.5 --- motor
 python SRL_Evo_train.py task=SRL_Real_Bot wandb_project=SRL_Real experiment=SRL_Real_s1.5  task.env.task_training_stage=1 headless=True wandb_activate=True max_iterations=1500   task.env.vel_tracking_reward_scale=8  task.env.progress_reward_scale=1.0 task.env.alive_reward_scale=1.0 task.env.asset.assetFileName="mjcf/srl_real/srl_real_bot_full_rotate.xml"  checkpoint=runs/SRL_Real_s1_21-17-52-23/nn/SRL_Real_s1.pth task.env.srl_motor_cost_scale=1.0  task.env.srl_max_effort=180 ;  
 # --- check ---
@@ -54,3 +54,16 @@ python SRL_Evo_train.py task=SRL_Real_Bot test=True force_render=True task.env.c
 python SRL_Evo_train.py task=SRL_Real_Bot wandb_project=SRL_Real experiment=SRL_Real_s4  task.env.task_training_stage=3 task.task.randomize=True task.task.vel_pertubation=True headless=True wandb_activate=True max_iterations=3500    checkpoint=runs/SRL_Real_s3_04-19-18-22/nn/SRL_Real_s3.pth  task.env.progress_reward_scale=0.0 task.env.alive_reward_scale=0.0;  
 # --- check ---
 python SRL_Evo_train.py task=SRL_Real_Bot test=True force_render=True task.env.cameraFollow=True num_envs=4 task.env.task_training_stage=3 task.task.randomize=True  task.task.vel_pertubation=True checkpoint=runs/SRL_Real_s4_04-21-00-44/nn/SRL_Real_s4.pth   sim_device=cuda:1 rl_device=cuda:1  
+
+
+# ========= SRL REAL BOT v1 (1.28) ===========
+# srl real bot: stage1 vel+motor
+python SRL_Evo_train.py task=SRL_Real_Bot test=True force_render=True task.env.cameraFollow=True num_envs=4 task.env.task_training_stage=1 checkpoint=runs/SRL_Real_s1_26-14-27-17/nn/SRL_Real_s1.pth  sim_device=cuda:1 rl_device=cuda:1  task.env.asset.assetFileName="mjcf/srl_real/srl_real_bot_full_rotate.xml" task.env.srl_max_effort=180
+# 膝关节电机外置，电机尺寸更新
+# --- stage 1 --- vel
+python SRL_Evo_train.py task=SRL_Real_Bot wandb_project=SRL_Real experiment=SRL_Real_s1  task.env.task_training_stage=1 headless=True wandb_activate=True max_iterations=1000   task.env.vel_tracking_reward_scale=8  task.env.progress_reward_scale=1.0 task.env.alive_reward_scale=1.0 task.env.asset.assetFileName="mjcf/srl_real/srl_real_bot_v1.xml"  task.env.srl_max_effort=180;  
+# --- stage 1 --- vel+motor
+python SRL_Evo_train.py task=SRL_Real_Bot wandb_project=SRL_Real experiment=SRL_Real_s1  task.env.task_training_stage=1 headless=True wandb_activate=True max_iterations=1000   task.env.vel_tracking_reward_scale=8  task.env.progress_reward_scale=1.0 task.env.alive_reward_scale=1.0 task.env.srl_motor_cost_scale=0.2  task.env.asset.assetFileName="mjcf/srl_real/srl_real_bot_v1.xml"  task.env.srl_max_effort=180;  
+
+# --- check ---
+python SRL_Evo_train.py task=SRL_Real_Bot test=True force_render=True task.env.cameraFollow=True num_envs=4 task.env.task_training_stage=1 checkpoint=runs/SRL_Real_s1_0128_maxeff120_31-16-41-13/nn/SRL_Real_s1_0128_maxeff120.pth  sim_device=cuda:1 rl_device=cuda:1  task.env.asset.assetFileName="mjcf/srl_real/srl_real_bot_v1.xml" task.env.srl_max_effort=180

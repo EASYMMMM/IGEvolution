@@ -14,7 +14,7 @@ env:
   clipActions: 1.0
   obs_frame_stack: 5
   
-  pdControl: True
+  pdControl: False
   forceControl: True
   powerScale: 1.0
 
@@ -41,11 +41,11 @@ env:
 
   # reward weights
   alive_reward_scale: 1.0
-  torques_cost_scale: 5e-6
+  torques_cost_scale: 5e-4
   progress_reward_scale: 1
   dof_acc_cost_scale: 0.5
   dof_vel_cost_scale: 1
-  dof_pos_cost_sacle: 0.05
+  dof_pos_cost_scale: 0.2
   no_fly_penalty_scale: 10.0
   gait_similarity_penalty_scale: 10
   pelvis_height_reward_scale: 5.0
@@ -54,8 +54,8 @@ env:
   vel_tracking_reward_scale: 6.0
   clearance_penalty_scale: 50
   lateral_distance_penalty_scale: 30
-  actions_rate_scale: 0.1
-  actions_smoothness_scale: 0.1
+  actions_rate_scale: 0.3
+  actions_smoothness_scale: 0.6
   srl_motor_cost_scale: 0.0
 
   asset:

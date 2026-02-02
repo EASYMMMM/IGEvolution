@@ -78,6 +78,7 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
         self.srl_virtual_passive_pos_log = []
         self.srl_virtual_load_cell_log = []
         self.load_cell_log = []
+        self.humanoid_torques_log = []
         self.obs_num_humanoid = self.env.get_humanoid_obs_size()
         self.obs_num_srl = self.env.get_srl_obs_size()
         self.priv_obs_num_srl = self.env.get_srl_priv_obs_size()
@@ -265,6 +266,7 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                     self.srl_virtual_passive_pos_log.append(info['srl_virtual_passive_pos'].cpu().numpy())
                     self.srl_virtual_load_cell_log.append(info['srl_virtual_load_cell'].cpu().numpy())
                     self.srl_torques_log.append(info['srl_torques'].cpu().numpy())
+                    self.humanoid_torques_log.append(info['humanoid_torques'].cpu().numpy())
                     self._post_step(info)
                     
                     # 只记录第一个环境的动作
@@ -316,6 +318,7 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                             srl_virtual_passive_pos_array = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.srl_virtual_passive_pos_log], axis=0)
                             srl_virtual_load_cell_array = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.srl_virtual_load_cell_log], axis=0)
                             srl_torques_array = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.srl_torques_log], axis=0)
+                            humanoid_torques_array = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.humanoid_torques_log], axis=0)
                             self.obs_log.clear()
                             self.target_yaw_log.clear()
                             self.load_cell_fd_log.clear()
@@ -323,6 +326,8 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                             self.srl_virtual_passive_pos_log.clear()
                             self.srl_virtual_load_cell_log.clear()
                             self.srl_torques_log.clear()
+                            self.humanoid_torques_log.clear()
+                            
                             num_dims = 51 
                             split1 = 17  # Part 1 包含 0 到 16 (共 17 维)
                             split2 = 34  # Part 2 包含 17 到 33 (共 17 维)
@@ -444,6 +449,96 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                             plt.tight_layout()
                             plt.show()
 
+                            # ==================== [NEW] HRI & Humanoid Torque Analysis START ====================
+                            dt_sim = getattr(self.env, "control_dt", 0.0166)
+
+                            # 1. 交互力分析 (Interaction Force Analysis)
+                            print("\n" + "="*60)
+                            print(" >>> HRI Interaction Force Analysis (Virtual Load Cell) <<<")
+                            print("="*60)
+                            int_forces = srl_virtual_load_cell_array[:, 0:3]
+                            int_force_norm = np.linalg.norm(int_forces, axis=1)
+
+                            def calc_hri_metric(data, name):
+                                return {
+                                    "Metric": name,
+                                    "Mean": np.mean(data),        # [NEW] 带符号均值，体现方向性
+                                    "Var": np.var(data),          # [NEW] 方差，体现波动
+                                    "RMS": np.sqrt(np.mean(data**2)),
+                                    "MaxAbs": np.max(np.abs(data)),
+                                    "Smoothness": np.sqrt(np.mean((np.diff(data)/dt_sim)**2)) # Jerk
+                                }
+
+                            hri_metrics = [
+                                calc_hri_metric(int_forces[:, 0], "Force X (Fx)"),
+                                calc_hri_metric(int_forces[:, 1], "Force Y (Fy)"),
+                                calc_hri_metric(int_forces[:, 2], "Force Z (Fz)"),
+                                calc_hri_metric(int_force_norm, "Force Norm (|F|)")
+                            ]
+
+                            # [MODIFIED] 将 RMS 列替换为 Mean，展示 Var
+                            print(f"{'Metric':<20} | {'Mean':<10} | {'Var':<10} | {'MaxAbs':<10} | {'Smoothness':<10}")
+                            print("-" * 75)
+                            for m in hri_metrics:
+                                print(f"{m['Metric']:<20} | {m['Mean']:<10.4f} | {m['Var']:<10.4f} | {m['MaxAbs']:<10.4f} | {m['Smoothness']:<10.4f}")
+                            print("-" * 75)
+
+                            # 2. Humanoid 关节力矩分析 (Joint Torque Analysis)
+                            print("\n" + "="*60)
+                            print(" >>> Humanoid Joint Torque Analysis (Load Carrying) <<<")
+                            print("="*60)
+                            
+                            # 关节切片索引 (Hip-Y, Knee, Ankle)
+                            joint_indices = {
+                                'Hip_Y_Right': 15, 'Hip_Y_Left': 22,
+                                'Knee_Right': 17,  'Knee_Left': 24,
+                                'Ankle_Right': 19, 'Ankle_Left': 26
+                            }
+                            
+                            joint_metrics = []
+                            plot_data_joints = {}
+                            
+                            for name, idx in joint_indices.items():
+                                t_data = humanoid_torques_array[:, idx]
+                                plot_data_joints[name] = t_data
+                                met = calc_hri_metric(t_data, name)
+                                met['Integral'] = np.sum(np.abs(t_data)) * dt_sim # 积分力矩
+                                joint_metrics.append(met)
+                            
+                            print(f"{'Joint':<15} | {'RMS (Nm)':<10} | {'Max (Nm)':<10} | {'Integral (Nms)':<15}")
+                            print("-" * 65)
+                            for m in joint_metrics:
+                                print(f"{m['Metric']:<15} | {m['RMS']:<10.2f} | {m['MaxAbs']:<10.2f} | {m['Integral']:<15.2f}")
+                            print("-" * 65)
+
+                            # 3. 绘图: 交互力 & 关节力矩
+                            fig_hri, axs_hri = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+                            time_steps = np.arange(len(int_forces)) * dt_sim
+                            
+                            # Interaction Force
+                            axs_hri[0].plot(time_steps, int_forces[:, 0], label='Fx', alpha=0.7)
+                            axs_hri[0].plot(time_steps, int_forces[:, 1], label='Fy', alpha=0.7)
+                            axs_hri[0].plot(time_steps, int_forces[:, 2], label='Fz', alpha=0.7)
+                            axs_hri[0].plot(time_steps, int_force_norm, label='|F|', color='k', linestyle='--', alpha=0.5)
+                            axs_hri[0].set_ylabel('Interaction Force (N)')
+                            axs_hri[0].set_title('Virtual Interaction Forces')
+                            axs_hri[0].legend()
+                            axs_hri[0].grid(True, alpha=0.3)
+                            
+                            # Joint Torques (Right Leg)
+                            axs_hri[1].plot(time_steps, plot_data_joints['Hip_Y_Right'], label='R-Hip-Y')
+                            axs_hri[1].plot(time_steps, plot_data_joints['Knee_Right'], label='R-Knee')
+                            axs_hri[1].plot(time_steps, plot_data_joints['Ankle_Right'], label='R-Ankle')
+                            axs_hri[1].set_ylabel('Joint Torque (Nm)')
+                            axs_hri[1].set_xlabel('Time (s)')
+                            axs_hri[1].set_title('Right Leg Joint Torques')
+                            axs_hri[1].legend()
+                            axs_hri[1].grid(True, alpha=0.3)
+                            
+                            plt.tight_layout()
+                            plt.show()
+                            # ==================== [NEW] HRI & Humanoid Torque Analysis END ====================
+
                             # srl torques
                             # --- compute metrics ---
                             dt = getattr(self.env, "control_dt", 0.015)  # 如果 env 里有 control_dt 就用它；没有就用你默认的 0.015
@@ -535,7 +630,7 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
 
                             plt.suptitle("Srl Torques + Episode Metrics")
                             plt.tight_layout()  
-                            plt.show()                           
+                            plt.show()                                  
 
 
                         if self._save_data:
@@ -695,7 +790,6 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
             print('av reward:', sum_rewards / games_played * n_game_life, 'av steps:', sum_steps / games_played * n_game_life)
 
         return
-
     def action0_ave(self, actions_env0):
         # 计算输出动作的均值和方差
         # 转换成Numpy数组以方便计算

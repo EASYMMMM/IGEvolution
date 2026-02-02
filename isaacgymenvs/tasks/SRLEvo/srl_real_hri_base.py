@@ -73,7 +73,7 @@ class SRL_Real_HRI_Base(VecTask):
         self.torques_cost_scale = self.cfg["env"]["torques_cost_scale"]
         self.dof_acc_cost_scale = self.cfg["env"]["dof_acc_cost_scale"]
         self.dof_vel_cost_scale = self.cfg["env"]["dof_vel_cost_scale"]
-        self.dof_pos_cost_sacle = self.cfg["env"]["dof_pos_cost_sacle"]
+        self.dof_pos_cost_scale = self.cfg["env"]["dof_pos_cost_scale"]
         self.contact_force_cost_scale = self.cfg["env"]["contact_force_cost_scale"]
         self.no_fly_penalty_scale = self.cfg["env"]["no_fly_penalty_scale"]
         self.tracking_ang_vel_reward_scale = self.cfg["env"]["tracking_ang_vel_reward_scale"]
@@ -361,6 +361,7 @@ class SRL_Real_HRI_Base(VecTask):
         self.up_axis_idx = 2 # index of up axis: Y=1, Z=2
         total_dof_nums = self.humanoid_actions_num + self.srl_free_actions_num + self.srl_actions_num
         self.torques = torch.zeros(self.num_envs, total_dof_nums, dtype=torch.float, device=self.device, requires_grad=False)
+        self.humanoid_torques = torch.zeros(self.num_envs, self.humanoid_actions_num, dtype=torch.float, device=self.device, requires_grad=False)
         self.p_gains = torch.zeros(total_dof_nums, dtype=torch.float, device=self.device, requires_grad=False)
         self.d_gains = torch.zeros(total_dof_nums, dtype=torch.float, device=self.device, requires_grad=False)
         self.torque_limits = torch.zeros(total_dof_nums, dtype=torch.float, device=self.device, requires_grad=False)
@@ -733,7 +734,7 @@ class SRL_Real_HRI_Base(VecTask):
                                             torques_cost_scale = self.torques_cost_scale,
                                             dof_acc_cost_scale = self.dof_acc_cost_scale,
                                             dof_vel_cost_scale = self.dof_vel_cost_scale,
-                                            dof_pos_cost_sacle = self.dof_pos_cost_sacle,
+                                            dof_pos_cost_scale = self.dof_pos_cost_scale,
                                             contact_force_cost_scale = self.contact_force_cost_scale,
                                             no_fly_penalty_scale = self.no_fly_penalty_scale,
                                             vel_tracking_reward_scale = self.vel_tracking_reward_scale,
@@ -993,6 +994,7 @@ class SRL_Real_HRI_Base(VecTask):
             pd_tar = self._action_to_pd_targets(_action)
             torques = self.p_gains*(pd_tar - self._dof_pos) - self.d_gains*self._dof_vel
             self.torques = torch.clip(torques, -self.torque_limits, self.torque_limits).view(self.torques.shape)
+            self.humanoid_torques = self.torques[:,:self.get_humanoid_action_size()].clone()
             self.torques[:,:self.get_humanoid_action_size()+self.get_srl_free_action_size()] = 0.00
             # --- virtual interaction force: F = -k*q - c*qdot, clamp to max ---
             # q  = self._dof_pos[:, self.srl_virtual_damping_ids]
@@ -1043,16 +1045,12 @@ class SRL_Real_HRI_Base(VecTask):
             self.extras['load_cell_fd'] = self.vec_sensor_tensor[0,self.load_cell_ssidx_fd,:].to(self.rl_device)
             self.extras['right_srl_end_sensor'] = self.vec_sensor_tensor[0,self.right_srl_end_ssidx,:].to(self.rl_device)
             self.extras["target_yaw"] = self.target_yaw
-            # virtual_ids = [
-            #     int(self.srl_virtual_damping_x_idx),
-            #     int(self.srl_virtual_damping_y_idx),
-            #     int(self.srl_virtual_damping_z_idx),
-            # ]
             vpos0 = self._dof_pos[0, self.srl_virtual_damping_ids]
             self.extras["srl_virtual_passive_pos"] = vpos0.to(self.rl_device)
             virtual_load_cell = self._virtual_load_cell_from_dof(self._dof_pos, self._dof_vel)
             self.extras["srl_virtual_load_cell"] = virtual_load_cell[0].to(self.rl_device)
             self.extras["dof_force"] = self.dof_force_tensor[0].to(self.rl_device)
+            self.extras["humanoid_torques"] = self.humanoid_torques[0].to(self.rl_device)
         # debug viz
         if self.viewer and self.debug_viz:
             self._update_debug_viz()
@@ -1810,7 +1808,7 @@ def compute_srl_reward(
     torques_cost_scale: float = 0,
     dof_acc_cost_scale: float = 0,
     dof_vel_cost_scale: float = 0,
-    dof_pos_cost_sacle: float = 0,
+    dof_pos_cost_scale: float = 0,
     contact_force_cost_scale: float = 0,
     tracking_ang_vel_reward_scale: float = 0,
     no_fly_penalty_scale: float = 0,
@@ -2019,7 +2017,7 @@ def compute_srl_reward(
         + orientation_reward_scale * orientation_reward  \
         + pelvis_height_reward_scale * pelvis_height_reward \
         - torques_cost_scale * torques_cost \
-        - dof_pos_cost_sacle * dof_pos_cost \
+        - dof_pos_cost_scale * dof_pos_cost \
         - dof_vel_cost_scale * dof_vel_cost \
         + dof_acc_cost_scale * dof_acc_reward \
         - actions_rate_scale * actions_rate \

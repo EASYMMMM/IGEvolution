@@ -69,7 +69,7 @@ env:
   progress_reward_scale: 1
   dof_acc_cost_scale: 0.5
   dof_vel_cost_scale: 1
-  dof_pos_cost_sacle: 0.05
+  dof_pos_cost_scale: 0.05
   no_fly_penalty_scale: 10.0
   gait_similarity_penalty_scale: 10
   pelvis_height_reward_scale: 5.0

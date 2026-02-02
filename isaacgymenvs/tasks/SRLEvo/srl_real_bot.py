@@ -80,7 +80,7 @@ class SRL_Real_Bot(VecTask):
         self.torques_cost_scale = self.cfg["env"]["torques_cost_scale"]
         self.dof_acc_cost_scale = self.cfg["env"]["dof_acc_cost_scale"]
         self.dof_vel_cost_scale = self.cfg["env"]["dof_vel_cost_scale"]
-        self.dof_pos_cost_sacle = self.cfg["env"]["dof_pos_cost_sacle"]
+        self.dof_pos_cost_scale = self.cfg["env"]["dof_pos_cost_scale"]
         self.no_fly_penalty_scale = self.cfg["env"]["no_fly_penalty_scale"]
         self.tracking_ang_vel_reward_scale = self.cfg["env"]["tracking_ang_vel_reward_scale"]
         self.vel_tracking_reward_scale = self.cfg["env"]["vel_tracking_reward_scale"]
@@ -106,10 +106,10 @@ class SRL_Real_Bot(VecTask):
         self.default_joint_angles = [0*np.pi, -0.1, 0.2, 0*np.pi, -0.1, 0.2,]
 
         # ==========================================================
-        # 1. 新增电机优化参数 (针对 RI80 设计)
+        # TODO: 1. 新增电机优化参数 (针对 RI80 设计)
         # ==========================================================
-        self.srl_rated_nm = 60.0    # RI80 额定扭矩
-        self.srl_peak_nm = 180.0    # RI80 峰值扭矩
+        self.srl_rated_nm = 110.0    # RI80 额定扭矩
+        self.srl_peak_nm = 320.0    # RI80 峰值扭矩
         self.srl_peak_start_ratio = 0.7  # 超过 70% 峰值扭矩开始惩罚
         self.srl_thermal_start = 0.7     # 热量 EMA 超过 0.7 开始惩罚
         
@@ -445,7 +445,7 @@ class SRL_Real_Bot(VecTask):
             torques_cost_scale = self.torques_cost_scale,
             dof_acc_cost_scale = self.dof_acc_cost_scale,
             dof_vel_cost_scale = self.dof_vel_cost_scale,
-            dof_pos_cost_sacle = self.dof_pos_cost_sacle,
+            dof_pos_cost_scale = self.dof_pos_cost_scale,
             no_fly_penalty_scale = self.no_fly_penalty_scale,
             vel_tracking_reward_scale = self.vel_tracking_reward_scale,
             tracking_ang_vel_reward_scale = self.tracking_ang_vel_reward_scale,
@@ -462,50 +462,63 @@ class SRL_Real_Bot(VecTask):
     def compute_observations(self, env_ids=None):
         obs, obs_mirrored, potentials, prev_potentials = self._compute_srl_obs(env_ids)
 
-        if (env_ids is None):
-            self.obs_buffer[:, 1:, :] = self.obs_buffer[:, :-1, :]  # 向后移动数据
-            self.obs_buffer[:, 0, :] = obs  # 将新的观测数据放到队列的开头
+        if env_ids is None:
+            # roll stack
+            self.obs_buffer[:, 1:, :] = self.obs_buffer[:, :-1, :]
+            self.obs_buffer[:, 0, :] = obs
 
-            self.obs_mirrored_buffer[:, 1:, :] = self.obs_mirrored_buffer[:, :-1, :]  # 向后移动数据
-            self.obs_mirrored_buffer[:, 0, :] = obs_mirrored  # 将新的观测数据放到队列的开头
-            
+            # fill zero-frames with current obs (reset-safe)
+            zero_frames = (self.obs_buffer.abs().sum(dim=-1) == 0)  # [N, S]
+            if zero_frames.any():
+                self.obs_buffer[zero_frames] = obs.unsqueeze(1).expand_as(self.obs_buffer)[zero_frames]
+
+            # mirrored
+            self.obs_mirrored_buffer[:, 1:, :] = self.obs_mirrored_buffer[:, :-1, :]
+            self.obs_mirrored_buffer[:, 0, :] = obs_mirrored
+
+            zero_frames_m = (self.obs_mirrored_buffer.abs().sum(dim=-1) == 0)
+            if zero_frames_m.any():
+                self.obs_mirrored_buffer[zero_frames_m] = obs_mirrored.unsqueeze(1).expand_as(self.obs_mirrored_buffer)[zero_frames_m]
+
             # cat task command
             base_obs = self.obs_buffer.reshape(self.num_envs, -1)
-            task_params = torch.stack((
-                self.target_vel_x,
-                self.target_ang_vel_z,
-                self.target_pelvis_height,
-            ), dim=-1)  # shape [num_envs, 3]
-            mirrored_task_params = torch.stack((
-                self.target_vel_x,
-                - self.target_ang_vel_z,
-                self.target_pelvis_height,
-            ), dim=-1)  # shape [num_envs, 3]
+            task_params = torch.stack((self.target_vel_x, self.target_ang_vel_z, self.target_pelvis_height), dim=-1)
+            mirrored_task_params = torch.stack((self.target_vel_x, -self.target_ang_vel_z, self.target_pelvis_height), dim=-1)
+
             self.obs_buf[:] = torch.cat([base_obs, task_params], dim=-1)
             base_obs_mirrored = self.obs_mirrored_buffer.reshape(self.num_envs, -1)
             self.obs_mirrored_buf[:] = torch.cat([base_obs_mirrored, mirrored_task_params], dim=-1)
 
             self.potentials[:] = potentials
             self.prev_potentials[:] = prev_potentials
+
         else:
-            # 对指定环境进行更新
+            # roll stack (selected envs)
             self.obs_buffer[env_ids, 1:, :] = self.obs_buffer[env_ids, :-1, :]
             self.obs_buffer[env_ids, 0, :] = obs
 
-            self.obs_mirrored_buffer[env_ids, 1:, :] = self.obs_mirrored_buffer[env_ids, :-1, :]  # 向后移动数据
-            self.obs_mirrored_buffer[env_ids, 0, :] = obs_mirrored  # 将新的观测数据放到队列的开头
-            
+            # fill zero-frames with current obs (reset-safe)  -- avoid chained indexing
+            ob = self.obs_buffer[env_ids]
+            zero_frames = (ob.abs().sum(dim=-1) == 0)  # [M, S]
+            if zero_frames.any():
+                ob[zero_frames] = obs.unsqueeze(1).expand_as(ob)[zero_frames]
+                self.obs_buffer[env_ids] = ob
+
+            # mirrored
+            self.obs_mirrored_buffer[env_ids, 1:, :] = self.obs_mirrored_buffer[env_ids, :-1, :]
+            self.obs_mirrored_buffer[env_ids, 0, :] = obs_mirrored
+
+            mob = self.obs_mirrored_buffer[env_ids]
+            zero_frames_m = (mob.abs().sum(dim=-1) == 0)
+            if zero_frames_m.any():
+                mob[zero_frames_m] = obs_mirrored.unsqueeze(1).expand_as(mob)[zero_frames_m]
+                self.obs_mirrored_buffer[env_ids] = mob
+
+            # cat task command
             base_obs = self.obs_buffer[env_ids].reshape(len(env_ids), -1)
-            task_params = torch.stack((
-                self.target_vel_x[env_ids],
-                self.target_ang_vel_z[env_ids],
-                self.target_pelvis_height[env_ids],
-            ), dim=-1)  # shape [len(env_ids), 3]  
-            mirrored_task_params = torch.stack((
-                self.target_vel_x[env_ids],
-                -self.target_ang_vel_z[env_ids],
-                self.target_pelvis_height[env_ids],
-            ), dim=-1)  # shape [len(env_ids), 3]  
+            task_params = torch.stack((self.target_vel_x[env_ids], self.target_ang_vel_z[env_ids], self.target_pelvis_height[env_ids]), dim=-1)
+            mirrored_task_params = torch.stack((self.target_vel_x[env_ids], -self.target_ang_vel_z[env_ids], self.target_pelvis_height[env_ids]), dim=-1)
+
             self.obs_buf[env_ids] = torch.cat([base_obs, task_params], dim=-1)
             base_obs_mirrored = self.obs_mirrored_buffer[env_ids].reshape(len(env_ids), -1)
             self.obs_mirrored_buf[env_ids] = torch.cat([base_obs_mirrored, mirrored_task_params], dim=-1)
@@ -899,7 +912,7 @@ def compute_srl_reward(
     torques_cost_scale: float = 0,
     dof_acc_cost_scale: float = 0,
     dof_vel_cost_scale: float = 0,
-    dof_pos_cost_sacle: float = 0,
+    dof_pos_cost_scale: float = 0,
     contact_force_cost_scale: float = 0,
     tracking_ang_vel_reward_scale: float = 0,
     no_fly_penalty_scale: float = 0,
@@ -930,11 +943,16 @@ def compute_srl_reward(
     target_ang_vel_z = obs_buf[:, -2]
     target_vel_x = obs_buf[:, -3]
 
+    # --- Warm Up in New Episode ---
+    warmup_steps = 10
+    warmup = torch.clamp(progress_buf.float() / warmup_steps, 0.0, 1.0)
+
     # --- Termination handling ---
     alive_reward_coef = torch.where(target_vel_x < 0.1, 4*torch.ones_like(target_vel_x), torch.ones_like(target_vel_x))
     alive_reward = alive_reward_coef * torch.ones_like(potentials)
     progress_reward_coef = torch.where(target_vel_x < 0.1, torch.zeros_like(target_vel_x), torch.ones_like(target_vel_x))
     progress_reward = progress_reward_coef * (potentials - prev_potentials)
+    progress_reward *= warmup
 
     # --- Pelvis velocity ---
     root_vel = obs_buf[:, 1:4] 
@@ -944,7 +962,7 @@ def compute_srl_reward(
     vel_tracking_reward = torch.exp(-4 * torch.norm(vel_error_vec, dim=-1))  # α = 1.5
 
     # --- Torques cost ---
-    torques_cost = 0 * torch.sum(actions ** 2, dim=-1)
+    torques_cost = torch.sum(actions ** 2, dim=-1)
 
     # --- DOF deviation cost ---
     srl_dof_pos = obs_buf[:, 10:16].clone()
@@ -957,38 +975,46 @@ def compute_srl_reward(
     dof_vel_cost = torch.sum(dof_vel ** 2, dim=-1)
 
     # --- DOF acceleration cost ---
-    dof_vel_prev = obs_buf[:, 16+30:16+30+actions.shape[1]]  # 前一帧速度
-    dof_acc = dof_vel - dof_vel_prev  # 关节加速度
-    dof_acc_magnitude_sq = torch.sum(dof_acc ** 2, dim=-1)
-    dof_acc_reward = torch.exp(- 2 * dof_acc_magnitude_sq)
+    act_dim = actions.shape[1]
+    w = warmup
+    w_col = w.unsqueeze(-1)
+    dof_vel_prev_raw = obs_buf[:, 16+30:16+30+act_dim]
+    dof_vel_prev = w_col * dof_vel_prev_raw + (1.0 - w_col) * dof_vel  # warmup前差分=0
+    dof_acc = dof_vel - dof_vel_prev
+    dof_acc_reward_raw = torch.exp(-2.0 * torch.sum(dof_acc ** 2, dim=-1))
+    dof_acc_reward = w * dof_acc_reward_raw + (1.0 - w) * torch.ones_like(dof_acc_reward_raw)
 
     # --- Action Smooth ---
-    actions_prev = obs_buf[:, 22+30:22+30+ actions.shape[1]]
-    actions_prev_prev = obs_buf[:, 22+60:22+60+ actions.shape[1]]
-    actions_rate = torch.sum((actions - actions_prev) ** 2, dim=-1)
-    actions_smoothness = torch.sum((actions - 2*actions_prev + actions_prev_prev) ** 2, dim=-1)
+    actions_prev_raw = obs_buf[:, 22+30:22+30+act_dim]
+    actions_prev_prev_raw = obs_buf[:, 22+60:22+60+act_dim]
+
+    actions_prev = w_col * actions_prev_raw + (1.0 - w_col) * actions
+    actions_prev_prev = w_col * actions_prev_prev_raw + (1.0 - w_col) * actions_prev
+
+    actions_rate = w * torch.sum((actions - actions_prev) ** 2, dim=-1)
+    actions_smoothness = w * torch.sum((actions - 2.0 * actions_prev + actions_prev_prev) ** 2, dim=-1)
 
     # --- Pelvis Orientation ---
-    euler_err = obs_buf[:,7:10] 
+    euler_err = obs_buf[:, 7:10]
     angle_diff = ((euler_err + math.pi) % (2 * math.pi)) - math.pi
-    cos_angle = torch.cos(2 * angle_diff)
-    ori_error = 1 - torch.mean(cos_angle, dim=-1)
-    orientation_reward = torch.exp(-20 * ori_error   ) 
+    yaw = angle_diff[:, 0]
+    rp = angle_diff[:, 1:3]
+    ori_cost = 0.2 * yaw * yaw + torch.sum(rp * rp, dim=-1)
+    orientation_reward = torch.exp(-8.0 * ori_cost)
 
     # --- Pelvis height ---
     pelvis_height = obs_buf[:,0]
     # target_pelvis_height = torch.full((pelvis_height.shape[0],), 0.88, device=pelvis_height.device)
     pelvis_height_error = pelvis_height - target_pelvis_height
-    pelvis_height_reward =  torch.exp(-12 * (10* pelvis_height_error) **2 ) 
+    pelvis_height_reward =  torch.exp(-6.0 * (3.0 * pelvis_height_error) **2 ) 
     pelvis_height_penalty =  (10* pelvis_height_error) **2 
 
     # --- Pelvis angular rate ---
-    root_ang_vel = obs_buf[:, 4:7]
-    root_target_ang_vel = torch.zeros((root_ang_vel.shape[0], 3), device=root_ang_vel.device)
-    root_target_ang_vel[:, 2] = target_ang_vel_z   
-    root_ang_vel[:,2] = root_ang_vel[:,2] 
-    ang_vel_error_vec = root_ang_vel - root_target_ang_vel
-    ang_vel_tracking_reward = torch.exp(-3 * torch.norm(ang_vel_error_vec, dim=-1))   
+    w = obs_buf[:, 4:7]
+    wx, wy, wz = w[:, 0], w[:, 1], w[:, 2]
+    wz_err = wz - target_ang_vel_z
+    ang_vel_cost = 3.0 * (wx * wx + wy * wy) + 0.5 * (wz_err * wz_err)
+    ang_vel_tracking_reward = torch.exp(-2.0 * ang_vel_cost)
    
     # --- No fly --- 
     contact_threshold = 0.055  
@@ -999,15 +1025,19 @@ def compute_srl_reward(
     no_fly_penalty_scale = no_fly_penalty_scale * no_fly_penalty_coef
     # 如果两只脚同时离地，给予惩罚
     no_fly_penalty = torch.where(no_feet_on_ground, torch.ones_like(no_feet_on_ground) * no_fly_penalty_scale, torch.zeros_like(no_feet_on_ground))
-    
+    no_fly_penalty *= warmup
+
+    # --- Clearance Penalty ---
+    clearance_penalty = warmup * clearance_penalty
 
     # --- Feet Lateral Distance ---
     local_srl_end_body_pos = srl_end_body_pos - srl_root_pos.unsqueeze(-2)
     lateral_distance = torch.abs(local_srl_end_body_pos[:,0,1] - local_srl_end_body_pos[:,1,1])
-    min_d, max_d = 0.40, 0.85 # FIXME: Lateral Distance 
+    min_d, max_d = 0.25, 0.85 # FIXME: Lateral Distance 
     below_violation = torch.clamp(min_d - lateral_distance, min=0.0)
     above_violation = torch.clamp(lateral_distance - max_d, min=0.0)
-    feet_lateral_penalty = below_violation + above_violation  
+    feet_lateral_penalty = below_violation + above_violation 
+    feet_lateral_penalty *= warmup 
 
     # --- Foot Phase ---
     phase_t = (2 * math.pi / gait_period) * phase_buf.float()
@@ -1027,6 +1057,7 @@ def compute_srl_reward(
     flying_miss_left  = expect_flying_left  * is_contact_left
     flying_miss_right = expect_flying_right * is_contact_right
     gait_phase_penalty = gait_similarity_penalty_scale * (stance_miss_left + stance_miss_right + flying_miss_left + flying_miss_right)
+    gait_phase_penalty *= warmup
     # standing
     # gait_phase_penalty_coef = torch.where(target_vel_x < 0.1, torch.zeros_like(target_vel_x), torch.ones_like(target_vel_x))
     # gait_phase_penalty =  gait_phase_penalty*gait_phase_penalty_coef
@@ -1039,7 +1070,7 @@ def compute_srl_reward(
         + orientation_reward_scale * orientation_reward  \
         + pelvis_height_reward_scale * pelvis_height_reward \
         - torques_cost_scale * torques_cost \
-        - dof_pos_cost_sacle * dof_pos_cost \
+        - dof_pos_cost_scale * dof_pos_cost \
         - dof_vel_cost_scale * dof_vel_cost \
         + dof_acc_cost_scale * dof_acc_reward \
         - actions_rate_scale * actions_rate \
@@ -1123,7 +1154,7 @@ def compute_srl_bot_observations(
 
 
     # 假设周期为 T=60 步，则频率为 1/T，每一步是 2π/T 相位步长
-    phase_t = (2 * math.pi / gait_period) * (phase_buf-1).float()  # shape: [num_envs]
+    phase_t = (2 * math.pi / gait_period) * (phase_buf).float()  # shape: [num_envs]
     sin_phase = torch.sin(phase_t).unsqueeze(-1)
     cos_phase = torch.cos(phase_t).unsqueeze(-1)
 
@@ -1214,7 +1245,7 @@ def compute_srl_bot_observations_mirrored(
     # heading_proj[:,1] = -heading_proj[:,1]
 
     # 假设周期为 T=60 步，则频率为 1/T，每一步是 2π/T 相位步长
-    phase_t = (2 * math.pi / gait_period) * (phase_buf-1).float()  # shape: [num_envs]
+    phase_t = (2 * math.pi / gait_period) * (phase_buf).float()  # shape: [num_envs]
     sin_phase = torch.sin(phase_t).unsqueeze(-1)
     cos_phase = torch.cos(phase_t).unsqueeze(-1)
 
