@@ -93,7 +93,7 @@ class SRL_Real_Bot(VecTask):
         self.actions_smoothness_scale = self.cfg["env"]["actions_smoothness_scale"]
         self.task_training_stage = self.cfg["env"].get("task_training_stage", 0)
         self.srl_motor_cost_scale = self.cfg["env"].get("srl_motor_cost_scale", 0)
-
+        self.action_scale = self.cfg["env"].get("action_scale", 1.0)
         self.obs_frame_stack = self.cfg["env"]["obs_frame_stack"]  
         
         self.vel_pertubation = self.cfg["task"].get("vel_pertubation", False)
@@ -106,18 +106,21 @@ class SRL_Real_Bot(VecTask):
         self.default_joint_angles = [0*np.pi, -0.1, 0.2, 0*np.pi, -0.1, 0.2,]
 
         # ==========================================================
-        # TODO: 1. 新增电机优化参数 (针对 RI80 设计)
+        # 电机优化参数 (针对 RI80 设计)
         # ==========================================================
-        self.srl_rated_nm = 110.0    # RI80 额定扭矩
-        self.srl_peak_nm = 320.0    # RI80 峰值扭矩
+        self.srl_rated_nm = 60    # RI80 额定扭矩
+        self.srl_peak_nm = 180    # RI80 峰值扭矩
         self.srl_peak_start_ratio = 0.7  # 超过 70% 峰值扭矩开始惩罚
         self.srl_thermal_start = 0.7     # 热量 EMA 超过 0.7 开始惩罚
         
         self.srl_peak_cost_scale = 0.5    # 峰值惩罚权重
         self.srl_thermal_cost_scale = 0.8 # 热量惩罚权重 (这对选型至关重要)
+        self.srl_power_cost_scale = 0.3   # 功率惩罚权重
+        self.srl_rated_w = 1100.0           # RI80 额定功率(W)
+        self.srl_power_start_ratio = 0.6    # 超过60%额定功率开始惩罚（可调：0.6~0.9）
         
         # EMA 时间常数
-        self.srl_thermal_tau_s = 1.5      # 热量累积 EMA 周期 (秒)
+        self.srl_thermal_tau_s = 2.0      # 热量累积 EMA 周期 (秒)
         self.srl_peak_window_tau_s = 0.3  # 峰值窗口 EMA 周期 (秒)
 
         super().__init__(config=self.cfg, rl_device=rl_device, sim_device=sim_device, graphics_device_id=graphics_device_id, headless=headless, virtual_screen_capture=virtual_screen_capture, force_render=force_render)
@@ -403,7 +406,7 @@ class SRL_Real_Bot(VecTask):
         
         peak_cost = torch.clamp((self.srl_peak_ratio_window - self.srl_peak_start_ratio) / (1.0 - self.srl_peak_start_ratio), min=0.0) ** 2
 
-        # (2) 热量惩罚 - 限制长期超额定功率运行
+        # (2) 热量惩罚 - 限制长期超额定功率运行（≈ I^2 / 铜耗代理）
         tau_ratio_rated = tau_abs / self.srl_rated_nm
         tau2_mean = torch.mean(tau_ratio_rated ** 2, dim=1) # 均方力矩比值，代表热耗散
         g = self._srl_thermal_gamma
@@ -411,7 +414,20 @@ class SRL_Real_Bot(VecTask):
         
         thermal_cost = torch.clamp((self.srl_tau2_ema - self.srl_thermal_start) / (1.0 - self.srl_thermal_start), min=0.0) ** 2
 
-        return peak_cost, thermal_cost
+        # (3) 功率惩罚 - 限制高速+大扭矩导致的高机械功率
+        # P = tau * qd, 单位 W
+        qd = self.dof_vel[:, :tau.shape[1]]         # (N, 6) rad/s
+        p_abs = torch.abs(tau * qd)                 # (N, 6) W
+        # 选择聚合方式：max更保守，mean更宽松
+        p_inst = torch.max(p_abs, dim=1).values     # (N,)
+        p_ratio = p_inst / self.srl_rated_w         # 归一化到额定功率
+        power_cost = torch.clamp(
+            (p_ratio - self.srl_power_start_ratio) / (1.0 - self.srl_power_start_ratio),
+            min=0.0
+        ) ** 2
+
+        return peak_cost, thermal_cost, power_cost
+
 
     def compute_reward(self, actions):
         clearance_reward = self.compute_foot_clearance_reward()
@@ -420,8 +436,12 @@ class SRL_Real_Bot(VecTask):
         srl_end_body_pos = self._rigid_body_pos[:, self._srl_end_ids, :]
         
         # 计算电机优化成本
-        peak_cost, thermal_cost = self._compute_srl_motor_costs()
-        srl_motor_cost = (self.srl_peak_cost_scale * peak_cost + self.srl_thermal_cost_scale * thermal_cost)
+        peak_cost, thermal_cost, power_cost = self._compute_srl_motor_costs()
+        srl_motor_cost = (
+            self.srl_peak_cost_scale * peak_cost
+            + self.srl_thermal_cost_scale * thermal_cost
+            + self.srl_power_cost_scale * power_cost
+        )
 
         self.rew_buf[:], self.reset_buf, self._terminate_buf[:] = compute_srl_reward(
             self.obs_buf,
@@ -737,6 +757,7 @@ class SRL_Real_Bot(VecTask):
         return
     
     def _action_to_pd_targets(self, action):
+        action = action * self.action_scale
         pd_tar = self._pd_action_offset + self._pd_action_scale * action
         margin = 0.0 * math.pi / 180.0 
         low  = (self.dof_limits_lower + margin).unsqueeze(0)

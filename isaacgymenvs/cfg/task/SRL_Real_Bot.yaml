@@ -14,6 +14,7 @@ env:
   clipActions: 1.0
   obs_frame_stack: 5
   
+  action_scale: 1.0
   pdControl: False
   forceControl: True
   powerScale: 1.0
