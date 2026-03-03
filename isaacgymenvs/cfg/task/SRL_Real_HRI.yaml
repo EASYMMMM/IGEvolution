@@ -19,6 +19,8 @@ env:
   hybridInitProb: 0.5
   numAMPObsSteps: 2
 
+  action_scale: 1.0
+
   localRootObs: False
   contactBodies: ["right_foot", "left_foot","right_shin","left_shin"]
   terminationHeight: 0.7
@@ -56,7 +58,6 @@ env:
   foot_clearance: 0.2
 
   deathCost: -0.0
-  srlTerminationHeight: 0.75
 
   hri_virtual_stiffness: 20000
   hri_virtual_damping: 1200
@@ -65,7 +66,7 @@ env:
   # reward weights
   humanoid_share_reward_scale: 0.0
   alive_reward_scale: 1.0
-  torques_cost_scale: 5e-6
+  torques_cost_scale: 5e-4
   progress_reward_scale: 1
   dof_acc_cost_scale: 0.5
   dof_vel_cost_scale: 1
@@ -81,9 +82,10 @@ env:
   actions_rate_scale: 0.1
   actions_smoothness_scale: 0.1
   contact_force_cost_scale: 0.0
-  
+  srl_motor_cost_scale: 0.0
+
+  srl_max_effort: 300     
   srl_motor_opt:
-    srl_max_effort: 300     # 最大力矩限制
     peak_start_ratio: 0.65   # 从 65% 额定扭矩开始惩罚“接近峰值”
     peak_window_tau_s: 0.30  # 峰值窗口衰减时间常数（秒）
     peak_cost_scale: 1.0    # near-peak 惩罚权重（先别太大）

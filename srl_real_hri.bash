@@ -82,3 +82,23 @@ python SRL_Evo_train.py task=SRL_Real_HRI headless=True wandb_project=SRL_Evo wa
 python SRL_Evo_train.py test=True task=SRL_Real_HRI  num_envs=4  checkpoint=runs/SRL_Real_HRI_20-17-27-33/nn/SRL_Real_HRI_20-17-27-40.pth     task.env.episodeLength=2000    force_render=True task.env.cameraFollow=True  task.env.srl_free_actions_num=5  task.env.asset.assetFileName="mjcf/srl_real_hri/srl_real_hri_HXYK_175_mesh.xml"
 # check 没添加交互力奖励
 python SRL_Evo_train.py test=True task=SRL_Real_HRI  num_envs=4  checkpoint=runs/SRL_Real_HRI_23-20-42-58/nn/SRL_Real_HRI_23-20-43-06.pth     task.env.episodeLength=2000    force_render=True task.env.cameraFollow=True  task.env.srl_free_actions_num=5  task.env.asset.assetFileName="mjcf/srl_real_hri/srl_real_hri_HXYK_175_mesh.xml"
+
+
+# (2.25) 使用v1版本的SRL模型
+python SRL_Evo_train.py task=SRL_Real_HRI headless=True wandb_project=SRL_Evo wandb_activate=True \
+    train.params.config.humanoid_checkpoint=runs/Humanoid_175_Pretrain_s2_30-13-53-51/nn/Humanoid_175_Pretrain_s2_30-13-53-56.pth \
+    task.env.srl_max_effort=150  task.env.srl_motor_cost_scale=0.0\
+    experiment=SRL_Real_HRI_v1   max_iterations=2000   \
+    train.params.config.srl_teacher_checkpoint=runs/SRL_Real_s4_25-14-45-53/nn/SRL_Real_s4.pth \
+    train.params.config.dagger_loss_coef=1 train.params.config.sym_a_loss_coef=1.0  \
+    task.env.pelvis_height_reward_scale=2.0 \
+    task.env.no_fly_penalty_scale=2.0  task.env.gait_similarity_penalty_scale=2.0 \
+    task.env.progress_reward_scale=0.0 task.env.vel_tracking_reward_scale=3.0\
+    train.params.config.dagger_anneal_k=1e-5  task.env.srl_free_actions_num=5   task.env.clearance_penalty_scale=10 \
+    task.env.humanoid_share_reward_scale=2.0 task.env.contact_force_cost_scale=0.5\
+    task.env.asset.assetFileName="mjcf/srl_real_hri/srl_real_hri_v1_HXYK_175_mesh.xml"  
+# check 添加了交互力奖励
+python SRL_Evo_train.py test=True task=SRL_Real_HRI  num_envs=4 task.env.srl_max_effort=150 \
+       checkpoint=runs/SRL_Real_HRI_v1_02-20-54-41/nn/SRL_Real_HRI_v1_02-20-54-47.pth  \
+       task.env.episodeLength=2000    force_render=True task.env.cameraFollow=True  task.env.srl_free_actions_num=5  \
+       task.env.asset.assetFileName="mjcf/srl_real_hri/srl_real_hri_v1_HXYK_175_mesh.xml"
