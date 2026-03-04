@@ -61,10 +61,11 @@ class SRL_Real_HRI_Base(VecTask):
         self.gait_period = self.cfg["env"]["gait_period"]
         self.foot_clearance = self.cfg["env"]["foot_clearance"]
         self.death_cost = self.cfg["env"]["deathCost"]
-        self.srl_termination_height = self.cfg["env"]["srlTerminationHeight"]
         self.hri_virtual_stiffness = self.cfg["env"].get("hri_virtual_stiffness", 150000.0)
         self.hri_virtual_damping = self.cfg["env"].get("hri_virtual_damping", 3000.0)
         self.hri_virtual_force_max = self.cfg["env"].get("hri_virtual_force_max", 1000.0)
+        self.action_scale = self.cfg["env"].get("action_scale", 1.0)
+        self.srl_dof_num = self.srl_actions_num + self.srl_free_actions_num
 
         # --- reward ---
         self.alive_reward_scale = self.cfg["env"]["alive_reward_scale"]
@@ -73,7 +74,7 @@ class SRL_Real_HRI_Base(VecTask):
         self.torques_cost_scale = self.cfg["env"]["torques_cost_scale"]
         self.dof_acc_cost_scale = self.cfg["env"]["dof_acc_cost_scale"]
         self.dof_vel_cost_scale = self.cfg["env"]["dof_vel_cost_scale"]
-        self.dof_pos_cost_sacle = self.cfg["env"]["dof_pos_cost_sacle"]
+        self.dof_pos_cost_scale = self.cfg["env"]["dof_pos_cost_scale"]
         self.contact_force_cost_scale = self.cfg["env"]["contact_force_cost_scale"]
         self.no_fly_penalty_scale = self.cfg["env"]["no_fly_penalty_scale"]
         self.tracking_ang_vel_reward_scale = self.cfg["env"]["tracking_ang_vel_reward_scale"]
@@ -85,6 +86,7 @@ class SRL_Real_HRI_Base(VecTask):
         self.lateral_distance_penalty_scale = self.cfg["env"]["lateral_distance_penalty_scale"]
         self.actions_rate_scale = self.cfg["env"]["actions_rate_scale"]
         self.actions_smoothness_scale = self.cfg["env"]["actions_smoothness_scale"]
+        self.srl_motor_cost_scale = self.cfg["env"].get("srl_motor_cost_scale", 0)
 
         self._torque_threshold = self.cfg["env"]["torque_threshold"]
         self._upper_reward_w = self.cfg["env"]["upper_reward_w"]
@@ -97,7 +99,7 @@ class SRL_Real_HRI_Base(VecTask):
         self._humanoid_load_cell_obs = self.cfg["env"].get("humanoid_load_cell_obs", False)
         self._srl_partial_obs = self.cfg["env"].get("srl_partial_obs", False)
         motor_opt_cfg = self.cfg["env"].get("srl_motor_opt", {})
-        self._srl_max_effort = motor_opt_cfg.get("srl_max_effort", 300.0)
+        self._srl_max_effort = self.cfg["env"].get("srl_max_effort", 300.0)
 
         # self.initial_dof_pos = torch.tensor(self.srl_default_joint_angles, device=self.device).unsqueeze(0).repeat(self.num_envs, 1)
         self.obs_scales={
@@ -115,65 +117,50 @@ class SRL_Real_HRI_Base(VecTask):
 
         self.default_srl_joint_angles = [0*np.pi, 
                                             -0.1,
-                                            0.2,
+                                            0.35,
                                             0*np.pi,
                                             -0.1,
-                                            0.2,]
+                                            0.35,
+                                            ]
         
         super().__init__(config=self.cfg, rl_device=rl_device, sim_device=sim_device, graphics_device_id=graphics_device_id, headless=headless, virtual_screen_capture=virtual_screen_capture, force_render=force_render)
 
         dt = self.cfg["sim"]["dt"]
         self.control_dt = self.control_freq_inv * dt
 
-        # --- srl defined ---
-        # 28 为被动链接关节
-        self._srl_joint_ids = to_torch([ 29, 30, 31, 32, 33, 34], device=self.device, dtype=torch.long)
-        # --- srl defined end ---
         # ==========================================================
-        # SRL motor peak / thermal optimization (based on applied torques)
-        #   - Peak penalty: discourage operating close to actuator limits (instant + decayed window)
-        #   - Thermal proxy: EMA of mean normalized torque^2 (approx. copper loss / heating)
-        #   - Optional: EMA of mean normalized |tau * omega| (mechanical power)
-        # NOTE: We use self.torques (after clip) as the actuator output. dof_force_tensor contains
-        #       constraint/contact reactions and is better suited for mechanical-load safety checks.
+        # 电机优化参数 (针对 RI80 设计)
         # ==========================================================
-        self.srl_peak_start_ratio = float(motor_opt_cfg.get("peak_start_ratio", 0.65))   # start penalizing from this ratio
-        self.srl_peak_ratio = float(motor_opt_cfg.get("peak_ratio", 0.85))               # recommended "soft peak" ratio (<=1.0)
-        self.srl_peak_cost_scale = float(motor_opt_cfg.get("peak_cost_scale", 0.30))     # reward weight
-        self.srl_thermal_tau_s = float(motor_opt_cfg.get("thermal_tau_s", 1.5))          # seconds (EMA time constant)
-        self.srl_thermal_cost_scale = float(motor_opt_cfg.get("thermal_cost_scale", 0.05))
-        self.srl_power_cost_scale = float(motor_opt_cfg.get("power_cost_scale", 0.00))   # optional
-        self.srl_peak_window_tau_s = float(motor_opt_cfg.get("peak_window_tau_s", 0.30)) # seconds for decayed peak window
-        self.srl_omega_ref = float(motor_opt_cfg.get("omega_ref", 14.0))                 # rad/s for power normalization
-        self.srl_rated_ratio = float(motor_opt_cfg.get("rated_ratio", 0.80)) 
-     
-        # Per-motor torque limits (already filled after super().__init__() -> create_sim -> _create_envs)
-        self.srl_tau_limits = self.torque_limits[ -self.srl_actions_num:].clamp(min=1e-6)
-
-        # clamp ratios to sane ranges
-        self.srl_peak_start_ratio = float(np.clip(self.srl_peak_start_ratio, 0.0, 0.99))
-        self.srl_peak_ratio = float(np.clip(self.srl_peak_ratio, self.srl_peak_start_ratio + 1e-3, 1.0))
-
-        # EMA decay factors
-        self._srl_thermal_gamma = float(np.exp(-self.control_dt / max(self.srl_thermal_tau_s, 1e-6)))
-        self._srl_peak_decay = float(np.exp(-self.control_dt / max(self.srl_peak_window_tau_s, 1e-6)))
-
-        # Running stats (per-env)
-        self.srl_tau2_ema = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
-        self.srl_power_ema = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
-        self.srl_peak_ratio_window = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
-
+        self.srl_rated_nm = 60    # RI80 额定扭矩
+        self.srl_peak_nm = 180    # RI80 峰值扭矩
+        self.srl_peak_start_ratio = 0.7  # 超过 70% 峰值扭矩开始惩罚
+        self.srl_thermal_start = 0.7     # 热量 EMA 超过 0.7 开始惩罚
+        self.srl_peak_cost_scale = 0.5    # 峰值惩罚权重
+        self.srl_thermal_cost_scale = 0.8 # 热量惩罚权重 (这对选型至关重要)
+        self.srl_power_cost_scale = 0.3   # 功率惩罚权重
+        self.srl_rated_w = 1100.0           # RI80 额定功率(W)
+        self.srl_power_start_ratio = 0.6    # 超过60%额定功率开始惩罚（可调：0.6~0.9）  
+        # EMA 时间常数
+        self.srl_thermal_tau_s = 2.0      # 热量累积 EMA 周期 (秒)
+        self.srl_peak_window_tau_s = 0.3  # 峰值窗口 EMA 周期 (秒)
+        self._srl_thermal_gamma = float(np.exp(-self.control_dt / self.srl_thermal_tau_s))
+        self._srl_peak_decay = float(np.exp(-self.control_dt / self.srl_peak_window_tau_s))
+        # 初始化运行统计数据
+        self._srl_thermal_gamma = float(np.exp(-self.control_dt / self.srl_thermal_tau_s))
+        self._srl_peak_decay = float(np.exp(-self.control_dt / self.srl_peak_window_tau_s))
+        self.srl_tau2_ema = torch.zeros(self.num_envs, device=self.device)
+        self.srl_peak_ratio_window = torch.zeros(self.num_envs, device=self.device)
 
         # mirror matrix
-        self.mirror_idx_humanoid = np.array([-0.0001, 1, -2, -3, 4, -5, -10, 11, -12,  13, -6,
-                                                 7, -8, 9, -21, 22, -23, 24, -25, 26, -27, -14, 
-                                                 15, -16, 17, -18, 19, -20,])
-        self.mirror_idx_srl = np.array([-31,32,33, -28,29,30,])
-        self.mirror_idx = np.concatenate((self.mirror_idx_humanoid, self.mirror_idx_srl))
-        obs_dim = self.mirror_idx.shape[0]
-        self.mirror_mat = torch.zeros((obs_dim, obs_dim), dtype=torch.float32, device=self.device)
-        for i, perm in enumerate(self.mirror_idx):
-            self.mirror_mat[i, int(abs(perm))] = np.sign(perm)
+        # self.mirror_idx_humanoid = np.array([-0.0001, 1, -2, -3, 4, -5, -10, 11, -12,  13, -6,
+        #                                          7, -8, 9, -21, 22, -23, 24, -25, 26, -27, -14, 
+        #                                          15, -16, 17, -18, 19, -20,])
+        # self.mirror_idx_srl = np.array([-31,32,33, -28,29,30,])
+        # self.mirror_idx = np.concatenate((self.mirror_idx_humanoid, self.mirror_idx_srl))
+        # obs_dim = self.mirror_idx.shape[0]
+        # self.mirror_mat = torch.zeros((obs_dim, obs_dim), dtype=torch.float32, device=self.device)
+        # for i, perm in enumerate(self.mirror_idx):
+        #     self.mirror_mat[i, int(abs(perm))] = np.sign(perm)
         self.mirror_idx_act_srl = np.array([3, 4, 5, 0.01, 1, 2,  ])
         self.mirror_act_srl_mat = torch.zeros((self.mirror_idx_act_srl.shape[0], self.mirror_idx_act_srl.shape[0]), dtype=torch.float32, device=self.device)
         for i, perm in enumerate(self.mirror_idx_act_srl):
@@ -226,7 +213,7 @@ class SRL_Real_HRI_Base(VecTask):
         self._initial_dof_pos[:, left_shoulder_x_handle] = 0 * np.pi
 
         self.initial_srl_dof_pos = torch.tensor(self.default_srl_joint_angles, device=self.device).unsqueeze(0).repeat(self.num_envs, 1)
-        self._initial_dof_pos[:, -6:] = self.initial_srl_dof_pos
+        self._initial_dof_pos[:, -self.srl_actions_num:] = self.initial_srl_dof_pos
         
         self.srl_joint_r1_idx = self.gym.find_actor_dof_handle(self.envs[0], self.humanoid_handles[0],'SRL_joint_right_hipjoint_y')
         self.srl_joint_r3_idx = self.gym.find_actor_dof_handle(self.envs[0], self.humanoid_handles[0],'SRL_joint_right_kneejoint')
@@ -361,6 +348,7 @@ class SRL_Real_HRI_Base(VecTask):
         self.up_axis_idx = 2 # index of up axis: Y=1, Z=2
         total_dof_nums = self.humanoid_actions_num + self.srl_free_actions_num + self.srl_actions_num
         self.torques = torch.zeros(self.num_envs, total_dof_nums, dtype=torch.float, device=self.device, requires_grad=False)
+        self.humanoid_torques = torch.zeros(self.num_envs, self.humanoid_actions_num, dtype=torch.float, device=self.device, requires_grad=False)
         self.p_gains = torch.zeros(total_dof_nums, dtype=torch.float, device=self.device, requires_grad=False)
         self.d_gains = torch.zeros(total_dof_nums, dtype=torch.float, device=self.device, requires_grad=False)
         self.torque_limits = torch.zeros(total_dof_nums, dtype=torch.float, device=self.device, requires_grad=False)
@@ -384,7 +372,6 @@ class SRL_Real_HRI_Base(VecTask):
             self.teacher_srl_obs_buffer[env_id] = 0
         # reset SRL motor running stats (peak/thermal)
         self.srl_tau2_ema[env_ids] = 0.0
-        self.srl_power_ema[env_ids] = 0.0
         self.srl_peak_ratio_window[env_ids] = 0.0
         root_pos = self._root_states[env_ids, 0:3]
         root_rot = self._root_states[env_ids, 3:7]
@@ -434,7 +421,7 @@ class SRL_Real_HRI_Base(VecTask):
         humanoid_asset = self.gym.load_asset(self.sim, asset_root, asset_file, asset_options)
         
         self.srl_root_index = self.gym.find_asset_rigid_body_index(humanoid_asset, "SRL_root", )
-
+        assert self.srl_root_index != -1, "SRL root body not found in the asset. Please check the asset definition."
         self.right_thigh_index = self.gym.find_asset_rigid_body_index(humanoid_asset, "right_thigh", )
         self.right_shin_index = self.gym.find_asset_rigid_body_index(humanoid_asset, "right_shin", )
         self.left_thigh_index = self.gym.find_asset_rigid_body_index(humanoid_asset, "left_thigh", )
@@ -451,6 +438,7 @@ class SRL_Real_HRI_Base(VecTask):
         self.srl_virtual_damping_x_idx = self.gym.find_asset_dof_index(humanoid_asset, 'SRL_virtual_damping_x')
         self.srl_virtual_damping_y_idx = self.gym.find_asset_dof_index(humanoid_asset, 'SRL_virtual_damping_y')
         self.srl_virtual_damping_z_idx = self.gym.find_asset_dof_index(humanoid_asset, 'SRL_virtual_damping_z')
+        assert self.srl_virtual_damping_x_idx != -1 and self.srl_virtual_damping_y_idx != -1 and self.srl_virtual_damping_z_idx != -1, "SRL virtual damping DOFs not found in the asset. Please check the asset definition and cfg env.srl_free_actions_num."
         self.srl_virtual_damping_ids = torch.as_tensor(
                 [int(self.srl_virtual_damping_x_idx),
                 int(self.srl_virtual_damping_y_idx),
@@ -458,11 +446,28 @@ class SRL_Real_HRI_Base(VecTask):
                 device=self.rl_device, dtype=torch.long
             )
 
+        # ===== check free-joint count matches cfg =====
+        free_candidate = [
+            srl_free_joint_x_idx, srl_free_joint_y_idx, srl_free_joint_z_idx,
+            self.srl_virtual_damping_x_idx, self.srl_virtual_damping_y_idx, self.srl_virtual_damping_z_idx
+        ]
+        free_valid = [i for i in free_candidate if i != -1]
+        if len(free_valid) != int(self.srl_free_actions_num):
+            raise ValueError(
+                f"[SRL DOF mismatch] Found {len(free_valid)} SRL-free DOFs, but cfg env.srl_free_actions_num="
+                f"{self.srl_free_actions_num}. "
+                f"Indices: freejoint_xyz=({srl_free_joint_x_idx},{srl_free_joint_y_idx},{srl_free_joint_z_idx}), "
+                f"virtual_damping_xyz=({self.srl_virtual_damping_x_idx},{self.srl_virtual_damping_y_idx},{self.srl_virtual_damping_z_idx})."
+            )
+        # ===== ===== ===== =====
+        
         # create force sensors at the feet
         right_foot_idx = self.gym.find_asset_rigid_body_index(humanoid_asset, "right_foot")
         left_foot_idx = self.gym.find_asset_rigid_body_index(humanoid_asset,  "left_foot")
         right_srl_end_idx = self.gym.find_asset_rigid_body_index(humanoid_asset, "SRL_right_end")
         left_srl_end_idx  = self.gym.find_asset_rigid_body_index(humanoid_asset, "SRL_left_end")
+        assert right_srl_end_idx != -1 and left_srl_end_idx != -1 and left_foot_idx != -1, "SRL Foot rigid bodies not found in the asset. Please check the asset definition."
+        
         sensor_pose = gymapi.Transform()
 
         self.right_foot_ssidx = self.gym.create_asset_force_sensor(humanoid_asset, right_foot_idx, sensor_pose)
@@ -497,6 +502,11 @@ class SRL_Real_HRI_Base(VecTask):
         self.num_bodies = self.gym.get_asset_rigid_body_count(humanoid_asset)
         self.num_dof    = self.gym.get_asset_dof_count(humanoid_asset)
         self.num_joints = self.gym.get_asset_joint_count(humanoid_asset)
+
+        assert self.torques.shape[1] == self.num_dof
+        assert self.p_gains.shape[0] == self.num_dof
+        assert self.d_gains.shape[0] == self.num_dof
+        assert self.torque_limits.shape[0] == self.num_dof
 
         start_pose   = gymapi.Transform()
         start_pose.p = gymapi.Vec3(*get_axis_params(1.05, self.up_axis_idx))
@@ -587,9 +597,11 @@ class SRL_Real_HRI_Base(VecTask):
         if self._force_control:
             srl_start_id = self.get_srl_action_size() 
             indices_to_limit = [1, 2, 4, 5] 
+            srl_base = self.num_dof - self.srl_actions_num  # SRL驱动DOF在全身DOF里的起始索引
             for i in indices_to_limit:
-                self.dof_limits_lower[i] = self.default_srl_joint_angles[i] - 45/180*np.pi
-                self.dof_limits_upper[i] = self.default_srl_joint_angles[i] + 45/180*np.pi
+                j = srl_base + i
+                self.dof_limits_lower[j] = self.default_srl_joint_angles[i] - 45/180*np.pi
+                self.dof_limits_upper[j] = self.default_srl_joint_angles[i] + 45/180*np.pi
                 
         self.dof_limits_lower = to_torch(self.dof_limits_lower, device=self.device)
         self.dof_limits_upper = to_torch(self.dof_limits_upper, device=self.device)
@@ -688,7 +700,7 @@ class SRL_Real_HRI_Base(VecTask):
         clearance_reward = self.compute_foot_clearance_reward()
 
         # --- SRL motor near-peak + thermal / power costs (based on applied torques) ---
-        srl_peak_cost, srl_thermal_cost, srl_power_cost = self._compute_srl_motor_load_costs()
+        srl_peak_cost, srl_thermal_cost, srl_power_cost = self._compute_srl_motor_costs()
         srl_motor_cost = (self.srl_peak_cost_scale * srl_peak_cost
                           + self.srl_thermal_cost_scale * srl_thermal_cost
                           + self.srl_power_cost_scale * srl_power_cost)
@@ -721,7 +733,7 @@ class SRL_Real_HRI_Base(VecTask):
                                             srl_root_pos,
                                             self.potentials,
                                             self.prev_potentials,
-                                            self.srl_termination_height,
+                                            self._srl_termination_height,
                                             self.death_cost,
                                             self.max_episode_length,
                                             self.gait_period,
@@ -733,7 +745,7 @@ class SRL_Real_HRI_Base(VecTask):
                                             torques_cost_scale = self.torques_cost_scale,
                                             dof_acc_cost_scale = self.dof_acc_cost_scale,
                                             dof_vel_cost_scale = self.dof_vel_cost_scale,
-                                            dof_pos_cost_sacle = self.dof_pos_cost_sacle,
+                                            dof_pos_cost_scale = self.dof_pos_cost_scale,
                                             contact_force_cost_scale = self.contact_force_cost_scale,
                                             no_fly_penalty_scale = self.no_fly_penalty_scale,
                                             vel_tracking_reward_scale = self.vel_tracking_reward_scale,
@@ -746,12 +758,13 @@ class SRL_Real_HRI_Base(VecTask):
                                             actions_rate_scale = self.actions_rate_scale,
                                             actions_smoothness_scale = self.actions_smoothness_scale,
                                             srl_motor_cost = srl_motor_cost,
+                                            srl_motor_cost_scale = self.srl_motor_cost_scale,
                                         )         
         return
 
     def _compute_reset(self):
         self.reset_buf[:], self._terminate_buf[:] = compute_humanoid_reset(self.reset_buf, self.progress_buf, self.srl_obs_buf,
-                                                   self._dof_pos[:,-self.srl_actions_num:], self._contact_forces, self._contact_body_ids,
+                                                   self._contact_forces, self._contact_body_ids,
                                                    self._rigid_body_pos, self.max_episode_length,
                                                    self._enable_early_termination, self._termination_height, self._srl_termination_height)
         # 检测是否偏离轨迹太远
@@ -820,7 +833,24 @@ class SRL_Real_HRI_Base(VecTask):
             self.teacher_srl_obs_buffer = torch.roll(self.teacher_srl_obs_buffer, shifts=1, dims=1) 
             self.teacher_srl_obs_buffer[:, 0, :] = teacher_srl_obs.clone()   
 
-            srl_base_obs = self.srl_obs_buffer.reshape(self.num_envs, -1)  
+            # ======= minimal add: reset-safe zero-frame fill (avoid stacked zeros after reset) =======
+            zf = (self.srl_obs_buffer.abs().sum(dim=-1) == 0)  # [num_envs, stack]
+            if zf.any():
+                fill = srl_obs.unsqueeze(1).expand(-1, self.srl_obs_buffer.size(1), -1)
+                self.srl_obs_buffer[zf] = fill[zf]
+
+            zf_m = (self.srl_obs_mirrored_buffer.abs().sum(dim=-1) == 0)
+            if zf_m.any():
+                fill_m = srl_obs_mirrored.unsqueeze(1).expand(-1, self.srl_obs_mirrored_buffer.size(1), -1)
+                self.srl_obs_mirrored_buffer[zf_m] = fill_m[zf_m]
+
+            zf_t = (self.teacher_srl_obs_buffer.abs().sum(dim=-1) == 0)
+            if zf_t.any():
+                fill_t = teacher_srl_obs.unsqueeze(1).expand(-1, self.teacher_srl_obs_buffer.size(1), -1)
+                self.teacher_srl_obs_buffer[zf_t] = fill_t[zf_t]
+            # ======================================================================================
+
+            srl_base_obs = self.srl_obs_buffer.reshape(self.num_envs, -1)
             srl_base_mirrored_obs = self.srl_obs_mirrored_buffer.reshape(self.num_envs, -1)
             teacher_srl_base_obs = self.teacher_srl_obs_buffer.reshape(self.num_envs, -1)
 
@@ -838,7 +868,7 @@ class SRL_Real_HRI_Base(VecTask):
             srl_mirrored_stacked_obs = torch.cat([srl_base_mirrored_obs, mirrored_task_params], dim=-1)
             teacher_srl_stacked_obs = torch.cat([teacher_srl_base_obs, task_params], dim=-1)
 
-            total_obs = torch.cat((humanoid_obs, srl_stacked_obs),dim=1)
+            total_obs = torch.cat((humanoid_obs, srl_stacked_obs), dim=1)
             self.obs_buf[:] = total_obs
             self.srl_obs_buf[:] = srl_stacked_obs
             self.srl_obs_mirrored_buf[:] = srl_mirrored_stacked_obs      
@@ -850,15 +880,38 @@ class SRL_Real_HRI_Base(VecTask):
             self.prev_potentials[:] = prev_potentials
 
         else:
-            # 对指定环境进行更新 
-            self.srl_obs_buffer[env_ids] = torch.roll(self.srl_obs_buffer[env_ids], shifts=1, dims=1)  
-            self.srl_obs_buffer[env_ids, 0, :] = srl_obs.clone()  
-            self.srl_obs_mirrored_buffer[env_ids] = torch.roll(self.srl_obs_mirrored_buffer[env_ids], shifts=1, dims=1)  
-            self.srl_obs_mirrored_buffer[env_ids, 0, :] = srl_obs_mirrored.clone()  
-            self.teacher_srl_obs_buffer[env_ids] = torch.roll(self.teacher_srl_obs_buffer[env_ids], shifts=1, dims=1) 
-            self.teacher_srl_obs_buffer[env_ids, 0, :] = teacher_srl_obs.clone()   
+            # 对指定环境进行更新
+            self.srl_obs_buffer[env_ids] = torch.roll(self.srl_obs_buffer[env_ids], shifts=1, dims=1)
+            self.srl_obs_buffer[env_ids, 0, :] = srl_obs.clone()
+            self.srl_obs_mirrored_buffer[env_ids] = torch.roll(self.srl_obs_mirrored_buffer[env_ids], shifts=1, dims=1)
+            self.srl_obs_mirrored_buffer[env_ids, 0, :] = srl_obs_mirrored.clone()
+            self.teacher_srl_obs_buffer[env_ids] = torch.roll(self.teacher_srl_obs_buffer[env_ids], shifts=1, dims=1)
+            self.teacher_srl_obs_buffer[env_ids, 0, :] = teacher_srl_obs.clone()
 
-            srl_base_obs = self.srl_obs_buffer[env_ids, :, :].reshape(len(env_ids), -1)  
+            # ======= minimal add: reset-safe zero-frame fill (only selected envs) =======
+            ob = self.srl_obs_buffer[env_ids]
+            zf = (ob.abs().sum(dim=-1) == 0)  # [len(env_ids), stack]
+            if zf.any():
+                fill = srl_obs.unsqueeze(1).expand(-1, ob.size(1), -1)
+                ob[zf] = fill[zf]
+                self.srl_obs_buffer[env_ids] = ob
+
+            mob = self.srl_obs_mirrored_buffer[env_ids]
+            zf_m = (mob.abs().sum(dim=-1) == 0)
+            if zf_m.any():
+                fill_m = srl_obs_mirrored.unsqueeze(1).expand(-1, mob.size(1), -1)
+                mob[zf_m] = fill_m[zf_m]
+                self.srl_obs_mirrored_buffer[env_ids] = mob
+
+            tob = self.teacher_srl_obs_buffer[env_ids]
+            zf_t = (tob.abs().sum(dim=-1) == 0)
+            if zf_t.any():
+                fill_t = teacher_srl_obs.unsqueeze(1).expand(-1, tob.size(1), -1)
+                tob[zf_t] = fill_t[zf_t]
+                self.teacher_srl_obs_buffer[env_ids] = tob
+            # ========================================================================
+
+            srl_base_obs = self.srl_obs_buffer[env_ids, :, :].reshape(len(env_ids), -1)
             srl_base_mirrored_obs = self.srl_obs_mirrored_buffer[env_ids, :, :].reshape(len(env_ids), -1)
             teacher_srl_base_obs = self.teacher_srl_obs_buffer[env_ids, :, :].reshape(len(env_ids), -1)
 
@@ -866,7 +919,7 @@ class SRL_Real_HRI_Base(VecTask):
                 self.target_vel_x[env_ids],
                 self.target_ang_vel_z[env_ids],
                 self.target_pelvis_height[env_ids],
-            ), dim=-1)  # shape [len(env_ids), 3]  
+            ), dim=-1)  # shape [len(env_ids), 3]
             mirrored_task_params = torch.stack((
                 self.target_vel_x[env_ids],
                 -self.target_ang_vel_z[env_ids],
@@ -940,7 +993,7 @@ class SRL_Real_HRI_Base(VecTask):
         humanoid_obs = compute_humanoid_observations(root_states, dof_pos, dof_vel,
                                             key_body_pos, self._local_root_obs,
                                             load_cell_sensor, self._humanoid_load_cell_obs, traj_points_world)
-        srl_dof_num = self.srl_actions_num + self.srl_free_actions_num
+        srl_dof_num = self.srl_dof_num
         srl_obs, teacher_srl_obs, potentials, prev_potentials,  = compute_srl_observations(phase_buf, initial_dof_pos, srl_root_states, root_states,
                                                                           humanoid_legs_rot, dof_pos[:, -srl_dof_num:], dof_vel[:, -srl_dof_num:],
                                                                           load_cell_sensor, target_yaw, dof_force_tensor[:, -srl_dof_num:], 
@@ -993,6 +1046,7 @@ class SRL_Real_HRI_Base(VecTask):
             pd_tar = self._action_to_pd_targets(_action)
             torques = self.p_gains*(pd_tar - self._dof_pos) - self.d_gains*self._dof_vel
             self.torques = torch.clip(torques, -self.torque_limits, self.torque_limits).view(self.torques.shape)
+            self.humanoid_torques = self.torques[:,:self.get_humanoid_action_size()].clone()
             self.torques[:,:self.get_humanoid_action_size()+self.get_srl_free_action_size()] = 0.00
             # --- virtual interaction force: F = -k*q - c*qdot, clamp to max ---
             # q  = self._dof_pos[:, self.srl_virtual_damping_ids]
@@ -1043,16 +1097,12 @@ class SRL_Real_HRI_Base(VecTask):
             self.extras['load_cell_fd'] = self.vec_sensor_tensor[0,self.load_cell_ssidx_fd,:].to(self.rl_device)
             self.extras['right_srl_end_sensor'] = self.vec_sensor_tensor[0,self.right_srl_end_ssidx,:].to(self.rl_device)
             self.extras["target_yaw"] = self.target_yaw
-            # virtual_ids = [
-            #     int(self.srl_virtual_damping_x_idx),
-            #     int(self.srl_virtual_damping_y_idx),
-            #     int(self.srl_virtual_damping_z_idx),
-            # ]
             vpos0 = self._dof_pos[0, self.srl_virtual_damping_ids]
             self.extras["srl_virtual_passive_pos"] = vpos0.to(self.rl_device)
             virtual_load_cell = self._virtual_load_cell_from_dof(self._dof_pos, self._dof_vel)
             self.extras["srl_virtual_load_cell"] = virtual_load_cell[0].to(self.rl_device)
             self.extras["dof_force"] = self.dof_force_tensor[0].to(self.rl_device)
+            self.extras["humanoid_torques"] = self.humanoid_torques[0].to(self.rl_device)
         # debug viz
         if self.viewer and self.debug_viz:
             self._update_debug_viz()
@@ -1068,78 +1118,36 @@ class SRL_Real_HRI_Base(VecTask):
                                                                                                        self.progress_buf,
                                                                                                        max_episode_length=self.max_episode_length)        
 
-    def _compute_srl_motor_load_costs(self):
-        """Compute SRL motor near-peak penalty and rated/thermal/power proxies.
-
-        Key ideas
-        - Peak torque (e.g., 320 Nm): short-duration limit -> penalize being near peak (instant + short window).
-        - Rated torque (e.g., 85 Nm): “continuous” / thermal-limited operating point -> penalize sustained high torque
-        via a slow thermal proxy built from (tau / tau_rated)^2.
-
-        Expected attributes (already in your class, or add in __init__):
-        - self.srl_actions_num: int
-        - self.torques: (N, num_dof) applied torques after clipping
-        - self._dof_vel: (N, num_dof) dof velocities (rad/s)
-        - self.srl_tau_limits: (6,) peak torque limits used for clipping (per SRL joint)
-        - self.srl_peak_start_ratio: float in (0,1) (start penalizing near peak)
-        - self._srl_peak_decay: float (window decay, computed from peak_window_tau_s)
-        - self.srl_peak_ratio_window: (N,) running window state
-        - self.srl_tau2_ema: (N,) thermal state
-        - self.srl_power_ema: (N,) power state
-        - self._srl_thermal_gamma: float (thermal EMA decay, computed from thermal_tau_s)
-        - self.srl_omega_ref: float (rad/s) for power normalization
-
-        Optional (recommended) attributes to represent *rated* torque:
-        - self.srl_rated_ratio: float, default = 85/320 (rated/peak)
-        - self.srl_thermal_start: float, default ~0.7 (start penalizing when thermal state is high)
-            NOTE: self.srl_tau2_ema tends to 1.0 if you keep tau≈tau_rated for long enough.
-        """
-        # Applied actuator torques for SRL motors
+    def _compute_srl_motor_costs(self):
         tau = self.torques[:, -self.srl_actions_num:]     # (N, 6)
-        omega = self._dof_vel[:, -self.srl_actions_num:]  # (N, 6)
         tau_abs = torch.abs(tau)
 
-        # ------------------------------------------------------------
-        # 1) Peak cost (normalized by peak limit)
-        # ------------------------------------------------------------
-        tau_peak = self.srl_tau_limits.unsqueeze(0).clamp(min=1e-6)  # (1, 6)
-        tau_ratio_peak = tau_abs / tau_peak                           # (N, 6) in [0,1] after clip
+        # (1) 峰值惩罚 - 限制瞬时大电流
+        tau_ratio_peak = tau_abs / self.srl_peak_nm
+        peak_ratio_inst = torch.max(tau_ratio_peak, dim=1).values
+        self.srl_peak_ratio_window = torch.maximum(peak_ratio_inst, self.srl_peak_ratio_window * self._srl_peak_decay)
+        
+        peak_cost = torch.clamp((self.srl_peak_ratio_window - self.srl_peak_start_ratio) / (1.0 - self.srl_peak_start_ratio), min=0.0) ** 2
 
-        peak_ratio_inst = torch.max(tau_ratio_peak, dim=1).values      # (N,)
-        self.srl_peak_ratio_window = torch.maximum(
-            peak_ratio_inst, self.srl_peak_ratio_window * self._srl_peak_decay
-        )
-
-        start = float(self.srl_peak_start_ratio)
-        peak_cost = torch.clamp((self.srl_peak_ratio_window - start) / (1.0 - start), min=0.0) ** 2
-
-        # ------------------------------------------------------------
-        # 2) Thermal cost (normalized by *rated* torque, slow EMA)
-        #    thermal_state ~ EMA(mean((tau/tau_rated)^2))
-        #    - If tau ~= tau_rated steadily, thermal_state -> 1
-        # ------------------------------------------------------------
-        rated_ratio = getattr(self, "srl_rated_ratio", None)
-        if rated_ratio is None:
-            rated_ratio = 85.0 / 320.0  # default based on your vendor numbers
-
-        tau_rated = (tau_peak * float(rated_ratio)).clamp(min=1e-6)    # (1, 6)
-        tau_ratio_rated = tau_abs / tau_rated                          # (N, 6) can be >1
-
-        tau2_mean = torch.mean(tau_ratio_rated ** 2, dim=1)            # (N,) = 1 at rated (on average)
-        g = float(self._srl_thermal_gamma)
+        # (2) 热量惩罚 - 限制长期超额定功率运行（≈ I^2 / 铜耗代理）
+        tau_ratio_rated = tau_abs / self.srl_rated_nm
+        tau2_mean = torch.mean(tau_ratio_rated ** 2, dim=1) # 均方力矩比值，代表热耗散
+        g = self._srl_thermal_gamma
         self.srl_tau2_ema = g * self.srl_tau2_ema + (1.0 - g) * tau2_mean
+        
+        thermal_cost = torch.clamp((self.srl_tau2_ema - self.srl_thermal_start) / (1.0 - self.srl_thermal_start), min=0.0) ** 2
 
-        # Map thermal state -> penalty (don’t punish small values too much)
-        thermal_start = getattr(self, "srl_thermal_start", 0.7)
-        thermal_cost = torch.clamp((self.srl_tau2_ema - float(thermal_start)) / (1.0 - float(thermal_start)), min=0.0) ** 2
-
-        # ------------------------------------------------------------
-        # 3) Optional power proxy (normalized by peak*omega_ref), slow EMA
-        # ------------------------------------------------------------
-        denom = (tau_peak * float(self.srl_omega_ref)).clamp(min=1e-6)  # (1, 6)
-        power_mean = torch.mean(torch.abs(tau * omega) / denom, dim=1)  # (N,)
-        self.srl_power_ema = g * self.srl_power_ema + (1.0 - g) * power_mean
-        power_cost = self.srl_power_ema
+        # (3) 功率惩罚 - 限制高速+大扭矩导致的高机械功率
+        # P = tau * qd, 单位 W
+        qd = self._dof_vel[:, -self.srl_actions_num:]         # (N, 6) rad/s
+        p_abs = torch.abs(tau * qd)                 # (N, 6) W
+        # 选择聚合方式：max更保守，mean更宽松
+        p_inst = torch.max(p_abs, dim=1).values     # (N,)
+        p_ratio = p_inst / self.srl_rated_w         # 归一化到额定功率
+        power_cost = torch.clamp(
+            (p_ratio - self.srl_power_start_ratio) / (1.0 - self.srl_power_start_ratio),
+            min=0.0
+        ) ** 2
 
         return peak_cost, thermal_cost, power_cost
 
@@ -1199,6 +1207,7 @@ class SRL_Real_HRI_Base(VecTask):
         return body_ids
 
     def _action_to_pd_targets(self, action):
+        action = action * self.action_scale
         pd_tar = self._pd_action_offset + self._pd_action_scale * action
         margin = 0.0 * math.pi / 180.0 
         low  = (self.dof_limits_lower + margin).unsqueeze(0)
@@ -1403,6 +1412,7 @@ def compute_srl_observations(
 )  :
     # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, Tensor, float) -> Tuple[Tensor, Tensor, Tensor]
     # root state 分解
+    act_dim = actions.shape[1]
 
     root_pos = root_states[:, 0:3]
     root_rot = root_states[:, 3:7]
@@ -1449,10 +1459,10 @@ def compute_srl_observations(
 
     # 主体关节位置编码（humanoid + SRL）
     # dof_obs = dof_to_obs(dof_pos)  
-    srl_dof_obs   = dof_pos[:,-6:] 
+    srl_dof_obs   = dof_pos[:, -act_dim:] 
     srl_dof_obs   = srl_dof_obs - default_joint_pos
-    srl_dof_vel   = dof_vel[:,-6:]
-    srl_dof_force = dof_force_tensor[:,-6:] 
+    srl_dof_vel   = dof_vel[:, -act_dim:]
+    srl_dof_force = dof_force_tensor[:, -act_dim:] 
 
     torso_position = root_states[:, 0:3]
     to_target = targets - torso_position
@@ -1464,14 +1474,14 @@ def compute_srl_observations(
 
 
     # 假设周期为 T=60 步，则频率为 1/T，每一步是 2π/T 相位步长
-    phase_t = (2 * math.pi / gait_period) * (phase_buf-1).float()  # shape: [num_envs]
+    phase_t = (2 * math.pi / gait_period) * (phase_buf).float()  # shape: [num_envs]
     sin_phase = torch.sin(phase_t).unsqueeze(-1)
     cos_phase = torch.cos(phase_t).unsqueeze(-1)
 
-    # standing phase mask
-    standing_phase_mask = target_vel_x <= 0.1
-    sin_phase = torch.where(standing_phase_mask.unsqueeze(-1), sin_phase*0, sin_phase)
-    cos_phase = torch.where(standing_phase_mask.unsqueeze(-1), cos_phase*0, cos_phase)
+    # # standing phase mask
+    # standing_phase_mask = target_vel_x <= 0.1
+    # sin_phase = torch.where(standing_phase_mask.unsqueeze(-1), sin_phase*0, sin_phase)
+    # cos_phase = torch.where(standing_phase_mask.unsqueeze(-1), cos_phase*0, cos_phase)
 
     obs = torch.cat((root_h,                             # 1    0
                      local_root_vel ,                    # 3    1:3
@@ -1523,6 +1533,8 @@ def compute_srl_observations_mirrored(
 )  :
     # type: ( Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float) ->  Tensor 
 
+    act_dim = actions.shape[1]
+
     # root state 分解
     root_pos = root_states[:, 0:3]
     root_rot = root_states[:, 3:7]
@@ -1542,10 +1554,10 @@ def compute_srl_observations_mirrored(
 
     # 主体关节位置编码（humanoid + SRL）
     # dof_obs = dof_to_obs(dof_pos)  
-    srl_dof_obs   = dof_pos[:,-6:] 
+    srl_dof_obs   = dof_pos[:, -act_dim:] 
     srl_dof_obs   = srl_dof_obs - default_joint_pos
-    srl_dof_vel   = dof_vel[:,-6:]
-    srl_dof_force = dof_force_tensor[:,-6:]
+    srl_dof_vel   = dof_vel[:, -act_dim:]
+    srl_dof_force = dof_force_tensor[:, -act_dim:]
 
     euler = quat_to_euler_ypr(root_rot)
     humanoid_euler = quat_to_euler_ypr(humanoid_root_rot)
@@ -1603,14 +1615,14 @@ def compute_srl_observations_mirrored(
     # heading_proj[:,1] = -heading_proj[:,1]
 
     # 假设周期为 T=60 步，则频率为 1/T，每一步是 2π/T 相位步长
-    phase_t = (2 * math.pi / gait_period) * (phase_buf-1).float()  # shape: [num_envs]
+    phase_t = (2 * math.pi / gait_period) * (phase_buf).float()  # shape: [num_envs]
     sin_phase = torch.sin(phase_t).unsqueeze(-1)
     cos_phase = torch.cos(phase_t).unsqueeze(-1)
 
-    # standing phase mask
-    standing_phase_mask = target_vel_x <= 0.1
-    sin_phase = torch.where(standing_phase_mask.unsqueeze(-1), sin_phase*0, sin_phase)
-    cos_phase = torch.where(standing_phase_mask.unsqueeze(-1), cos_phase*0, cos_phase)
+    # # standing phase mask
+    # standing_phase_mask = target_vel_x <= 0.1
+    # sin_phase = torch.where(standing_phase_mask.unsqueeze(-1), sin_phase*0, sin_phase)
+    # cos_phase = torch.where(standing_phase_mask.unsqueeze(-1), cos_phase*0, cos_phase)
 
     # phase mirrored
     sin_phase = - sin_phase
@@ -1620,9 +1632,9 @@ def compute_srl_observations_mirrored(
                      local_root_vel  ,               # 3
                      local_root_ang_vel  ,           # 3
                      euler_err,                      # 3 
-                     srl_dof_obs[:,-6:] * obs_scales[2],    # 6
-                     srl_dof_vel[:,-6:] * obs_scales[3],        # 6
-                     actions[:,-6:] ,
+                     srl_dof_obs * obs_scales[2],    # 6
+                     srl_dof_vel * obs_scales[3],        # 6
+                     actions[:, -act_dim:] ,
                      sin_phase,    
                      cos_phase,     
                      humanoid_euler_err,                  
@@ -1810,7 +1822,7 @@ def compute_srl_reward(
     torques_cost_scale: float = 0,
     dof_acc_cost_scale: float = 0,
     dof_vel_cost_scale: float = 0,
-    dof_pos_cost_sacle: float = 0,
+    dof_pos_cost_scale: float = 0,
     contact_force_cost_scale: float = 0,
     tracking_ang_vel_reward_scale: float = 0,
     no_fly_penalty_scale: float = 0,
@@ -1823,6 +1835,7 @@ def compute_srl_reward(
     actions_rate_scale: float = 0,
     actions_smoothness_scale: float = 0,
     srl_motor_cost: float = 0,
+    srl_motor_cost_scale: float = 0,
 ):
     # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, int, float, float, float, float, float, float, float, float,  float, float, float, float, float, float, float, float, float, float, float, float, float) -> Tuple[Tensor, ]
 
@@ -1848,11 +1861,16 @@ def compute_srl_reward(
     target_ang_vel_z = obs_buf[:, -2]
     target_vel_x = obs_buf[:, -3]
 
+    # --- Warm Up in New Episode ---
+    warmup_steps = 10
+    warmup = torch.clamp(progress_buf.float() / warmup_steps, 0.0, 1.0)
+
     # --- Termination handling ---
     alive_reward_coef = torch.where(target_vel_x < 0.1, 4*torch.ones_like(target_vel_x), torch.ones_like(target_vel_x))
     alive_reward = alive_reward_coef * torch.ones_like(potentials)
     progress_reward_coef = torch.where(target_vel_x < 0.1, torch.zeros_like(target_vel_x), torch.ones_like(target_vel_x))
     progress_reward = progress_reward_coef * (potentials - prev_potentials)
+    progress_reward *= warmup
 
     # --- Pelvis velocity ---
     root_vel = obs_buf[:, 1:4] 
@@ -1862,7 +1880,7 @@ def compute_srl_reward(
     vel_tracking_reward =  torch.exp(-4 * torch.norm(vel_error_vec, dim=-1))  # α = 1.5
 
     # --- Torques cost ---
-    torques_cost = 0 * torch.sum(actions ** 2, dim=-1)
+    torques_cost = torch.sum(actions ** 2, dim=-1)
 
     # --- DOF deviation cost ---
     srl_joint_pos = obs_buf[:, 10:16].clone()  
@@ -1875,10 +1893,13 @@ def compute_srl_reward(
     dof_vel_cost = torch.sum(dof_vel ** 2, dim=-1)
 
     # --- DOF acceleration cost ---
-    dof_vel_prev = obs_buf[:, 16+srl_obs_num:16+srl_obs_num+actions.shape[1]]  # 前一帧速度
-    dof_acc = dof_vel - dof_vel_prev  # 关节加速度
-    dof_acc_magnitude_sq = torch.sum(dof_acc ** 2, dim=-1)
-    dof_acc_reward = torch.exp(- 2 * dof_acc_magnitude_sq)
+    w = warmup
+    w_col = w.unsqueeze(-1)
+    dof_vel_prev_raw = obs_buf[:, 16+srl_obs_num:16+srl_obs_num+actions.shape[1]]
+    dof_vel_prev = w_col * dof_vel_prev_raw + (1.0 - w_col) * dof_vel  # warmup前差分=0
+    dof_acc = dof_vel - dof_vel_prev
+    dof_acc_reward_raw = torch.exp(-2.0 * torch.sum(dof_acc ** 2, dim=-1))
+    dof_acc_reward = w * dof_acc_reward_raw + (1.0 - w) * torch.ones_like(dof_acc_reward_raw)
 
     # --- Action Smooth ---
     actions_prev = obs_buf[:, 22+srl_obs_num:22+srl_obs_num+actions.shape[1]]
@@ -1973,14 +1994,16 @@ def compute_srl_reward(
     no_fly_penalty = torch.where(fly_idx, torch.ones_like(no_feet_on_ground) * no_fly_penalty_scale, torch.zeros_like(no_feet_on_ground))
     standing_reward = torch.where(standing_idx, -0.5*torch.ones_like(no_feet_on_ground) * no_fly_penalty_scale, torch.zeros_like(no_feet_on_ground))
     no_fly_penalty = no_fly_penalty + standing_reward
+    no_fly_penalty *= warmup
 
     # --- Feet Lateral Distance ---
     local_srl_end_body_pos = srl_end_body_pos - srl_root_pos.unsqueeze(-2)
     lateral_distance = torch.abs(local_srl_end_body_pos[:,0,1] - local_srl_end_body_pos[:,1,1])
-    min_d, max_d = 0.40, 0.85 # FIXME: Lateral Distance 
+    min_d, max_d = 0.25, 0.85 # FIXME: Lateral Distance 
     below_violation = torch.clamp(min_d - lateral_distance, min=0.0)
     above_violation = torch.clamp(lateral_distance - max_d, min=0.0)
     feet_lateral_penalty = below_violation + above_violation  
+    feet_lateral_penalty *= warmup
 
     # --- Foot Phase ---
     phase_t = (2 * math.pi / gait_period) * phase_buf.float()
@@ -2003,9 +2026,10 @@ def compute_srl_reward(
     # standing
     gait_phase_penalty_coef = torch.where(target_vel_x < 0.1, torch.zeros_like(target_vel_x), torch.ones_like(target_vel_x))
     gait_phase_penalty =  gait_phase_penalty*gait_phase_penalty_coef
-    
+    gait_phase_penalty *= warmup
+
     # --- foot clearance penalty ---
-    clearance_penalty = torch.clamp(clearance_penalty, max=1.0) 
+    clearance_penalty = warmup * torch.clamp(clearance_penalty, max=1.0) 
 
     # --- SRL Motor Cost ---
     srl_motor_cost = torch.clamp(srl_motor_cost, max=3.0)
@@ -2019,7 +2043,7 @@ def compute_srl_reward(
         + orientation_reward_scale * orientation_reward  \
         + pelvis_height_reward_scale * pelvis_height_reward \
         - torques_cost_scale * torques_cost \
-        - dof_pos_cost_sacle * dof_pos_cost \
+        - dof_pos_cost_scale * dof_pos_cost \
         - dof_vel_cost_scale * dof_vel_cost \
         + dof_acc_cost_scale * dof_acc_reward \
         - actions_rate_scale * actions_rate \
@@ -2029,7 +2053,7 @@ def compute_srl_reward(
         - clearance_penalty * clearance_penalty_scale \
         - lateral_distance_penalty_scale * feet_lateral_penalty \
         - contact_force_cost_scale*contact_force_cost \
-        - srl_motor_cost
+        - srl_motor_cost_scale * srl_motor_cost
 
     # --- Handle termination ---
     total_reward = torch.where(obs_buf[:, 0] < termination_height, torch.ones_like(total_reward) * death_cost, total_reward)
@@ -2037,7 +2061,7 @@ def compute_srl_reward(
     return total_reward
 
 # @torch.jit.script
-def compute_humanoid_reset(reset_buf, progress_buf, srl_obs_buf, srl_freejoint_pos, contact_buf, contact_body_ids, rigid_body_pos,
+def compute_humanoid_reset(reset_buf, progress_buf, srl_obs_buf, contact_buf, contact_body_ids, rigid_body_pos,
                            max_episode_length, enable_early_termination, termination_height, srl_termination_height):
     # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, bool, float, float) -> Tuple[Tensor, Tensor]
     terminated = torch.zeros_like(reset_buf)
@@ -2059,9 +2083,6 @@ def compute_humanoid_reset(reset_buf, progress_buf, srl_obs_buf, srl_freejoint_p
 
         # srl fallen        
         srl_fallen = torch.where(srl_obs_buf[:, 0] < srl_termination_height, torch.ones_like(reset_buf), terminated)
-        # srl unstable
-        # srl_unstable = torch.where(srl_freejoint_pos[:,0] > 0.260, torch.ones_like(reset_buf), terminated)
-        # srl_fallen = torch.logical_or(srl_fallen, srl_unstable)
 
         has_fallen = torch.logical_or(has_fallen, srl_fallen)
 
