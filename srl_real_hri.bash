@@ -83,6 +83,10 @@ python SRL_Evo_train.py test=True task=SRL_Real_HRI  num_envs=4  checkpoint=runs
 # check 没添加交互力奖励
 python SRL_Evo_train.py test=True task=SRL_Real_HRI  num_envs=4  checkpoint=runs/SRL_Real_HRI_23-20-42-58/nn/SRL_Real_HRI_23-20-43-06.pth     task.env.episodeLength=2000    force_render=True task.env.cameraFollow=True  task.env.srl_free_actions_num=5  task.env.asset.assetFileName="mjcf/srl_real_hri/srl_real_hri_HXYK_175_mesh.xml"
 
+# ================ V1 =================
+# 使用V1版本SRL模型：
+# 1. 真实电机参数
+# 2. 基于电机实际参数的动力学约束
 
 # (2.25) 使用v1版本的SRL模型
 python SRL_Evo_train.py task=SRL_Real_HRI headless=True wandb_project=SRL_Evo wandb_activate=True \
@@ -100,5 +104,23 @@ python SRL_Evo_train.py task=SRL_Real_HRI headless=True wandb_project=SRL_Evo wa
 # check 添加了交互力奖励
 python SRL_Evo_train.py test=True task=SRL_Real_HRI  num_envs=4 task.env.srl_max_effort=150 \
        checkpoint=runs/SRL_Real_HRI_v1_02-20-54-41/nn/SRL_Real_HRI_v1_02-20-54-47.pth  \
+       task.env.episodeLength=2000    force_render=True task.env.cameraFollow=True  task.env.srl_free_actions_num=5  \
+       task.env.asset.assetFileName="mjcf/srl_real_hri/srl_real_hri_v1_HXYK_175_mesh.xml"
+
+# (3.3) 第二阶段训练：取消高度跟踪，提高水平跟踪权重。增加电机功率惩罚。
+python SRL_Evo_train.py task=SRL_Real_HRI headless=True wandb_project=SRL_Evo wandb_activate=True \
+    train.params.config.hsrl_checkpoint=runs/SRL_Real_HRI_v1_02-20-54-41/nn/SRL_Real_HRI_v1_02-20-54-47.pth \
+    task.env.srl_max_effort=150  task.env.srl_motor_cost_scale=0.3\
+    experiment=SRL_Real_HRI_v1   max_iterations=4000   \
+    train.params.config.sym_a_loss_coef=1.0  \
+    task.env.pelvis_height_reward_scale=0.0 task.env.orientation_reward_scale=5.0 \
+    task.env.no_fly_penalty_scale=2.0  task.env.gait_similarity_penalty_scale=2.0 \
+    task.env.progress_reward_scale=0.0 task.env.vel_tracking_reward_scale=3.0\
+    task.env.srl_free_actions_num=5   task.env.clearance_penalty_scale=10 \
+    task.env.humanoid_share_reward_scale=3.0 task.env.contact_force_cost_scale=0.5\
+    task.env.asset.assetFileName="mjcf/srl_real_hri/srl_real_hri_v1_HXYK_175_mesh.xml"  
+# check 添加了交互力奖励
+python SRL_Evo_train.py test=True task=SRL_Real_HRI  num_envs=4 task.env.srl_max_effort=150 \
+       checkpoint=runs/SRL_Real_HRI_v1_03-16-14-32/nn/SRL_Real_HRI_v1_03-16-14-42.pth  \
        task.env.episodeLength=2000    force_render=True task.env.cameraFollow=True  task.env.srl_free_actions_num=5  \
        task.env.asset.assetFileName="mjcf/srl_real_hri/srl_real_hri_v1_HXYK_175_mesh.xml"

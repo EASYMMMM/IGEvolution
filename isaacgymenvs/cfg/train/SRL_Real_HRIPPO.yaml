@@ -101,7 +101,7 @@ params:
     actions_num_humanoid: 28
     
     # training settings
-    humanoid_checkpoint: "saved_runs/AMP_Pretrain_18-16-52-24/nn/AMP_Pretrain_18-16-52-35.pth"
+    humanoid_checkpoint: False
     hsrl_checkpoint: False
     srl_teacher_checkpoint: False
     mirror_loss: True

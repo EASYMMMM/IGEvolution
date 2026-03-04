@@ -99,7 +99,7 @@ class SRL_Real_HRI_Base(VecTask):
         self._humanoid_load_cell_obs = self.cfg["env"].get("humanoid_load_cell_obs", False)
         self._srl_partial_obs = self.cfg["env"].get("srl_partial_obs", False)
         motor_opt_cfg = self.cfg["env"].get("srl_motor_opt", {})
-        self._srl_max_effort = self.cfg["env"].get("srl_max_effort", 400.0)
+        self._srl_max_effort = self.cfg["env"].get("srl_max_effort", 300.0)
 
         # self.initial_dof_pos = torch.tensor(self.srl_default_joint_angles, device=self.device).unsqueeze(0).repeat(self.num_envs, 1)
         self.obs_scales={
