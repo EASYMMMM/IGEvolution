@@ -187,7 +187,7 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
             vel_penalty_s4 = torch.sum(root_vel_s4[:, 0:2] ** 2, dim=-1)
             
             root_ang_vel_s4 = self._root_states[..., 10:13]
-            ang_penalty_s4 = root_ang_vel_s4[:, 2] ** 2 # 保持朝向
+            ang_penalty_s4 = root_ang_vel_s4[:, 2] ** 2 # 角速度s
             
             dof_diff_s4 = self._dof_pos - self._initial_dof_pos
             joint_penalty_s4 = torch.sum(dof_diff_s4 ** 2, dim=-1) # 回归初始姿态
@@ -201,8 +201,9 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
                 * torch.exp(-1.0 * ang_penalty_s4)
                 * torch.exp(-1.0 * joint_penalty_s4)
                 * torch.exp(-0.001 * act_penalty_s4)
-            )
-
+                * heading_reward
+            ) 
+            
             # 2. 计算行走奖励 (Tracking)
             # 采用叠加结构
             walk_reward_s4 = pos_reward + vel_reward + heading_reward
