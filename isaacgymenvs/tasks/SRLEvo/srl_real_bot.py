@@ -117,6 +117,21 @@ class SRL_Real_Bot(VecTask):
        
         super().__init__(config=self.cfg, rl_device=rl_device, sim_device=sim_device, graphics_device_id=graphics_device_id, headless=headless, virtual_screen_capture=virtual_screen_capture, force_render=force_render)
 
+        # 初始化动作延迟与噪声的配置
+        # 使用 .get() 提供默认值，防止 yaml 里没写报错
+        self.enable_action_delay = self.cfg["task"].get("action_delay", False)
+        self.action_delay_range = self.cfg["task"].get("action_delay_range", 0.0)
+        
+        self.enable_action_noise = self.cfg["task"].get("action_noise", False)
+        self.action_noise_scale = self.cfg["task"].get("action_noise_scale", 0.0)
+
+        # 初始化 last_actions Buffer
+        self.last_actions = torch.zeros(
+            (self.num_envs, self.num_actions), 
+            dtype=torch.float, 
+            device=self.device
+        )
+
         self.obs_buffer = torch.zeros((self.num_envs, self.obs_frame_stack, np.int32(self.num_obs/self.obs_frame_stack)), device=self.device)
         self.obs_mirrored_buffer = torch.zeros((self.num_envs, self.obs_frame_stack, np.int32(self.num_obs/self.obs_frame_stack)), device=self.device)
         self.phase_buf = torch.zeros(
@@ -557,6 +572,8 @@ class SRL_Real_Bot(VecTask):
         self.dof_pos[env_ids] = tensor_clamp(self.initial_dof_pos[env_ids] , self.dof_limits_lower, self.dof_limits_upper)
         self.dof_vel[env_ids] = velocities
 
+        self.last_actions[env_ids] = 0.0 
+
         env_ids_int32 = env_ids.to(dtype=torch.int32)
         self.gym.set_actor_root_state_tensor_indexed(self.sim,
                                                      gymtorch.unwrap_tensor(self.initial_root_states),
@@ -623,6 +640,34 @@ class SRL_Real_Bot(VecTask):
             self.gym.set_actor_root_state_tensor(self.sim, gymtorch.unwrap_tensor(self.root_states))
 
     def pre_physics_step(self, actions):
+
+        # 动作插值延迟 (Action Delay / Smoothing)
+        # 模拟电机的惯性：当前动作不能瞬间突变，而是由上一帧动作和目标动作插值得到
+        if self.randomize and self.enable_action_delay:
+            # 在每一步随机生成延迟系数 alpha (0~1)
+            # alpha 越大，动作越滞后，电机越"肉"
+            # size=(self.num_envs, 1) 保证每个环境有独立的延迟系数，但对该环境的所有关节一致
+            delay_alpha = torch.rand((self.num_envs, 1), device=self.device) * self.action_delay_range
+            
+            # 低通滤波公式: y_t = (1-alpha) * x_t + alpha * y_{t-1}
+            actions = (1.0 - delay_alpha) * actions + delay_alpha * self.last_actions
+
+        # 动作噪声 (Action Noise)
+        # 模拟信号干扰或电机抖动
+        if self.randomize and self.enable_action_noise:
+            # 乘性噪声：动作越大，噪声越大 (比加性噪声更符合电机特性)
+            noise = self.action_noise_scale * torch.randn_like(actions) * actions
+            actions = actions + noise
+
+        # 裁剪动作范围 (Clip)
+        # 假设 self.clip_actions 是你在 config 中定义的 (例如 1.0)
+        # 如果没有定义，可以直接写具体的数值，或者用 self.torque_limits 等逻辑
+        if hasattr(self, "clip_actions"):
+             actions = torch.clamp(actions, -self.clip_actions, self.clip_actions)
+
+        # 更新 last_actions (用于下一帧计算)
+        self.last_actions = actions.clone()
+        # 赋值给 self.actions 用于后续观察 (obs)
         self.actions = actions.to(self.device).clone()
         
         if self._force_control:
