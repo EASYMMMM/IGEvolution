@@ -118,9 +118,16 @@ class AMPAgent(common_agent.CommonAgent):
             self.experience_buffer.update_data('amp_obs', n, infos['amp_obs'])
 
             # ========== 【站立奖励修改开始】 ==========
-            # 从 extras (infos) 中读取 amp_mask
-            # 如果环境没传这个参数，默认全为 1.0 (开启 AMP)，保证兼容性
-            amp_mask = infos.get('amp_mask', torch.ones(rewards.shape, device=self.ppo_device))
+            amp_mask = infos.get('amp_mask', None)
+
+            if amp_mask is None:
+                amp_mask = torch.ones_like(rewards, device=self.ppo_device)
+            else:
+                amp_mask = amp_mask.to(self.ppo_device)
+
+            # ★ 无论来自 infos 还是默认 ones_like，都统一变成 (B,)
+            amp_mask = amp_mask.contiguous().view(-1)
+
             self.experience_buffer.update_data('amp_masks', n, amp_mask)
             # ========== 【站立奖励修改结束】 ==========
 

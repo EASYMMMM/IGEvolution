@@ -36,6 +36,24 @@ runs/Humanoid_175_Pretrain_s4_28-17-55-13/nn/Humanoid_175_Pretrain_s4_28-17-55-1
 runs/Humanoid_175_Pretrain_s4_28-21-16-06/nn/Humanoid_175_Pretrain_s4_28-21-16-11.pth
 runs/Humanoid_175_Pretrain_s1_29-15-13-35/nn/Humanoid_175_Pretrain_s1_29-15-13-42.pth
 runs/Humanoid_175_Pretrain_s1_29-17-32-44/nn/Humanoid_175_Pretrain_s1_29-17-33-34.pth
+
+# ------ Humanoid 多任务预训练 ------
+# Humanoid Stage1: 直线 Hybrid（175cm amp_175）
+python SRL_Evo_train.py task=HumanoidAMPSRLGym_s1_Smpl experiment=Humanoid_175_Pretrain_s1 task.env.stateInit=Hybrid wandb_project=Humanoid_Pretrain wandb_activate=True max_iterations=1500 task.env.episodeLength=2500   headless=True seed=$RANDOM task.env.train_stage=2   
+# check
+python SRL_Evo_train.py task=HumanoidAMPSRLGym_s1_Smpl test=True force_render=True task.env.cameraFollow=True task.env.stateInit=Default num_envs=1 task.env.train_stage=2  sim_device=cuda:0 rl_device=cuda:0 checkpoint=runs/Humanoid_175_Pretrain_s1_04-15-27-20/nn/Humanoid_175_Pretrain_s1_04-15-27-26.pth   seed=$RANDOM
+# Humanoid Stage2: 曲线 Hybrid（175cm amp_175）
+python SRL_Evo_train.py task=HumanoidAMPSRLGym_s1_Smpl experiment=Humanoid_175_Pretrain_s2 task.env.stateInit=Hybrid wandb_project=Humanoid_Pretrain wandb_activate=True max_iterations=2500 task.env.episodeLength=4000 sim_device=cuda:1 rl_device=cuda:1 num_envs=4096 headless=True seed=$RANDOM task.env.train_stage=3  checkpoint=runs/Humanoid_175_Pretrain_s1_04-15-27-20/nn/Humanoid_175_Pretrain_s1_04-15-27-26.pth  
+# check
+python SRL_Evo_train.py task=HumanoidAMPSRLGym_s1_Smpl test=True force_render=True task.env.cameraFollow=True task.env.stateInit=Default num_envs=1 task.env.train_stage=3  sim_device=cuda:0 rl_device=cuda:0 checkpoint=runs/Humanoid_175_Pretrain_s2_05-14-30-40/nn/Humanoid_175_Pretrain_s2_05-14-30-46.pth  task.env.episodeLength=4000  seed=$RANDOM 
+# Humanoid Stage3: 站立 Random （175cm amp_175）
+python SRL_Evo_train.py task=HumanoidAMPSRLGym_s1_Smpl experiment=Humanoid_175_Pretrain_s1 wandb_project=Humanoid_Pretrain wandb_activate=True max_iterations=3000  checkpoint=runs/Humanoid_175_Pretrain_s2_05-14-30-40/nn/Humanoid_175_Pretrain_s2_05-14-30-46.pth   task.env.episodeLength=2000 sim_device=cuda:1 rl_device=cuda:1   headless=True seed=$RANDOM task.env.train_stage=1  
+# check
+python SRL_Evo_train.py task=HumanoidAMPSRLGym_s1_Smpl test=True force_render=True task.env.cameraFollow=True num_envs=1 task.env.train_stage=1  sim_device=cuda:0 rl_device=cuda:0 checkpoint=runs/Humanoid_175_Pretrain_s1_05-21-30-21/nn/Humanoid_175_Pretrain_s1_05-21-30-29.pth task.env.stateInit=Default seed=$RANDOM
+
+# 训好的模型
+python SRL_Evo_train.py task=HumanoidAMPSRLGym_s1_Smpl test=True force_render=True task.env.cameraFollow=True task.env.stateInit=Default num_envs=1 task.env.train_stage=4  sim_device=cuda:0 rl_device=cuda:0 checkpoint=runs/Humanoid_175_Pretrain_s1_29-17-32-44/nn/Humanoid_175_Pretrain_s1_29-17-33-34.pth task.env.episodeLength=4000  seed=$RANDOM
+
 # =========== Real HRI ==========
 # (1.4) 关节力矩更大的humanoid  
 python SRL_Evo_train.py task=SRL_Real_HRI headless=True wandb_project=SRL_Evo wandb_activate=True experiment=SRL_Real_HRI   max_iterations=2000   train.params.config.humanoid_checkpoint=runs/Humanoid_175_Pretrain_s2_30-13-53-51/nn/Humanoid_175_Pretrain_s2_30-13-53-56.pth   train.params.config.srl_teacher_checkpoint=runs/SRL_Real_s4_26-17-10-46/nn/SRL_Real_s4.pth   train.params.config.dagger_loss_coef=0.5 train.params.config.sym_a_loss_coef=1.0 train.params.config.sym_c_loss_coef=0.5  train.params.config.dagger_anneal_k=1e-4  task.env.srl_free_actions_num=2   task.env.clearance_penalty_scale=0 task.env.asset.assetFileName="mjcf/srl_real_hri/srl_real_hri_HXYK_175_powerup.xml" ;    
