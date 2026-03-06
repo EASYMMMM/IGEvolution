@@ -125,6 +125,21 @@ class SRL_Real_Bot(VecTask):
 
         super().__init__(config=self.cfg, rl_device=rl_device, sim_device=sim_device, graphics_device_id=graphics_device_id, headless=headless, virtual_screen_capture=virtual_screen_capture, force_render=force_render)
 
+        # 初始化动作延迟与噪声的配置
+        # 使用 .get() 提供默认值，防止 yaml 里没写报错
+        self.enable_action_delay = self.cfg["task"].get("action_delay", False)
+        self.action_delay_range = self.cfg["task"].get("action_delay_range", 0.0)
+        
+        self.enable_action_noise = self.cfg["task"].get("action_noise", False)
+        self.action_noise_scale = self.cfg["task"].get("action_noise_scale", 0.0)
+
+        # 初始化 last_actions Buffer
+        self.last_actions = torch.zeros(
+            (self.num_envs, self.num_actions), 
+            dtype=torch.float, 
+            device=self.device
+        )
+        
         # EMA 衰减系数计算
         dt = self.cfg["sim"]["dt"]
         self.control_dt = self.control_freq_inv * dt
