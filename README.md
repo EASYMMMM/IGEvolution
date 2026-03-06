@@ -5,6 +5,7 @@
 
    每次运行前需要`export LD_LIBRARY_PATH=/home/ps/anaconda3/envs/XXX/lib`  
    其中`XXX`拟环境名称。  
+   `export LD_LIBRARY_PATH=/home/ps/miniconda3/envs/srlgym/bin`
    `export LD_LIBRARY_PATH=/home/ps/miniconda3/envs/Mrlgpu/bin`
    `export LD_LIBRARY_PATH=/home/zdh232/anaconda3/envs/Mrlgpu/lib`     
    `export LD_LIBRARY_PATH=/home/ps/anaconda3/envs/rlgpu/lib`      

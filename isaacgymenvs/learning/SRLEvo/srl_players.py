@@ -74,7 +74,11 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
         self.obs_log = []
         self.target_yaw_log = []
         self.load_cell_fd_log = []
+        self.srl_torques_log = []
+        self.srl_virtual_passive_pos_log = []
+        self.srl_virtual_load_cell_log = []
         self.load_cell_log = []
+        self.humanoid_torques_log = []
         self.obs_num_humanoid = self.env.get_humanoid_obs_size()
         self.obs_num_srl = self.env.get_srl_obs_size()
         self.priv_obs_num_srl = self.env.get_srl_priv_obs_size()
@@ -252,13 +256,17 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
 
                     obs = obs_dict['obs']  # shape: [num_envs, obs_dim]
                     if isinstance(obs, torch.Tensor):
-                        obs_np = obs.detach().cpu().numpy()[0, self.env.get_humanoid_obs_size():]  # 取第一个环境
+                        obs_np = obs.detach().cpu().numpy()[0, -self.obs_num_srl:]  # 取第一个环境
                     else:
                         obs_np = np.array(obs[0, :])
                     self.obs_log.append(obs_np)
                     self.target_yaw_log.append(info['target_yaw'].cpu().numpy())
                     self.load_cell_fd_log.append(info['load_cell_fd'].cpu().numpy())
                     self.load_cell_log.append(info['load_cell'].cpu().numpy())
+                    self.srl_virtual_passive_pos_log.append(info['srl_virtual_passive_pos'].cpu().numpy())
+                    self.srl_virtual_load_cell_log.append(info['srl_virtual_load_cell'].cpu().numpy())
+                    self.srl_torques_log.append(info['srl_torques'].cpu().numpy())
+                    self.humanoid_torques_log.append(info['humanoid_torques'].cpu().numpy())
                     self._post_step(info)
                     
                     # 只记录第一个环境的动作
@@ -307,10 +315,19 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                             target_yaw = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.target_yaw_log], axis=0)
                             load_cell_fd_array = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.load_cell_fd_log], axis=0)
                             load_cell_array = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.load_cell_log], axis=0)
+                            srl_virtual_passive_pos_array = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.srl_virtual_passive_pos_log], axis=0)
+                            srl_virtual_load_cell_array = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.srl_virtual_load_cell_log], axis=0)
+                            srl_torques_array = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.srl_torques_log], axis=0)
+                            humanoid_torques_array = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.humanoid_torques_log], axis=0)
                             self.obs_log.clear()
                             self.target_yaw_log.clear()
                             self.load_cell_fd_log.clear()
                             self.load_cell_log.clear()
+                            self.srl_virtual_passive_pos_log.clear()
+                            self.srl_virtual_load_cell_log.clear()
+                            self.srl_torques_log.clear()
+                            self.humanoid_torques_log.clear()
+                            
                             num_dims = 51 
                             split1 = 17  # Part 1 包含 0 到 16 (共 17 维)
                             split2 = 34  # Part 2 包含 17 到 33 (共 17 维)
@@ -401,17 +418,17 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
 
                             # Load Cell Forces
                             fig4, axs4 = plt.subplots(4, 1, figsize=(10, 4 * 2.5), sharex=True)
-                            axs4[0].plot(load_cell_fd_array[:, 0], label='Force X')
-                            axs4[0].plot(load_cell_fd_array[:, 1], label='Force Y')
-                            axs4[0].plot(load_cell_fd_array[:, 2], label='Force Z')                          
-                            axs4[0].set_ylabel('Load Cell FD Forces')
+                            axs4[0].plot(srl_virtual_passive_pos_array[:, 0], label='Pos X')
+                            axs4[0].plot(srl_virtual_passive_pos_array[:, 1], label='Pos Y')
+                            axs4[0].plot(srl_virtual_passive_pos_array[:, 2], label='Pos Z')                          
+                            axs4[0].set_ylabel('srl virtual passive pos')
                             axs4[0].legend()
                             axs4[0].grid(True)
-                            axs4[0].set_ylim([-400, 400])
-                            axs4[1].plot(load_cell_fd_array[:, 3], label='Torque X')
-                            axs4[1].plot(load_cell_fd_array[:, 4], label='Torque Y')
-                            axs4[1].plot(load_cell_fd_array[:, 5], label='Torque Z')
-                            axs4[1].set_ylabel('Load Cell FD Torques')
+                            axs4[0].set_ylim([-0.020, 0.020])
+                            axs4[1].plot(srl_virtual_load_cell_array[:, 0], label='Pos X')
+                            axs4[1].plot(srl_virtual_load_cell_array[:, 1], label='Pos Y')
+                            axs4[1].plot(srl_virtual_load_cell_array[:, 2], label='Pos Z')
+                            axs4[1].set_ylabel('Virtual Load Cell Torques')
                             axs4[1].legend()
                             axs4[1].grid(True)
                             axs4[2].plot(load_cell_array[:, 0], label='Force X')
@@ -421,15 +438,199 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                             axs4[2].legend()
                             axs4[2].grid(True)
                             axs4[2].set_ylim([-400, 400])
-                            axs4[3].plot(load_cell_array[:, 3], label='Torque X')
-                            axs4[3].plot(load_cell_array[:, 4], label='Torque Y')
-                            axs4[3].plot(load_cell_array[:, 5], label='Torque Z')
-                            axs4[3].set_ylabel('Load Cell Torques')
+                            axs4[3].plot(srl_virtual_load_cell_array[:, 0], label='Torque X')
+                            axs4[3].plot(srl_virtual_load_cell_array[:, 1], label='Torque Y')
+                            axs4[3].plot(srl_virtual_load_cell_array[:, 2], label='Torque Z')
+                            axs4[3].set_ylabel('Virtual Load Cell Torques')
                             axs4[3].legend()
                             axs4[3].grid(True)
+                            axs4[3].set_ylim([-500, 500])
                             plt.suptitle("Load Cell Data")
                             plt.tight_layout()
                             plt.show()
+
+                            # ==================== [NEW] HRI & Humanoid Torque Analysis START ====================
+                            dt_sim = getattr(self.env, "control_dt", 0.0166)
+
+                            # 1. 交互力分析 (Interaction Force Analysis)
+                            print("\n" + "="*60)
+                            print(" >>> HRI Interaction Force Analysis (Virtual Load Cell) <<<")
+                            print("="*60)
+                            int_forces = srl_virtual_load_cell_array[:, 0:3]
+                            int_force_norm = np.linalg.norm(int_forces, axis=1)
+
+                            def calc_hri_metric(data, name):
+                                return {
+                                    "Metric": name,
+                                    "Mean": np.mean(data),        # [NEW] 带符号均值，体现方向性
+                                    "Var": np.var(data),          # [NEW] 方差，体现波动
+                                    "RMS": np.sqrt(np.mean(data**2)),
+                                    "MaxAbs": np.max(np.abs(data)),
+                                    "Smoothness": np.sqrt(np.mean((np.diff(data)/dt_sim)**2)) # Jerk
+                                }
+
+                            hri_metrics = [
+                                calc_hri_metric(int_forces[:, 0], "Force X (Fx)"),
+                                calc_hri_metric(int_forces[:, 1], "Force Y (Fy)"),
+                                calc_hri_metric(int_forces[:, 2], "Force Z (Fz)"),
+                                calc_hri_metric(int_force_norm, "Force Norm (|F|)")
+                            ]
+
+                            # [MODIFIED] 将 RMS 列替换为 Mean，展示 Var
+                            print(f"{'Metric':<20} | {'Mean':<10} | {'Var':<10} | {'MaxAbs':<10} | {'Smoothness':<10}")
+                            print("-" * 75)
+                            for m in hri_metrics:
+                                print(f"{m['Metric']:<20} | {m['Mean']:<10.4f} | {m['Var']:<10.4f} | {m['MaxAbs']:<10.4f} | {m['Smoothness']:<10.4f}")
+                            print("-" * 75)
+
+                            # 2. Humanoid 关节力矩分析 (Joint Torque Analysis)
+                            print("\n" + "="*60)
+                            print(" >>> Humanoid Joint Torque Analysis (Load Carrying) <<<")
+                            print("="*60)
+                            
+                            # 关节切片索引 (Hip-Y, Knee, Ankle)
+                            joint_indices = {
+                                'Hip_Y_Right': 15, 'Hip_Y_Left': 22,
+                                'Knee_Right': 17,  'Knee_Left': 24,
+                                'Ankle_Right': 19, 'Ankle_Left': 26
+                            }
+                            
+                            joint_metrics = []
+                            plot_data_joints = {}
+                            
+                            for name, idx in joint_indices.items():
+                                t_data = humanoid_torques_array[:, idx]
+                                plot_data_joints[name] = t_data
+                                met = calc_hri_metric(t_data, name)
+                                met['Integral'] = np.sum(np.abs(t_data)) * dt_sim # 积分力矩
+                                joint_metrics.append(met)
+                            
+                            print(f"{'Joint':<15} | {'RMS (Nm)':<10} | {'Max (Nm)':<10} | {'Integral (Nms)':<15}")
+                            print("-" * 65)
+                            for m in joint_metrics:
+                                print(f"{m['Metric']:<15} | {m['RMS']:<10.2f} | {m['MaxAbs']:<10.2f} | {m['Integral']:<15.2f}")
+                            print("-" * 65)
+
+                            # 3. 绘图: 交互力 & 关节力矩
+                            fig_hri, axs_hri = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+                            time_steps = np.arange(len(int_forces)) * dt_sim
+                            
+                            # Interaction Force
+                            axs_hri[0].plot(time_steps, int_forces[:, 0], label='Fx', alpha=0.7)
+                            axs_hri[0].plot(time_steps, int_forces[:, 1], label='Fy', alpha=0.7)
+                            axs_hri[0].plot(time_steps, int_forces[:, 2], label='Fz', alpha=0.7)
+                            axs_hri[0].plot(time_steps, int_force_norm, label='|F|', color='k', linestyle='--', alpha=0.5)
+                            axs_hri[0].set_ylabel('Interaction Force (N)')
+                            axs_hri[0].set_title('Virtual Interaction Forces')
+                            axs_hri[0].legend()
+                            axs_hri[0].grid(True, alpha=0.3)
+                            
+                            # Joint Torques (Right Leg)
+                            axs_hri[1].plot(time_steps, plot_data_joints['Hip_Y_Right'], label='R-Hip-Y')
+                            axs_hri[1].plot(time_steps, plot_data_joints['Knee_Right'], label='R-Knee')
+                            axs_hri[1].plot(time_steps, plot_data_joints['Ankle_Right'], label='R-Ankle')
+                            axs_hri[1].set_ylabel('Joint Torque (Nm)')
+                            axs_hri[1].set_xlabel('Time (s)')
+                            axs_hri[1].set_title('Right Leg Joint Torques')
+                            axs_hri[1].legend()
+                            axs_hri[1].grid(True, alpha=0.3)
+                            
+                            plt.tight_layout()
+                            plt.show()
+                            # ==================== [NEW] HRI & Humanoid Torque Analysis END ====================
+
+                            # srl torques
+                            # --- compute metrics ---
+                            dt = getattr(self.env, "control_dt", 0.015)  # 如果 env 里有 control_dt 就用它；没有就用你默认的 0.015
+                            metrics = torque_episode_metrics(
+                                srl_torques_array,         # (T,6)
+                                dt=dt,
+                                peak_nm=320.0,
+                                rated_nm=85.0,
+                                rated_cont_s=240.0,
+                                rms_window_s=1.0
+                            )
+
+                            J = srl_torques_array.shape[1]
+                            wj = metrics["worst_joint_by_equiv"]
+
+                            # --- pretty print to console ---
+                            print("\n========== SRL Motor Torque Episode Metrics ==========")
+                            print(f"episode_len = {metrics['episode_len_s']:.2f}s, dt = {metrics['dt']:.4f}s, win_steps = {metrics['win_steps']}")
+                            for j in range(J):
+                                print(
+                                    f"[J{j}] peak={metrics['peak_nm'][j]:.1f}  "
+                                    f"rms={metrics['rms_nm'][j]:.1f}  "
+                                    f"roll_rms_max(1s)={metrics['rolling_rms_max_nm'][j]:.1f}  "
+                                    f"t>rated={metrics['t_above_rated_s'][j]:.2f}s  "
+                                    f"max_cont>rated={metrics['max_cont_above_rated_s'][j]:.2f}s  "
+                                    f"t>peak={metrics['t_above_peak_s'][j]:.2f}s  "
+                                    f"equiv_rated_time={metrics['equiv_rated_time_s'][j]:.1f}s  "
+                                    f"margin_to_240s={metrics['thermal_margin_s'][j]:.1f}s"
+                                )
+                            print(f"worst_joint_by_equiv = J{wj}")
+                            print("======================================================\n")
+
+                            srl_dof_vel_array = obs_array[:, 16:22]   
+                            pmet = power_episode_metrics(srl_torques_array, srl_dof_vel_array, dt=dt, window_s=1.0)
+
+                            print("\n========== SRL Power Metrics (Mechanical) ==========")
+                            print(f"win_steps={pmet['win_steps']}")
+                            for j in range(srl_torques_array.shape[1]):
+                                print(
+                                    f"[J{j}] meanP={pmet['mean_P'][j]:.1f}W  "
+                                    f"mean|P|={pmet['mean_abs_P'][j]:.1f}W  "
+                                    f"rmsP={pmet['rms_P'][j]:.1f}W  "
+                                    f"roll_rms_max(1s)={pmet['rolling_rms_max_P'][j]:.1f}W  "
+                                    f"peak|P|={pmet['peak_abs_P'][j]:.1f}W  "
+                                    f"E_abs={pmet['E_abs'][j]:.1f}J  "
+                                    f"E_pos={pmet['E_pos'][j]:.1f}J  "
+                                    f"E_neg={pmet['E_neg'][j]:.1f}J"
+                                )
+                            print("TOTAL:",
+                                f"meanP={pmet['total']['mean_total_P']:.1f}W,",
+                                f"mean|P|={pmet['total']['mean_total_abs_P']:.1f}W,",
+                                f"rmsP={pmet['total']['rms_total_P']:.1f}W,",
+                                f"peak|P|={pmet['total']['peak_total_abs_P']:.1f}W,",
+                                f"E_abs={pmet['total']['E_total_abs']:.1f}J")
+                            print("====================================================\n")
+                            
+                            # --- plot ---
+                            fig5, axs5 = plt.subplots(2, 1, figsize=(10, 4 * 2.5), sharex=True)
+                            axs5[0].plot(srl_torques_array[:, 0], label='Joint 0')
+                            axs5[0].plot(srl_torques_array[:, 1], label='Joint 1')
+                            axs5[0].plot(srl_torques_array[:, 2], label='Joint 2')
+                            axs5[0].set_ylabel('srl torques')
+                            axs5[0].legend()
+                            axs5[0].grid(True)
+                            axs5[0].set_ylim([-300, 300])
+
+                            axs5[1].plot(srl_torques_array[:, 3], label='Joint 3')
+                            axs5[1].plot(srl_torques_array[:, 4], label='Joint 4')
+                            axs5[1].plot(srl_torques_array[:, 5], label='Joint 5')
+                            axs5[1].set_ylabel('srl torques')
+                            axs5[1].legend()
+                            axs5[1].grid(True)
+                            axs5[1].set_ylim([-300, 300])
+
+                            # --- add a compact summary box on the plot ---
+                            summary = (
+                                f"len={metrics['episode_len_s']:.1f}s  dt={metrics['dt']:.4f}s\n"
+                                f"Worst(J{wj}): peak={metrics['peak_nm'][wj]:.1f}  rms={metrics['rms_nm'][wj]:.1f}\n"
+                                f"t>rated={metrics['t_above_rated_s'][wj]:.2f}s  max_cont>rated={metrics['max_cont_above_rated_s'][wj]:.2f}s\n"
+                                f"equiv_rated_time={metrics['equiv_rated_time_s'][wj]:.1f}s  margin_to_240s={metrics['thermal_margin_s'][wj]:.1f}s"
+                            )
+                            axs5[0].text(
+                                0.01, 0.98, summary,
+                                transform=axs5[0].transAxes,
+                                va='top', ha='left',
+                                fontsize=9,
+                                bbox=dict(facecolor='white', alpha=0.75, edgecolor='none')
+                            )
+
+                            plt.suptitle("Srl Torques + Episode Metrics")
+                            plt.tight_layout()  
+                            plt.show()                                  
 
 
                         if self._save_data:
@@ -589,7 +790,6 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
             print('av reward:', sum_rewards / games_played * n_game_life, 'av steps:', sum_steps / games_played * n_game_life)
 
         return
-
     def action0_ave(self, actions_env0):
         # 计算输出动作的均值和方差
         # 转换成Numpy数组以方便计算
@@ -702,6 +902,7 @@ class SRL_Bot_PlayerContinuous(common_player.CommonPlayer):
         super().__init__(params)
         self.obs_log = []
         self.target_yaw_log = []
+        self.srl_torques_log = []
 
     def run(self):
         n_games = self.games_num
@@ -758,6 +959,7 @@ class SRL_Bot_PlayerContinuous(common_player.CommonPlayer):
                     obs_np = np.array(obs[0, :])
                 self.obs_log.append(obs_np)
                 self.target_yaw_log.append(info['target_yaw'].cpu().numpy())
+                self.srl_torques_log.append(info['srl_torques'].cpu().numpy())
 
                 cr += r
                 steps += 1
@@ -779,8 +981,10 @@ class SRL_Bot_PlayerContinuous(common_player.CommonPlayer):
                         target_yaw = []
                         obs_array = np.stack(self.obs_log, axis=0)
                         target_yaw = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.target_yaw_log], axis=0)
+                        srl_torques_array = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.srl_torques_log], axis=0)
                         self.obs_log.clear()
                         self.target_yaw_log.clear()
+                        self.srl_torques_log.clear()
 
                         num_dims = 30
                         mid = num_dims // 2
@@ -837,17 +1041,66 @@ class SRL_Bot_PlayerContinuous(common_player.CommonPlayer):
                         axs3[2].set_ylabel('AngVel Z')
                         axs3[2].legend()
                         axs3[2].grid(True)
-
                         axs3[3].plot(target_yaw[:, 0]-obs_array[:, 7], label='Actual Value')
                         axs3[3].plot(target_yaw[:, 0], label='Target Value', linestyle='--')
                         axs3[3].set_ylabel('AngVel Z')
                         axs3[3].legend()
                         axs3[3].grid(True)
-
-
                         plt.suptitle("Target Tracking")
                         plt.tight_layout()
                         plt.show()
+
+                        # --- plot ---
+                        # srl torques
+                        # --- compute metrics ---
+                        dt = getattr(self.env, "control_dt", 0.015)  # 如果 env 里有 control_dt 就用它；没有就用你默认的 0.015
+                        metrics = torque_episode_metrics(
+                            srl_torques_array,         # (T,6)
+                            dt=dt,
+                            peak_nm=160.0,
+                            rated_nm=60.0,
+                            rated_cont_s=240.0,
+                            rms_window_s=1.0
+                        )
+
+                        J = srl_torques_array.shape[1]
+                        wj = metrics["worst_joint_by_equiv"]
+
+                        # --- pretty print to console ---
+                        print("\n========== SRL Motor Torque Episode Metrics ==========")
+                        print(f"episode_len = {metrics['episode_len_s']:.2f}s, dt = {metrics['dt']:.4f}s, win_steps = {metrics['win_steps']}")
+                        for j in range(J):
+                            print(
+                                f"[J{j}] peak={metrics['peak_nm'][j]:.1f}  "
+                                f"rms={metrics['rms_nm'][j]:.1f}  "
+                                f"roll_rms_max(1s)={metrics['rolling_rms_max_nm'][j]:.1f}  "
+                                f"t>rated={metrics['t_above_rated_s'][j]:.2f}s  "
+                                f"max_cont>rated={metrics['max_cont_above_rated_s'][j]:.2f}s  "
+                                f"t>peak={metrics['t_above_peak_s'][j]:.2f}s  "
+                                f"equiv_rated_time={metrics['equiv_rated_time_s'][j]:.1f}s  "
+                                f"margin_to_240s={metrics['thermal_margin_s'][j]:.1f}s"
+                            )
+                        print(f"worst_joint_by_equiv = J{wj}")
+                        print("======================================================\n")
+                        fig5, axs5 = plt.subplots(2, 1, figsize=(10, 4 * 2.5), sharex=True)
+                        axs5[0].plot(srl_torques_array[:, 0], label='Joint 0')
+                        axs5[0].plot(srl_torques_array[:, 1], label='Joint 1')
+                        axs5[0].plot(srl_torques_array[:, 2], label='Joint 2')
+                        axs5[0].set_ylabel('srl torques')
+                        axs5[0].legend()
+                        axs5[0].grid(True)
+                        axs5[0].set_ylim([-300, 300])
+
+                        axs5[1].plot(srl_torques_array[:, 3], label='Joint 3')
+                        axs5[1].plot(srl_torques_array[:, 4], label='Joint 4')
+                        axs5[1].plot(srl_torques_array[:, 5], label='Joint 5')
+                        axs5[1].set_ylabel('srl torques')
+                        axs5[1].legend()
+                        axs5[1].grid(True)
+                        axs5[1].set_ylim([-300, 300])
+                        plt.suptitle("Srl Torques + Episode Metrics")
+                        plt.tight_layout()  
+                        plt.show()   
 
                     if self.is_rnn:
                         for s in self.states:
@@ -894,3 +1147,153 @@ def lowpass_filter(data, cutoff=2.5, fs=30.0, order=4):
     b, a = butter(order, normal_cutoff, btype='low', analog=False)
     filtered = filtfilt(b, a, data)
     return filtered
+
+
+def torque_episode_metrics(tau: np.ndarray,
+                           dt: float,
+                           peak_nm: float = 320.0,
+                           rated_nm: float = 85.0,
+                           rated_cont_s: float = 240.0,
+                           rms_window_s: float = 1.0):
+    """
+    tau: (T, J) torque in N*m
+    dt : seconds per step
+    returns: dict of per-joint metrics + some episode-level helpers
+    """
+    tau = np.asarray(tau)
+    assert tau.ndim == 2, f"tau should be (T,J), got {tau.shape}"
+    T, J = tau.shape
+    abs_tau = np.abs(tau)
+
+    # basic
+    peak = abs_tau.max(axis=0)                      # (J,)
+    mean_abs = abs_tau.mean(axis=0)
+    rms_all = np.sqrt(np.mean(tau**2, axis=0))
+
+    # threshold times
+    above_rated = abs_tau > rated_nm
+    above_peak  = abs_tau > peak_nm
+    t_above_rated = above_rated.sum(axis=0) * dt
+    t_above_peak  = above_peak.sum(axis=0) * dt
+
+    # max continuous time above rated
+    max_cont_above_rated = np.zeros(J, dtype=np.float64)
+    for j in range(J):
+        run = 0
+        best = 0
+        for m in above_rated[:, j]:
+            run = run + 1 if m else 0
+            best = max(best, run)
+        max_cont_above_rated[j] = best * dt
+
+    # rolling RMS over window (e.g. 1 second)
+    win = max(1, int(round(rms_window_s / max(dt, 1e-9))))
+    if win <= 1:
+        rolling_rms_max = rms_all.copy()
+    else:
+        kernel = np.ones(win, dtype=np.float64) / win
+        # valid conv on tau^2, then sqrt
+        rolling_rms = np.sqrt(np.vstack([
+            np.convolve(tau[:, j]**2, kernel, mode="valid")
+            for j in range(J)
+        ]).T)  # (T-win+1, J)
+        rolling_rms_max = rolling_rms.max(axis=0)
+
+    # I^2 t style "rated-equivalent time" (heuristic thermal accumulation)
+    # equiv_time = ∫ (|tau|/rated)^2 dt
+    equiv_rated_time = np.sum((abs_tau / rated_nm)**2, axis=0) * dt
+    margin_s = rated_cont_s - equiv_rated_time  # >0 means "below 4-min rated thermal budget" under this heuristic
+
+    # helpers
+    episode_len_s = T * dt
+    worst_joint_by_equiv = int(np.argmax(equiv_rated_time))
+
+    return {
+        "dt": dt,
+        "T": T,
+        "episode_len_s": episode_len_s,
+        "peak_nm": peak,
+        "mean_abs_nm": mean_abs,
+        "rms_nm": rms_all,
+        "rolling_rms_max_nm": rolling_rms_max,
+        "t_above_rated_s": t_above_rated,
+        "max_cont_above_rated_s": max_cont_above_rated,
+        "t_above_peak_s": t_above_peak,
+        "equiv_rated_time_s": equiv_rated_time,
+        "thermal_margin_s": margin_s,
+        "worst_joint_by_equiv": worst_joint_by_equiv,
+        "win_steps": win,
+    }
+
+
+def power_episode_metrics(tau: np.ndarray,
+                          omega: np.ndarray,
+                          dt: float,
+                          window_s: float = 1.0):
+    """
+    tau:   (T,J) N*m
+    omega: (T,J) rad/s
+    dt: seconds per step
+    """
+    tau = np.asarray(tau)
+    omega = np.asarray(omega)
+    assert tau.shape == omega.shape and tau.ndim == 2, f"shape mismatch: {tau.shape} vs {omega.shape}"
+
+    P = tau * omega                       # mechanical power, W
+    P_abs = np.abs(P)
+
+    mean_P = P.mean(axis=0)               # signed average power (regen can cancel)
+    mean_abs_P = P_abs.mean(axis=0)       # average absolute power (better for “effort”)
+    rms_P = np.sqrt(np.mean(P**2, axis=0))
+    peak_abs_P = P_abs.max(axis=0)
+
+    # positive/negative power split (useful: drive vs braking/regen)
+    P_pos = np.clip(P, 0.0, None)
+    P_neg = np.clip(P, None, 0.0)
+    mean_P_pos = P_pos.mean(axis=0)
+    mean_P_neg = P_neg.mean(axis=0)       # negative number
+
+    # energies (J)
+    E_pos = np.sum(P_pos, axis=0) * dt
+    E_neg = np.sum(P_neg, axis=0) * dt    # negative
+    E_abs = np.sum(P_abs, axis=0) * dt
+
+    # rolling RMS power
+    win = max(1, int(round(window_s / max(dt, 1e-9))))
+    if win <= 1:
+        rolling_rms_max = rms_P.copy()
+    else:
+        kernel = np.ones(win, dtype=np.float64) / win
+        rolling_rms = np.sqrt(np.vstack([
+            np.convolve(P[:, j]**2, kernel, mode="valid")
+            for j in range(P.shape[1])
+        ]).T)
+        rolling_rms_max = rolling_rms.max(axis=0)
+
+    # episode-level total power (sum joints)
+    P_total = P.sum(axis=1)               # (T,)
+    metrics_total = {
+        "mean_total_P": float(P_total.mean()),
+        "mean_total_abs_P": float(np.abs(P_total).mean()),
+        "rms_total_P": float(np.sqrt(np.mean(P_total**2))),
+        "peak_total_abs_P": float(np.max(np.abs(P_total))),
+        "E_total_pos": float(np.sum(np.clip(P_total, 0.0, None)) * dt),
+        "E_total_neg": float(np.sum(np.clip(P_total, None, 0.0)) * dt),
+        "E_total_abs": float(np.sum(np.abs(P_total)) * dt),
+    }
+
+    return {
+        "P": P,
+        "mean_P": mean_P,
+        "mean_abs_P": mean_abs_P,
+        "rms_P": rms_P,
+        "peak_abs_P": peak_abs_P,
+        "mean_P_pos": mean_P_pos,
+        "mean_P_neg": mean_P_neg,
+        "E_pos": E_pos,
+        "E_neg": E_neg,
+        "E_abs": E_abs,
+        "rolling_rms_max_P": rolling_rms_max,
+        "win_steps": win,
+        "total": metrics_total,
+    }
