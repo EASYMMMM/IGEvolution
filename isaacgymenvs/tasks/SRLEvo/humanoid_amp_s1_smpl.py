@@ -51,20 +51,44 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
         self._reset_default_env_ids = []
         self._reset_ref_env_ids = []
 
-        super().__init__(config=self.cfg, rl_device=rl_device, sim_device=sim_device, graphics_device_id=graphics_device_id, headless=headless, virtual_screen_capture=virtual_screen_capture, force_render=force_render)
-        
+        super().__init__(
+            config=self.cfg,
+            rl_device=rl_device,
+            sim_device=sim_device,
+            graphics_device_id=graphics_device_id,
+            headless=headless,
+            virtual_screen_capture=virtual_screen_capture,
+            force_render=force_render
+        )
+
+        # standing phase 朝向缓存
+        # 保存“进入 standing phase 时”的世界系 XY 朝向单位向量
+        self._stand_heading_dir = torch.zeros((self.num_envs, 2), device=self.device, dtype=torch.float)
+        self._prev_is_standing_phase = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
+
+        self._standing_phase_state = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
+
+        # standing / walking 切换回差阈值
+        self._stand_enter_thres = 0.01   # 进入站立：1 cm
+        self._stand_exit_thres  = 0.03   # 退出站立：3 cm
+
+        # standing 位置容差
+        self._stand_pos_tol = 0.08       # 8 cm 内都算“站到位”
+
         # 确定当前是否为测试模式 (用于控制 Stage 4 的日志打印)
         is_testing = (not headless) or force_render
         
-        # 2轨迹生成器参数
+        # 轨迹生成器
         self.forward_vec_local = torch.tensor([1.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1)
         episode_duration = self.max_episode_length * self.control_dt
-        self._traj_gen = TrajGenerator(self.num_envs, self.device, self.control_dt, episode_duration,
-                                       speed_mean=1.0,      
-                                       turn_speed_max=0.5,  # 不要太大，先设为0.5
-                                       num_turns=2,
-                                       train_stage=self.train_stage, # 转向次数
-                                       is_test=is_testing)         #stage4日志打印标志
+        self._traj_gen = TrajGenerator(
+            self.num_envs, self.device, self.control_dt, episode_duration,
+            speed_mean=1.0,
+            turn_speed_max=0.5,
+            num_turns=2,
+            train_stage=self.train_stage,
+            is_test=is_testing
+        )
 
         motion_file = cfg['env'].get('motion_file', "amp_humanoid_backflip.npy")
         motion_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../assets/amp/motions/" + motion_file)
@@ -94,6 +118,70 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
             self._draw_debug_traj()
         return
 
+    def _calc_current_heading_xy(self, root_rot):
+        """
+        根据 root_rot 计算当前身体前向在世界坐标系 XY 平面的单位向量
+        """
+        num_envs = root_rot.shape[0]
+        forward_local = torch.zeros((num_envs, 3), device=root_rot.device, dtype=root_rot.dtype)
+        forward_local[:, 0] = 1.0
+
+        forward_world = my_quat_rotate(root_rot, forward_local)
+        forward_xy = forward_world[:, 0:2]
+        forward_xy = torch.nn.functional.normalize(forward_xy, dim=-1, eps=1e-6)
+        return forward_xy
+
+    def _update_standing_heading_cache(self, is_standing_phase, root_rot):
+        """
+        在 'walking -> standing' 切换的那一帧，保存当前朝向
+        """
+        current_heading_xy = self._calc_current_heading_xy(root_rot)
+
+        entering_standing = torch.logical_and(
+            is_standing_phase,
+            torch.logical_not(self._prev_is_standing_phase)
+        )
+
+        if torch.any(entering_standing):
+            self._stand_heading_dir[entering_standing] = current_heading_xy[entering_standing]
+
+        self._prev_is_standing_phase[:] = is_standing_phase
+        return current_heading_xy
+
+    def _reset_standing_heading(self, env_ids):
+        if len(env_ids) == 0:
+            return
+
+        root_rot = self._root_states[env_ids, 3:7]
+        current_heading_xy = self._calc_current_heading_xy(root_rot)
+        self._stand_heading_dir[env_ids] = current_heading_xy
+
+        current_time = self.progress_buf[env_ids] * self.control_dt
+        target_pos = self._traj_gen.get_position(env_ids, current_time)
+        future_traj_points = self._traj_gen.get_observation_points(env_ids, current_time, self._traj_sample_times)
+        target_pos_05s = future_traj_points[:, 0, 0:2]
+        target_dist = torch.norm(target_pos_05s - target_pos[..., 0:2], dim=-1)
+
+        init_standing = target_dist < self._stand_enter_thres
+        self._standing_phase_state[env_ids] = init_standing
+        self._prev_is_standing_phase[env_ids] = init_standing
+        return
+    
+    def _update_standing_phase_state(self, target_dist):
+        enter_mask = target_dist < self._stand_enter_thres
+        exit_mask = target_dist > self._stand_exit_thres
+
+        self._standing_phase_state = torch.where(
+            enter_mask,
+            torch.ones_like(self._standing_phase_state),
+            torch.where(
+                exit_mask,
+                torch.zeros_like(self._standing_phase_state),
+                self._standing_phase_state
+            )
+        )
+        return self._standing_phase_state
+
     def _draw_debug_traj(self):
         self.gym.clear_lines(self.viewer)
         num_debug_envs = min(self.num_envs, 5) 
@@ -110,65 +198,77 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
     def _compute_reward(self, actions):
         current_time = self.progress_buf * self.control_dt
         env_ids = torch.arange(self.num_envs, device=self.device)
-        
-        # 1. 获取当前目标点位置
-        target_pos = self._traj_gen.get_position(env_ids, current_time)
-        root_pos = self._root_states[..., 0:3]
-        root_rot = self._root_states[..., 3:7]
-        
-        # 2. 从路径点中提取“隐式目标速度”
-        # 获取 0.5s 后的未来目标点位置
-        # 注意：self._traj_sample_times 在类初始化中定义为 [0.5, 1.0, 1.5]
-        future_traj_points = self._traj_gen.get_observation_points(env_ids, current_time, self._traj_sample_times)
-        target_pos_05s = future_traj_points[:, 0, 0:2] # 取 0.5s 后的点
-        
-        # 目标速度 = (未来点 - 当前目标点) 的距离 / 时间差 0.5s
-        target_dist = torch.norm(target_pos_05s - target_pos[..., 0:2], dim=-1)
-        is_standing_phase = target_dist < 1e-3 # 判断是否处于站立
-        implied_target_speed = target_dist / 0.5 
-        
-        # ---------------------------------------------------------
-        # Reward 项计算
-        # ---------------------------------------------------------
 
-        # (1) 位置奖励: 距离误差越小奖励越高
-        dist_sq = torch.sum((target_pos[..., 0:2] - root_pos[..., 0:2]) ** 2, dim=-1)
+        # ---------------------------------------------------------
+        # 1) 当前轨迹信息
+        # ---------------------------------------------------------
+        target_pos = self._traj_gen.get_position(env_ids, current_time)   # [N, 3]
+        root_pos = self._root_states[:, 0:3]                              # [N, 3]
+        root_rot = self._root_states[:, 3:7]                              # [N, 4]
+
+        future_traj_points = self._traj_gen.get_observation_points(
+            env_ids, current_time, self._traj_sample_times
+        )
+        target_pos_05s = future_traj_points[:, 0, 0:2]                    # [N, 2]
+
+        # 轨迹未来 0.5s 的位移，用于判断 standing / walking
+        traj_delta = target_pos_05s - target_pos[:, 0:2]                  # [N, 2]
+        target_dist = torch.norm(traj_delta, dim=-1)                      # [N]
+        implied_target_speed = target_dist / 0.5
+
+        # 用你已有的 hysteresis 状态机
+        is_standing_phase = self._update_standing_phase_state(target_dist)
+
+        # ---------------------------------------------------------
+        # 2) 通用 reward 项
+        # ---------------------------------------------------------
+        # walking 位置奖励：继续鼓励贴近当前轨迹点
+        pos_err_xy = target_pos[:, 0:2] - root_pos[:, 0:2]
+        dist_sq = torch.sum(pos_err_xy ** 2, dim=-1)
         pos_reward = torch.exp(-2.0 * dist_sq)
 
-        # (2) 速度方向与数值匹配奖励
-        # 计算当前目标方向 (从机器人指向目标点)
-        vel_dir = target_pos[..., 0:2] - root_pos[..., 0:2]
-        vel_dir = torch.nn.functional.normalize(vel_dir, dim=-1)
-        
-        # 机器人实际水平速度
-        root_vel = self._root_states[..., 7:9] 
-        # 计算实际速度在目标方向上的投影
-        current_vel_proj = torch.sum(root_vel * vel_dir, dim=-1)
-        
-        # 速度匹配奖励: 只有当速度的大小和方向都与轨迹规划一致时奖励最高
-        # 这样能自动处理轨迹生成器中的变速逻辑
-        vel_reward = torch.exp(-2.0 * (current_vel_proj - implied_target_speed)**2)
+        # 当前身体前向（世界系 XY）
+        current_heading_xy = self._update_standing_heading_cache(is_standing_phase, root_rot)
 
-        # (3) 朝向奖励 (约束机器人面朝运动方向，解决螃蟹步)
-        # 假设机器人正前方为本地坐标系 X 轴 [1, 0, 0]
-        
-        # 将本地正前方转换到世界坐标系
-        forward_vec_world = my_quat_rotate(root_rot, self.forward_vec_local)
-        # 计算朝向与目标方向的对齐程度 (cos theta)
-        heading_alignment = torch.sum(forward_vec_world[..., 0:2] * vel_dir, dim=-1)
-        heading_reward = torch.clamp(heading_alignment, min=0, max=1.0)
+        # walking 的方向：用“轨迹切线方向”，不要再用 target_pos - root_pos
+        walk_dir = torch.nn.functional.normalize(traj_delta, dim=-1, eps=1e-6)
+
+        root_vel_xy = self._root_states[:, 7:9]
+        current_vel_proj = torch.sum(root_vel_xy * walk_dir, dim=-1)
+        vel_reward = torch.exp(-2.0 * (current_vel_proj - implied_target_speed) ** 2)
+
+        walk_heading_alignment = torch.sum(current_heading_xy * walk_dir, dim=-1)
+        walk_heading_reward = torch.clamp(walk_heading_alignment, min=0.0, max=1.0)
+
+        # standing 朝向奖励：保持进入 standing 时保存的朝向
+        saved_heading_xy = self._stand_heading_dir
+        stand_heading_alignment = torch.sum(current_heading_xy * saved_heading_xy, dim=-1)
+        stand_heading_alignment = torch.clamp(stand_heading_alignment, min=-1.0, max=1.0)
+        stand_heading_reward = torch.exp(-6.0 * (1.0 - stand_heading_alignment))
+
+        # standing 位置奖励：带容差，不再逼绝对中心
+        # 8cm 以内都算“站到位”
+        stand_pos_tol = 0.08
+        stand_pos_err = torch.norm(pos_err_xy, dim=-1)
+        stand_pos_reward = torch.where(
+            stand_pos_err < stand_pos_tol,
+            torch.ones_like(stand_pos_err),
+            torch.exp(-20.0 * (stand_pos_err - stand_pos_tol) ** 2)
+        )
 
         # ---------------------------------------------------------
-        # 阶段奖励组合
+        # 3) 各阶段 reward 组合
         # ---------------------------------------------------------
         if self.train_stage == 1:
-            # 阶段 1: 静止站立约束 (保持原有的严苛惩罚逻辑)
-            root_vel_xyz = self._root_states[..., 7:10]
+            root_vel_xyz = self._root_states[:, 7:10]
             vel_penalty = torch.sum(root_vel_xyz[:, 0:2] ** 2, dim=-1)
-            root_ang_vel = self._root_states[..., 10:13]
+
+            root_ang_vel = self._root_states[:, 10:13]
             ang_penalty = root_ang_vel[:, 2] ** 2
+
             dof_diff = self._dof_pos - self._initial_dof_pos
             joint_penalty = torch.sum(dof_diff ** 2, dim=-1)
+
             act_penalty = torch.sum(actions ** 2, dim=-1)
 
             self.rew_buf[:] = (
@@ -178,45 +278,43 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
                 * torch.exp(-1.0 * joint_penalty)
                 * torch.exp(-0.001 * act_penalty)
             )
-            self.extras['amp_mask'] = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
-        # --- 分支 2: Stage 4 (混合训练) ---
-        # 新增逻辑：根据 is_standing_phase 动态切换
+
+            self.extras["amp_mask"] = torch.zeros(
+                self.num_envs, device=self.device, dtype=torch.float
+            )
+
         elif self.train_stage == 4:
-            # 1. 计算站立/归位奖励 (Pose Matching)
-            root_vel_s4 = self._root_states[..., 7:10]
+            # ---------- standing branch ----------
+            root_vel_s4 = self._root_states[:, 7:10]
             vel_penalty_s4 = torch.sum(root_vel_s4[:, 0:2] ** 2, dim=-1)
-            
-            root_ang_vel_s4 = self._root_states[..., 10:13]
-            ang_penalty_s4 = root_ang_vel_s4[:, 2] ** 2 # 角速度s
-            
+
+            root_ang_vel_s4 = self._root_states[:, 10:13]
+            ang_penalty_s4 = root_ang_vel_s4[:, 2] ** 2
+
             dof_diff_s4 = self._dof_pos - self._initial_dof_pos
-            joint_penalty_s4 = torch.sum(dof_diff_s4 ** 2, dim=-1) # 回归初始姿态
-            
+            joint_penalty_s4 = torch.sum(dof_diff_s4 ** 2, dim=-1)
+
             act_penalty_s4 = torch.sum(actions ** 2, dim=-1)
 
-            # 站立时的强力奖励 (乘法结构)
             stand_reward_s4 = (
-                pos_reward
+                stand_pos_reward
                 * torch.exp(-2.0 * vel_penalty_s4)
-                * torch.exp(-1.0 * ang_penalty_s4)
+                * torch.exp(-4.0 * ang_penalty_s4)
                 * torch.exp(-1.0 * joint_penalty_s4)
                 * torch.exp(-0.001 * act_penalty_s4)
-                * heading_reward
-            ) 
-            
-            # 2. 计算行走奖励 (Tracking)
-            # 采用叠加结构
-            walk_reward_s4 = pos_reward + vel_reward + heading_reward
+                * stand_heading_reward
+            )
 
-            # 3. 动态切换
+            # ---------- walking branch ----------
+            walk_reward_s4 = pos_reward + vel_reward + walk_heading_reward
+
             self.rew_buf[:] = torch.where(is_standing_phase, stand_reward_s4, walk_reward_s4)
-            self.extras['amp_mask'] = (~is_standing_phase).float()
+            self.extras["amp_mask"] = (~is_standing_phase).float()
 
-        # --- 分支 3: Stage 2 & 3 (直线/曲线行走) ---
-        # 推荐权重分配: 速度匹配最重要(0.4)，位置与朝向辅助(各0.3)
-        # 这样既能保证“跟得上速度”，又能保证“走得准”且“面朝前”
         else:
-            self.rew_buf[:] = pos_reward + vel_reward + heading_reward
+            # stage 2 / 3
+            self.rew_buf[:] = pos_reward + vel_reward + walk_heading_reward
+
 
     def _compute_reset(self):
         super()._compute_reset()
@@ -271,7 +369,7 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
                = self._motion_lib.get_motion_state(motion_ids, motion_times)
         root_states = torch.cat([root_pos, root_rot, root_vel, root_ang_vel], dim=-1)
         amp_obs_demo = build_amp_observations(root_states, dof_pos, dof_vel, key_pos,
-                                      self._local_root_obs)
+                                      self._amp_local_root_obs)
         self._amp_obs_demo_buf[:] = amp_obs_demo.view(self._amp_obs_demo_buf.shape)
 
         amp_obs_demo_flat = self._amp_obs_demo_buf.view(-1, self.get_num_amp_obs())
@@ -294,10 +392,18 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
         return
 
     def reset_idx(self, env_ids):
-        super().reset_idx(env_ids)
+        self._reset_default_env_ids = []
+        self._reset_ref_env_ids = []
+        self._reset_actors(env_ids)
+        self._refresh_sim_tensors()
+
         root_pos = self._root_states[env_ids, 0:3]
         root_rot = self._root_states[env_ids, 3:7]
+
         self._traj_gen.reset(env_ids, root_pos, init_rot=root_rot)
+        self._reset_standing_heading(env_ids)
+
+        self._compute_observations(env_ids)
         self._init_amp_obs(env_ids)
         return
 
@@ -433,7 +539,7 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
                = self._motion_lib.get_motion_state(motion_ids, motion_times)
         root_states = torch.cat([root_pos, root_rot, root_vel, root_ang_vel], dim=-1)
         amp_obs_demo = build_amp_observations(root_states, dof_pos, dof_vel, key_pos,
-                                      self._local_root_obs)
+                                      self._amp_local_root_obs)
         self._hist_amp_obs_buf[env_ids] = amp_obs_demo.view(self._hist_amp_obs_buf[env_ids].shape)
         return
 
@@ -466,11 +572,11 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
         key_body_pos = self._rigid_body_pos[:, self._key_body_ids, :]
         if (env_ids is None):
             self._curr_amp_obs_buf[:] = build_amp_observations(self._root_states, self._dof_pos, self._dof_vel, key_body_pos,
-                                                                self._local_root_obs)
+                                                                self._amp_local_root_obs)
         else:
             self._curr_amp_obs_buf[env_ids] = build_amp_observations(self._root_states[env_ids], self._dof_pos[env_ids], 
                                                                     self._dof_vel[env_ids], key_body_pos[env_ids],
-                                                                    self._local_root_obs)
+                                                                    self._amp_local_root_obs)
         return
 
 

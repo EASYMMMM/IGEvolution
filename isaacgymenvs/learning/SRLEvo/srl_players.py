@@ -545,8 +545,8 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                             metrics = torque_episode_metrics(
                                 srl_torques_array,         # (T,6)
                                 dt=dt,
-                                peak_nm=320.0,
-                                rated_nm=85.0,
+                                peak_nm=180.0,
+                                rated_nm=60.0,
                                 rated_cont_s=240.0,
                                 rms_window_s=1.0
                             )
@@ -571,7 +571,44 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                             print(f"worst_joint_by_equiv = J{wj}")
                             print("======================================================\n")
 
-                            srl_dof_vel_array = obs_array[:, 16:22]   
+                            # NOTE:
+                            # obs_array[:, 16:22] is SCALED joint velocity in observation.
+                            # Recover physical rad/s before speed/power analysis.
+                            vel_scale = 1.0
+                            if hasattr(self.env, "obs_scales"):
+                                if isinstance(self.env.obs_scales, dict):
+                                    vel_scale = float(self.env.obs_scales.get("dof_vel", 1.0))
+                                else:
+                                    # fallback: if obs_scales is list/tuple and dof_vel is index 3 in your env
+                                    try:
+                                        vel_scale = float(self.env.obs_scales[3])
+                                    except Exception:
+                                        vel_scale = 1.0
+
+                            if abs(vel_scale) < 1e-12:
+                                vel_scale = 1.0
+
+                            srl_dof_vel_array = obs_array[:, 16:22] / vel_scale   # real joint speed, rad/s
+
+                            # --- speed metrics ---
+                            smet = speed_episode_metrics(srl_dof_vel_array, dt=dt, window_s=1.0)
+
+                            print("\n========== SRL Speed Metrics (Output Joint) ==========")
+                            print(f"win_steps={smet['win_steps']}")
+                            for j in range(srl_dof_vel_array.shape[1]):
+                                print(
+                                    f"[J{j}] mean|w|={smet['mean_abs_omega'][j]:.3f}rad/s  "
+                                    f"rms={smet['rms_omega'][j]:.3f}rad/s  "
+                                    f"roll_rms_max(1s)={smet['rolling_rms_max_omega'][j]:.3f}rad/s  "
+                                    f"peak|w|={smet['peak_abs_omega'][j]:.3f}rad/s  "
+                                    f"mean={smet['mean_abs_rpm'][j]:.2f}rpm  "
+                                    f"rms={smet['rms_rpm'][j]:.2f}rpm  "
+                                    f"roll_rms_max(1s)={smet['rolling_rms_max_rpm'][j]:.2f}rpm  "
+                                    f"peak={smet['peak_abs_rpm'][j]:.2f}rpm"
+                                )
+                            print("======================================================\n")
+
+                            # --- power metrics ---
                             pmet = power_episode_metrics(srl_torques_array, srl_dof_vel_array, dt=dt, window_s=1.0)
 
                             print("\n========== SRL Power Metrics (Mechanical) ==========")
@@ -1082,6 +1119,66 @@ class SRL_Bot_PlayerContinuous(common_player.CommonPlayer):
                             )
                         print(f"worst_joint_by_equiv = J{wj}")
                         print("======================================================\n")
+
+                        # NOTE:
+                        # obs_array[:, 16:22] is scaled velocity in observation; recover rad/s first.
+                        vel_scale = 1.0
+                        if hasattr(self.env, "obs_scales"):
+                            if isinstance(self.env.obs_scales, dict):
+                                vel_scale = float(self.env.obs_scales.get("dof_vel", 1.0))
+                            else:
+                                try:
+                                    vel_scale = float(self.env.obs_scales[3])
+                                except Exception:
+                                    vel_scale = 1.0
+
+                        if abs(vel_scale) < 1e-12:
+                            vel_scale = 1.0
+
+                        srl_dof_vel_array = obs_array[:, 16:22] / vel_scale   # real joint speed, rad/s
+
+                        # --- speed metrics ---
+                        smet = speed_episode_metrics(srl_dof_vel_array, dt=dt, window_s=1.0)
+
+                        print("\n========== SRL Speed Metrics (Output Joint) ==========")
+                        print(f"win_steps={smet['win_steps']}")
+                        for j in range(srl_dof_vel_array.shape[1]):
+                            print(
+                                f"[J{j}] mean|w|={smet['mean_abs_omega'][j]:.3f}rad/s  "
+                                f"rms={smet['rms_omega'][j]:.3f}rad/s  "
+                                f"roll_rms_max(1s)={smet['rolling_rms_max_omega'][j]:.3f}rad/s  "
+                                f"peak|w|={smet['peak_abs_omega'][j]:.3f}rad/s  "
+                                f"mean={smet['mean_abs_rpm'][j]:.2f}rpm  "
+                                f"rms={smet['rms_rpm'][j]:.2f}rpm  "
+                                f"roll_rms_max(1s)={smet['rolling_rms_max_rpm'][j]:.2f}rpm  "
+                                f"peak={smet['peak_abs_rpm'][j]:.2f}rpm"
+                            )
+                        print("======================================================\n")
+
+                        # --- power metrics ---
+                        pmet = power_episode_metrics(srl_torques_array, srl_dof_vel_array, dt=dt, window_s=1.0)
+
+                        print("\n========== SRL Power Metrics (Mechanical) ==========")
+                        print(f"win_steps={pmet['win_steps']}")
+                        for j in range(srl_torques_array.shape[1]):
+                            print(
+                                f"[J{j}] meanP={pmet['mean_P'][j]:.1f}W  "
+                                f"mean|P|={pmet['mean_abs_P'][j]:.1f}W  "
+                                f"rmsP={pmet['rms_P'][j]:.1f}W  "
+                                f"roll_rms_max(1s)={pmet['rolling_rms_max_P'][j]:.1f}W  "
+                                f"peak|P|={pmet['peak_abs_P'][j]:.1f}W  "
+                                f"E_abs={pmet['E_abs'][j]:.1f}J  "
+                                f"E_pos={pmet['E_pos'][j]:.1f}J  "
+                                f"E_neg={pmet['E_neg'][j]:.1f}J"
+                            )
+                        print("TOTAL:",
+                            f"meanP={pmet['total']['mean_total_P']:.1f}W,",
+                            f"mean|P|={pmet['total']['mean_total_abs_P']:.1f}W,",
+                            f"rmsP={pmet['total']['rms_total_P']:.1f}W,",
+                            f"peak|P|={pmet['total']['peak_total_abs_P']:.1f}W,",
+                            f"E_abs={pmet['total']['E_total_abs']:.1f}J")
+                        print("====================================================\n")
+
                         fig5, axs5 = plt.subplots(2, 1, figsize=(10, 4 * 2.5), sharex=True)
                         axs5[0].plot(srl_torques_array[:, 0], label='Joint 0')
                         axs5[0].plot(srl_torques_array[:, 1], label='Joint 1')
@@ -1296,4 +1393,45 @@ def power_episode_metrics(tau: np.ndarray,
         "rolling_rms_max_P": rolling_rms_max,
         "win_steps": win,
         "total": metrics_total,
+    }
+
+def speed_episode_metrics(omega: np.ndarray,
+                          dt: float,
+                          window_s: float = 1.0):
+    """
+    omega: (T, J) joint speed in rad/s
+    dt: seconds per step
+    """
+    omega = np.asarray(omega)
+    assert omega.ndim == 2, f"omega should be (T,J), got {omega.shape}"
+
+    abs_omega = np.abs(omega)
+    mean_abs_omega = abs_omega.mean(axis=0)
+    rms_omega = np.sqrt(np.mean(omega**2, axis=0))
+    peak_abs_omega = abs_omega.max(axis=0)
+
+    # rolling RMS speed
+    win = max(1, int(round(window_s / max(dt, 1e-9))))
+    if win <= 1:
+        rolling_rms_max_omega = rms_omega.copy()
+    else:
+        kernel = np.ones(win, dtype=np.float64) / win
+        rolling_rms = np.sqrt(np.vstack([
+            np.convolve(omega[:, j]**2, kernel, mode="valid")
+            for j in range(omega.shape[1])
+        ]).T)
+        rolling_rms_max_omega = rolling_rms.max(axis=0)
+
+    radps_to_rpm = 60.0 / (2.0 * np.pi)
+
+    return {
+        "mean_abs_omega": mean_abs_omega,
+        "rms_omega": rms_omega,
+        "peak_abs_omega": peak_abs_omega,
+        "rolling_rms_max_omega": rolling_rms_max_omega,
+        "mean_abs_rpm": mean_abs_omega * radps_to_rpm,
+        "rms_rpm": rms_omega * radps_to_rpm,
+        "peak_abs_rpm": peak_abs_omega * radps_to_rpm,
+        "rolling_rms_max_rpm": rolling_rms_max_omega * radps_to_rpm,
+        "win_steps": win,
     }
