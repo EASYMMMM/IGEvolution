@@ -22,8 +22,7 @@ from isaacgymenvs.tasks.SRLEvo.traj_generator import SimpleCurveGenerator as Tra
 from isaacgymenvs.utils.torch_jit_utils import quat_mul, to_torch, calc_heading_quat_inv, quat_to_tan_norm, my_quat_rotate
 
 
-# 维度计算: Root(13) + DofObs(19*6=114) + DofVel(57) + KeyBody(4*3=12) = 196
-# NUM_AMP_OBS_PER_STEP = 196 
+
 NUM_AMP_OBS_PER_STEP = 13 + 52 + 28 + 12 # [root_h, root_rot, root_vel, root_ang_vel, dof_pos, dof_vel, key_body_pos]
 
 
@@ -39,7 +38,13 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
         
         self._traj_sample_times = [0.5, 1.0, 1.5] # 轨迹参数
         self._num_traj_points = len(self._traj_sample_times)
-        self._traj_obs_dim = self._num_traj_points * 2 
+
+        # command obs = 3个未来目标点(local xy, 6维)
+        #             + cmd_speed(1维)
+        #             + standness(1维)
+        #             + walk yaw error 的 cos/sin(2维)
+        #             + stand yaw error 的 cos/sin(2维)
+        self._traj_obs_dim = self._num_traj_points * 2 + 1 + 1 + 2 + 2
         
         self.cfg = cfg
         state_init = cfg["env"]["stateInit"]
@@ -61,6 +66,20 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
             force_render=force_render
         )
 
+        self._pelvis_body_id = self.gym.find_actor_rigid_body_handle(
+            self.envs[0], self.humanoid_handles[0], "pelvis"
+        )
+        self._head_body_id = self.gym.find_actor_rigid_body_handle(
+            self.envs[0], self.humanoid_handles[0], "head"
+        )
+        self._left_foot_body_id = self.gym.find_actor_rigid_body_handle(
+            self.envs[0], self.humanoid_handles[0], "left_foot"
+        )
+        self._right_foot_body_id = self.gym.find_actor_rigid_body_handle(
+            self.envs[0], self.humanoid_handles[0], "right_foot"
+        )
+
+
         # standing phase 朝向缓存
         # 保存“进入 standing phase 时”的世界系 XY 朝向单位向量
         self._stand_heading_dir = torch.zeros((self.num_envs, 2), device=self.device, dtype=torch.float)
@@ -80,7 +99,7 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
         
         # 轨迹生成器
         self.forward_vec_local = torch.tensor([1.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1)
-        episode_duration = self.max_episode_length * self.control_dt
+        episode_duration = self.max_episode_length * 1.2 * self.control_dt
         self._traj_gen = TrajGenerator(
             self.num_envs, self.device, self.control_dt, episode_duration,
             speed_mean=1.0,
@@ -246,9 +265,18 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
         stand_heading_alignment = torch.clamp(stand_heading_alignment, min=-1.0, max=1.0)
         stand_heading_reward = torch.exp(-6.0 * (1.0 - stand_heading_alignment))
 
+        stand_heading_dot = torch.sum(current_heading_xy * saved_heading_xy, dim=-1)
+        stand_heading_dot = torch.clamp(stand_heading_dot, min=-1.0, max=1.0)
+        stand_heading_cross = (
+            current_heading_xy[:, 0] * saved_heading_xy[:, 1]
+            - current_heading_xy[:, 1] * saved_heading_xy[:, 0]
+        )
+        stand_heading_err = torch.atan2(stand_heading_cross, stand_heading_dot)
+        stand_heading_penalty = stand_heading_err ** 2
+
         # standing 位置奖励：带容差，不再逼绝对中心
         # 8cm 以内都算“站到位”
-        stand_pos_tol = 0.08
+        stand_pos_tol = self._stand_pos_tol
         stand_pos_err = torch.norm(pos_err_xy, dim=-1)
         stand_pos_reward = torch.where(
             stand_pos_err < stand_pos_tol,
@@ -257,64 +285,107 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
         )
 
         # ---------------------------------------------------------
-        # 3) 各阶段 reward 组合
+        # 3) 先统一构造 standing reward（S1 和 S4 共用）
+        #    简洁版：位置 + 朝向 + 小幅晃动 + 躯干竖直 + 关节姿态惩罚
+        # ---------------------------------------------------------
+        root_vel_stand = self._root_states[:, 7:10]
+        stand_speed_xy = torch.norm(root_vel_stand[:, 0:2], dim=-1)
+
+        # 允许少量平衡晃动，超过阈值后再惩罚
+        stand_vel_tol = 0.15
+        stand_vel_excess = torch.clamp(stand_speed_xy - stand_vel_tol, min=0.0)
+        stand_vel_reward = torch.exp(-8.0 * stand_vel_excess ** 2)
+
+        # 额外约束：站立时不要原地绕 z 轴持续旋转
+        stand_yaw_rate = torch.abs(self._root_states[:, 12])
+        stand_yaw_rate_tol = 0.20
+        stand_yaw_rate_excess = torch.clamp(stand_yaw_rate - stand_yaw_rate_tol, min=0.0)
+        stand_yaw_rate_reward = torch.exp(-12.0 * stand_yaw_rate_excess ** 2)
+
+        # 默认 0 位就是站姿，但允许一定关节偏离来维持平衡
+        dof_abs_err = torch.abs(self._dof_pos - self._initial_dof_pos)
+        joint_tol = 0.20
+        joint_excess = torch.clamp(dof_abs_err - joint_tol, min=0.0)
+        stand_joint_penalty = torch.sqrt(torch.mean(joint_excess ** 2, dim=-1) + 1e-8)
+
+        # 躯干竖直奖励：用 pelvis -> head 向量和世界 z 轴的对齐程度
+        pelvis_pos = self._rigid_body_pos[:, self._pelvis_body_id, :]
+        head_pos = self._rigid_body_pos[:, self._head_body_id, :]
+        trunk_vec = head_pos - pelvis_pos
+
+        trunk_len = torch.norm(trunk_vec, dim=-1, keepdim=True).clamp(min=1e-6)
+        trunk_dir = trunk_vec / trunk_len
+
+        # 与世界系 z 轴的夹角余弦，1 表示完全竖直
+        trunk_upright_cos = torch.clamp(trunk_dir[:, 2], min=-1.0, max=1.0)
+
+        # 这个写法对“有点歪”就会比较敏感，比平方更适合纠正歪站
+        stand_trunk_reward = torch.exp(-8.0 * (1.0 - trunk_upright_cos))
+
+        # 双脚 XY 间距不要太大
+        left_foot_pos = self._rigid_body_pos[:, self._left_foot_body_id, :]
+        right_foot_pos = self._rigid_body_pos[:, self._right_foot_body_id, :]
+        foot_delta_xy = left_foot_pos[:, 0:2] - right_foot_pos[:, 0:2]
+        foot_dist_xy = torch.norm(foot_delta_xy, dim=-1)
+
+        # 目标是“稍微收一点”，不是强行并脚
+        desired_foot_dist = 0.22
+        foot_dist_tol = 0.10   # 在 0.22 ± 0.10 的宽范围内都比较宽容
+        foot_dist_excess = torch.clamp(
+            foot_dist_xy - (desired_foot_dist + foot_dist_tol), min=0.0
+        )
+        stand_foot_spacing_reward = torch.exp(-10.0 * foot_dist_excess ** 2)
+
+        # (b) 双脚尽量踩地：只在脚抬得明显偏高时才缓慢减分
+        # 你当前 flat foot 大约在 z≈0.058，所以 target 先取 0.06
+        foot_height_target = 0.06
+        foot_height_tol = 0.025
+
+        left_foot_height_excess = torch.clamp(
+            left_foot_pos[:, 2] - (foot_height_target + foot_height_tol), min=0.0
+        )
+        right_foot_height_excess = torch.clamp(
+            right_foot_pos[:, 2] - (foot_height_target + foot_height_tol), min=0.0
+        )
+
+        stand_foot_ground_reward = torch.exp(
+            -80.0 * (left_foot_height_excess ** 2 + right_foot_height_excess ** 2)
+        )
+        # 最终 standing reward
+        # 最终 standing reward
+        stand_reward = (
+            0.35 * stand_pos_reward
+            - 0.50 * stand_heading_penalty
+            + 0.15 * stand_vel_reward
+            + 0.15 * stand_yaw_rate_reward
+            + 0.20 * stand_trunk_reward
+            + 0.08 * stand_foot_spacing_reward
+            + 0.07 * stand_foot_ground_reward
+            - 0.70 * stand_joint_penalty
+        )
+
+        stand_reward = torch.clamp(stand_reward, min=0.0)
+
+        stand_reward = torch.clamp(stand_reward, min=0.0)
+        # ---------------------------------------------------------
+        # 4) 各阶段 reward 组合
         # ---------------------------------------------------------
         if self.train_stage == 1:
-            root_vel_xyz = self._root_states[:, 7:10]
-            vel_penalty = torch.sum(root_vel_xyz[:, 0:2] ** 2, dim=-1)
-
-            root_ang_vel = self._root_states[:, 10:13]
-            ang_penalty = root_ang_vel[:, 2] ** 2
-
-            dof_diff = self._dof_pos - self._initial_dof_pos
-            joint_penalty = torch.sum(dof_diff ** 2, dim=-1)
-
-            act_penalty = torch.sum(actions ** 2, dim=-1)
-
-            self.rew_buf[:] = (
-                pos_reward
-                * torch.exp(-2.0 * vel_penalty)
-                * torch.exp(-1.0 * ang_penalty)
-                * torch.exp(-1.0 * joint_penalty)
-                * torch.exp(-0.001 * act_penalty)
-            )
-
+            # S1 直接学习与 S4 standing 完全一致的站立目标
+            self.rew_buf[:] = stand_reward
             self.extras["amp_mask"] = torch.zeros(
                 self.num_envs, device=self.device, dtype=torch.float
             )
 
         elif self.train_stage == 4:
-            # ---------- standing branch ----------
-            root_vel_s4 = self._root_states[:, 7:10]
-            vel_penalty_s4 = torch.sum(root_vel_s4[:, 0:2] ** 2, dim=-1)
-
-            root_ang_vel_s4 = self._root_states[:, 10:13]
-            ang_penalty_s4 = root_ang_vel_s4[:, 2] ** 2
-
-            dof_diff_s4 = self._dof_pos - self._initial_dof_pos
-            joint_penalty_s4 = torch.sum(dof_diff_s4 ** 2, dim=-1)
-
-            act_penalty_s4 = torch.sum(actions ** 2, dim=-1)
-
-            stand_reward_s4 = (
-                stand_pos_reward
-                * torch.exp(-2.0 * vel_penalty_s4)
-                * torch.exp(-4.0 * ang_penalty_s4)
-                * torch.exp(-1.0 * joint_penalty_s4)
-                * torch.exp(-0.001 * act_penalty_s4)
-                * stand_heading_reward
-            )
-
-            # ---------- walking branch ----------
+            stand_reward = stand_reward*3.0 # S4 站立奖励放大，使其数值与walking reward匹配
             walk_reward_s4 = pos_reward + vel_reward + walk_heading_reward
-
-            self.rew_buf[:] = torch.where(is_standing_phase, stand_reward_s4, walk_reward_s4)
+            self.rew_buf[:] = torch.where(is_standing_phase, stand_reward, walk_reward_s4)
             self.extras["amp_mask"] = (~is_standing_phase).float()
 
         else:
             # stage 2 / 3
             self.rew_buf[:] = pos_reward + vel_reward + walk_heading_reward
-
 
     def _compute_reset(self):
         super()._compute_reset()
@@ -421,12 +492,59 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
             root_pos = self._root_states[env_ids, 0:3]
             root_rot = self._root_states[env_ids, 3:7]
 
-        traj_points_world = self._traj_gen.get_observation_points(env_ids_flat, current_time, self._traj_sample_times)
+        target_pos = self._traj_gen.get_position(env_ids_flat, current_time)
+        traj_points_world = self._traj_gen.get_observation_points(
+            env_ids_flat, current_time, self._traj_sample_times
+        )
 
+        # ------------------------------------------------------------------
+        # 关键修复：
+        # 在 obs 里先同步 standing hysteresis 和 saved heading，
+        # 避免“obs 用旧 target、reward 用新 target”的 1-step 错位
+        # ------------------------------------------------------------------
+        traj_delta = traj_points_world[:, 0, 0:2] - target_pos[:, 0:2]
+        target_dist_flat = torch.norm(traj_delta, dim=-1)  # [N]
+
+        if env_ids is None:
+            prev_state = self._standing_phase_state
+            prev_is_standing = self._prev_is_standing_phase
+        else:
+            prev_state = self._standing_phase_state[env_ids_flat]
+            prev_is_standing = self._prev_is_standing_phase[env_ids_flat]
+
+        enter_mask = target_dist_flat < self._stand_enter_thres
+        exit_mask = target_dist_flat > self._stand_exit_thres
+
+        is_standing_phase = torch.where(
+            enter_mask,
+            torch.ones_like(prev_state),
+            torch.where(
+                exit_mask,
+                torch.zeros_like(prev_state),
+                prev_state
+            )
+        )
+
+        current_heading_xy = self._calc_current_heading_xy(root_rot)
+        entering_standing = torch.logical_and(
+            is_standing_phase,
+            torch.logical_not(prev_is_standing)
+        )
+
+        if torch.any(entering_standing):
+            self._stand_heading_dir[env_ids_flat[entering_standing]] = current_heading_xy[entering_standing]
+
+        self._standing_phase_state[env_ids_flat] = is_standing_phase
+        self._prev_is_standing_phase[env_ids_flat] = is_standing_phase
+        saved_heading_xy = self._stand_heading_dir[env_ids_flat]
+
+        # ------------------------------------------------------------------
+        # 原来的 traj obs
+        # ------------------------------------------------------------------
         heading_inv = calc_heading_quat_inv(root_rot)
         num_samples = self._num_traj_points
         heading_inv_expand = heading_inv.unsqueeze(1).expand(-1, num_samples, -1).reshape(-1, 4)
-        
+
         delta_pos = traj_points_world - root_pos.unsqueeze(1)
         delta_pos_flat = delta_pos.reshape(-1, 3)
 
@@ -434,7 +552,41 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
         local_traj_points = local_traj_points.view(root_pos.shape[0], num_samples, 3)
 
         traj_obs = local_traj_points[..., 0:2].reshape(root_pos.shape[0], -1)
-        obs = torch.cat([base_obs, traj_obs], dim=-1)
+
+        # ---------- extra command features ----------
+        target_dist = target_dist_flat.unsqueeze(-1)
+        cmd_speed = target_dist / self._traj_sample_times[0]
+
+        standness = (self._stand_exit_thres - target_dist) / (
+            self._stand_exit_thres - self._stand_enter_thres + 1e-6
+        )
+        standness = torch.clamp(standness, 0.0, 1.0)
+
+        walk_dir = torch.nn.functional.normalize(traj_delta, dim=-1, eps=1e-6)
+
+        walk_yaw_cos = torch.sum(current_heading_xy * walk_dir, dim=-1, keepdim=True)
+        walk_yaw_sin = (
+            current_heading_xy[:, 0:1] * walk_dir[:, 1:2]
+            - current_heading_xy[:, 1:2] * walk_dir[:, 0:1]
+        )
+
+        stand_yaw_cos = torch.sum(current_heading_xy * saved_heading_xy, dim=-1, keepdim=True)
+        stand_yaw_sin = (
+            current_heading_xy[:, 0:1] * saved_heading_xy[:, 1:2]
+            - current_heading_xy[:, 1:2] * saved_heading_xy[:, 0:1]
+        )
+
+        cmd_obs = torch.cat([
+            traj_obs,
+            cmd_speed,
+            standness,
+            walk_yaw_cos,
+            walk_yaw_sin,
+            stand_yaw_cos,
+            stand_yaw_sin,
+        ], dim=-1)
+
+        obs = torch.cat([base_obs, cmd_obs], dim=-1)
         return obs
 
     def _reset_actors(self, env_ids):

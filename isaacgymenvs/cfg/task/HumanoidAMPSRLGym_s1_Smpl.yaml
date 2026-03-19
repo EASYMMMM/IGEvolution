@@ -21,8 +21,9 @@ env:
   train_stage: 2
 
   localRootObs: True
+  AMPlocalRootObs: True
   contactBodies: ["right_foot", "left_foot","right_shin","left_shin"]  # SMPL specific: toes as contact points
-  terminationHeight: 0.5
+  terminationHeight: 0.55
   enableEarlyTermination: True
 
   # animation files to learn from
