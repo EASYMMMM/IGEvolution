@@ -52,6 +52,7 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
         self._hybrid_init_prob = cfg["env"]["hybridInitProb"]
         self._num_amp_obs_steps = cfg["env"]["numAMPObsSteps"]
         assert(self._num_amp_obs_steps >= 2)
+        self._num_state_hist_steps = cfg["env"].get("numStateHistSteps", 5)
 
         self._reset_default_env_ids = []
         self._reset_ref_env_ids = []
@@ -64,6 +65,13 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
             headless=headless,
             virtual_screen_capture=virtual_screen_capture,
             force_render=force_render
+        )
+
+        self._base_obs_dim = super().get_obs_size()
+        self._state_hist_obs_buf = torch.zeros(
+            (self.num_envs, self._num_state_hist_steps, self._base_obs_dim),
+            device=self.device,
+            dtype=torch.float
         )
 
         self._pelvis_body_id = self.gym.find_actor_rigid_body_handle(
@@ -122,7 +130,19 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
         return
 
     def get_obs_size(self):
-        return super().get_obs_size() + self._traj_obs_dim
+        return super().get_obs_size() * self._num_state_hist_steps + self._traj_obs_dim
+
+    def _update_hist_state_obs(self, env_ids=None):
+        if self._num_state_hist_steps <= 1:
+            return
+
+        if env_ids is None:
+            for i in reversed(range(self._num_state_hist_steps - 1)):
+                self._state_hist_obs_buf[:, i + 1] = self._state_hist_obs_buf[:, i]
+        else:
+            for i in reversed(range(self._num_state_hist_steps - 1)):
+                self._state_hist_obs_buf[env_ids, i + 1] = self._state_hist_obs_buf[env_ids, i]
+        return
 
     def post_physics_step(self):
         super().post_physics_step()
@@ -586,7 +606,37 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
             stand_yaw_sin,
         ], dim=-1)
 
-        obs = torch.cat([base_obs, cmd_obs], dim=-1)
+        # ---------------------------------------------------------
+        # state obs 多帧堆叠；command 保持单帧
+        # ---------------------------------------------------------
+        if self._num_state_hist_steps > 1:
+            if env_ids is None:
+                self._update_hist_state_obs()
+                self._state_hist_obs_buf[:, 0] = base_obs
+
+                reset_mask = (self.progress_buf == 0)
+                if torch.any(reset_mask):
+                    self._state_hist_obs_buf[reset_mask] = base_obs[reset_mask].unsqueeze(1).repeat(
+                        1, self._num_state_hist_steps, 1
+                    )
+
+                stacked_base_obs = self._state_hist_obs_buf.reshape(self.num_envs, -1)
+            else:
+                self._update_hist_state_obs(env_ids)
+                self._state_hist_obs_buf[env_ids, 0] = base_obs
+
+                reset_mask = (self.progress_buf[env_ids] == 0)
+                if torch.any(reset_mask):
+                    reset_env_ids = env_ids[reset_mask]
+                    self._state_hist_obs_buf[reset_env_ids] = base_obs[reset_mask].unsqueeze(1).repeat(
+                        1, self._num_state_hist_steps, 1
+                    )
+
+                stacked_base_obs = self._state_hist_obs_buf[env_ids].reshape(env_ids.shape[0], -1)
+        else:
+            stacked_base_obs = base_obs
+
+        obs = torch.cat([stacked_base_obs, cmd_obs], dim=-1)
         return obs
 
     def _reset_actors(self, env_ids):

@@ -34,6 +34,7 @@ class AssetDesc:
 
 
 asset_descriptors = [
+    AssetDesc("mjcf/srl_real_hri/srl_real_hri_v1_HXYK_175_mesh.xml", False),
     AssetDesc("mjcf/srl_real/srl_real_bot.xml", False),
     AssetDesc("mjcf/srl_hri/srl_hri_basic_2free.xml", False),
     AssetDesc("mjcf/srl_bot/srl_bot_inversed_v2.xml", False),
@@ -174,7 +175,7 @@ for i in range(num_dofs):
 
 # set up the env grid
 num_envs = 8
-num_per_row = 4
+num_per_row = 8
 spacing = 4
 env_lower = gymapi.Vec3(-spacing, 0.0, -spacing)
 env_upper = gymapi.Vec3(spacing, spacing, spacing)
@@ -190,6 +191,10 @@ actor_handles = []
 
 
 # =============== user define ===================
+dof_positions[6] = -0.36
+dof_positions[10] = 0.36
+dof_positions[-1] = 0.26
+dof_positions[-4] = 0.26
 # srl_joint_r1 = gym.find_asset_dof_index(asset,'SRL_joint_right_hipjoint_y')
 # srl_joint_r3 = gym.find_asset_dof_index(asset,'SRL_joint_right_kneejoint')
 # dof_positions[srl_joint_r1] = 0.15*np.pi
@@ -222,10 +227,13 @@ for i in range(num_envs):
 
     actor_handle = gym.create_actor(env, asset, pose, "actor", i, 1)
     actor_handles.append(actor_handle)
-
+    num_bodies = gym.get_asset_rigid_body_count(asset)
     # set default DOF positions
     gym.set_actor_dof_states(env, actor_handle, dof_states, gymapi.STATE_ALL)
     gym.enable_actor_dof_force_sensors(env, actor_handle)
+    for j in range(num_bodies):
+        gym.set_rigid_body_color(
+        env, actor_handle, j, gymapi.MESH_VISUAL, gymapi.Vec3(0.4706, 0.549, 0.6863))
 
 # joint animation states
 ANIM_SEEK_LOWER = 1
@@ -259,7 +267,7 @@ gym.refresh_dof_force_tensor(sim)
 while not gym.query_viewer_has_closed(viewer):
     
     # 检查某个特定关节
-    # current_dof = 0
+    current_dof = 29
 
     # step the physics
     gym.simulate(sim)
