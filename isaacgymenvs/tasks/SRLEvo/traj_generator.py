@@ -73,8 +73,7 @@ class SimpleCurveGenerator:
             seg_types_list = []
             
             # 1. 初始化第一个状态
-            first_probs = torch.tensor([0.2, 0.4, 0.2, 0.2], device=self.device).repeat(n, 1)
-            current_state = torch.multinomial(first_probs, 1).squeeze(-1) 
+            current_state = torch.zeros(n, device=self.device, dtype=torch.long)
             seg_types_list.append(current_state)
 
             # 2. 循环生成后续状态
@@ -115,10 +114,18 @@ class SimpleCurveGenerator:
             
             if mask_move.any():
                 raw_duration[mask_move] = torch.rand(mask_move.sum(), device=self.device) * 4.0 + 2.0
-            
-            total_raw = raw_duration.sum(dim=1, keepdim=True)
-            scale_factor = self.episode_duration / total_raw
-            final_duration = raw_duration * scale_factor 
+
+            # 强制每个 episode 开头先静止站立 3 秒
+            forced_stand_duration = 3.0
+            raw_duration[:, 0] = forced_stand_duration
+
+            total_raw_rest = raw_duration[:, 1:].sum(dim=1, keepdim=True)
+            remaining_duration = max(self.episode_duration - forced_stand_duration, self.dt)
+            scale_factor_rest = remaining_duration / torch.clamp(total_raw_rest, min=self.dt)
+
+            final_duration = raw_duration.clone()
+            final_duration[:, 0] = forced_stand_duration
+            final_duration[:, 1:] = raw_duration[:, 1:] * scale_factor_rest
             
             seg_counts = (final_duration / self.dt).long()
             current_sums = seg_counts.sum(dim=1)

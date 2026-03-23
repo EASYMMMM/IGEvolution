@@ -60,6 +60,7 @@ class HumanoidAMP_s1_Smpl_Base(VecTask):
 
         self.max_episode_length = self.cfg["env"]["episodeLength"]
         self._local_root_obs = self.cfg["env"]["localRootObs"]
+        self._amp_local_root_obs = self.cfg["env"].get("AMPlocalRootObs", True)
         self._contact_bodies = self.cfg["env"]["contactBodies"]
         self._termination_height = self.cfg["env"]["terminationHeight"]
         self._enable_early_termination = self.cfg["env"]["enableEarlyTermination"]

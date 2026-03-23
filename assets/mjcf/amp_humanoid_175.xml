@@ -43,9 +43,9 @@
         <geom name="left_clavicle" fromto="-0.006413 0.048829 0.244049 -0.017957 0.136722 0.253459" size="0.048000" density="1100" />
 
         <body name="head" pos="0.000000 0.000000 0.238820">
-          <joint name="neck_x" axis="1 0 0" range="-50 50" stiffness="50" damping="5" armature=".017" />
-          <joint name="neck_y" axis="0 1 0" range="-40 60" stiffness="50" damping="5" armature=".017" />
-          <joint name="neck_z" axis="0 0 1" range="-45 45" stiffness="50" damping="5" armature=".017" />
+          <joint name="neck_x" axis="1 0 0" range="-5 5" stiffness="50" damping="5" armature=".017" />
+          <joint name="neck_y" axis="0 1 0" range="-5 5" stiffness="50" damping="5" armature=".017" />
+          <joint name="neck_z" axis="0 0 1" range="-5 5" stiffness="50" damping="5" armature=".017" />
           <geom name="head" type="sphere" pos="0.000000 0.000000 0.186667" size="0.101333" density="1081" />
           <site name="head" class="touch" pos="0.000000 0.000000 0.186667" type="sphere" size="0.109867" />
           <camera name="egocentric" pos="0.109867 0.000000 0.186667" xyaxes="0 -1 0 .1 0 1" fovy="80" />
