@@ -212,6 +212,71 @@ def launch_rlg_hydra(cfg: DictConfig):
     runner.load(rlg_config_dict)
     runner.reset()
 
+    #'''
+    # 导出jit模型
+    # =====================================================================
+    import torch
+    if cfg.test and cfg.checkpoint:
+        print(f"\n[True Export] 正在从 {cfg.checkpoint} 导出真正的 JIT 模型...")
+        try:
+            # 1. 让 rl_games 根据 YAML 自动创建完整的 Player 和 Network
+            player = runner.create_player()
+            
+            # 2. 将 .pth 权重注入到这个“活体”网络中
+            player.restore(cfg.checkpoint)
+            
+            # 3. 提取真实的 PyTorch 模块！
+            # 这里的 actor_mlp 已经自动包含了 YAML 里定义的所有 LayerNorm、激活函数等
+            # 我们不需要知道里面有什么，直接把它整个端走！
+            class TrueExportActor(torch.nn.Module):
+                def __init__(self, model):
+                    super().__init__()
+                    self.actor_mlp = model.a2c_network.actor_mlp
+                    self.mu = model.a2c_network.mu
+                
+                def forward(self, x):
+                    x = self.actor_mlp(x)
+                    return self.mu(x)
+            
+            # 实例化我们要导出的部分
+            export_net = TrueExportActor(player.model).to(player.device).eval()
+            
+            # 4. 自动获取 YAML 里定义的观测维度
+            obs_dim = player.obs_shape[0]
+            dummy_input = torch.zeros(1, obs_dim, device=player.device)
+            
+            # 5. Trace：让 PyTorch 自动录制计算图
+            traced_script_module = torch.jit.trace(export_net, dummy_input)
+            
+            # 6. 保存
+            save_path = cfg.checkpoint.replace(".pth", "_TrueJIT.pt")
+            traced_script_module.save(save_path)
+            
+            print(f"✅✅✅ 完美成功！模型已基于 YAML 结构准确导出为:")
+            print(f"👉 {os.path.abspath(save_path)}\n")
+            
+        except Exception as e:
+            print(f"❌ JIT 导出失败: {e}\n")
+    # =====================================================================
+        player.run()
+
+    else:
+        experiment_dir = os.path.join('runs', cfg.train.params.config.name + 
+        '_{date:%d-%H-%M-%S}'.format(date=datetime.now()))
+        # dump config dict 
+        os.makedirs(experiment_dir, exist_ok=True)
+        with open(os.path.join(experiment_dir, 'config.yaml'), 'w') as f:
+            f.write(OmegaConf.to_yaml(cfg))
+
+        runner.run({
+            'train': not cfg.test,
+            'play': cfg.test,
+            'checkpoint': cfg.checkpoint,
+            'sigma': cfg.sigma if cfg.sigma != '' else None
+        })
+
+
+    '''
     # 创建保存文件夹 
     if not cfg.test:
         experiment_dir = os.path.join('runs', cfg.train.params.config.name + 
@@ -227,7 +292,7 @@ def launch_rlg_hydra(cfg: DictConfig):
         'checkpoint': cfg.checkpoint,
         'sigma': cfg.sigma if cfg.sigma != '' else None
     })
-
+    '''
 
 if __name__ == "__main__":
     launch_rlg_hydra()

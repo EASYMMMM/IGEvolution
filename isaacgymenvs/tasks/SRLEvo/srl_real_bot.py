@@ -396,6 +396,37 @@ class SRL_Real_Bot(VecTask):
         self.extremities = to_torch([5, 8], device=self.device, dtype=torch.long)
 
         self._build_pd_action_offset_scale()
+        print("\n========== DEBUG CONTROL PARAMS ==========")
+        print("forceControl:", self._force_control)
+        print("pdControl:", self._pd_control)
+        print("randomize:", self.randomize)
+        print("action_scale:", self.action_scale)
+
+        asset_dof_prop = self.gym.get_asset_dof_properties(humanoid_asset)
+        actor_dof_prop = self.gym.get_actor_dof_properties(env_ptr, handle)
+
+        print("\n[ASSET dof props]")
+        print("stiffness:", [float(x) for x in asset_dof_prop["stiffness"]])
+        print("damping  :", [float(x) for x in asset_dof_prop["damping"]])
+        print("effort   :", [float(x) for x in asset_dof_prop["effort"]])
+
+        print("\n[ACTOR dof props]")
+        print("stiffness:", [float(x) for x in actor_dof_prop["stiffness"]])
+        print("damping  :", [float(x) for x in actor_dof_prop["damping"]])
+        print("effort   :", [float(x) for x in actor_dof_prop["effort"]])
+        print("driveMode:", [int(x) for x in actor_dof_prop["driveMode"]])
+
+        print("\n[self.p_gains / self.d_gains / torque_limits]")
+        print("p_gains      :", self.p_gains.cpu().numpy())
+        print("d_gains      :", self.d_gains.cpu().numpy())
+        print("torque_limits:", self.torque_limits.cpu().numpy())
+
+        print("\n[_pd_action_scale / dof limits / default_joint_angles]")
+        print("_pd_action_scale :", self._pd_action_scale.cpu().numpy())
+        print("dof_limits_lower :", self.dof_limits_lower.cpu().numpy())
+        print("dof_limits_upper :", self.dof_limits_upper.cpu().numpy())
+        print("default_joint_angles:", np.array(self.default_joint_angles))
+        print("==========================================\n")
 
     def _build_srl_end_body_ids_tensor(self, env_ptr, actor_handle):
         body_ids = []
@@ -727,12 +758,25 @@ class SRL_Real_Bot(VecTask):
         self.last_actions = actions.clone()
         # 赋值给 self.actions 用于后续观察 (obs)
         self.actions = actions.to(self.device).clone()
-        
-        if self._force_control:
+
+        # 新增代码检查一些关键数据对齐
+        if not hasattr(self, "_debug_printed_once"):
+            self._debug_printed_once = False
+                   
+        if self._force_control:    
             pd_tar = self._action_to_pd_targets(self.actions)
             torques = self.p_gains*(pd_tar - self.dof_pos) - self.d_gains*self.dof_vel
             self.torques = torch.clip(torques, -self.torque_limits, self.torque_limits).view(self.torques.shape)
             self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(self.torques))
+            if not self._debug_printed_once:
+                print("\n========== DEBUG FIRST TORQUE STEP ==========")
+                print("actions[0]:", self.actions[0].detach().cpu().numpy())
+                print("pd_tar[0] :", pd_tar[0].detach().cpu().numpy())
+                print("dof_pos[0]:", self.dof_pos[0].detach().cpu().numpy())
+                print("dof_vel[0]:", self.dof_vel[0].detach().cpu().numpy())
+                print("torques[0]:", torques[0].detach().cpu().numpy())
+                print("============================================\n")
+                self._debug_printed_once = True
         elif (self._pd_control):
             pd_tar = self._action_to_pd_targets(self.actions)
             # 即使是位置控制，我们也可以近似计算输出力矩用于惩罚项
