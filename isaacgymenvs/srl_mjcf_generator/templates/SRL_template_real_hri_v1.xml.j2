@@ -1,0 +1,105 @@
+<!-- SRL Robot Definition for srl_real_hri_v1 -->
+{% set hip_y_offset = base_width + 0.132 %}
+{% set leg2_end_offset = leg2_length + 0.005 %}
+
+<body name="SRL" pos="-0.15 0 0.15">
+    <joint armature="0.00" axis="1 0 0" damping="3500" stiffness="150000" type="slide" name="SRL_virtual_damping_x" pos="0 0 0" range="-0.020 0.020" />
+    <joint armature="0.00" axis="0 1 0" damping="3500" stiffness="150000" type="slide" name="SRL_virtual_damping_y" pos="0 0 0" range="-0.020 0.020" />
+    <joint armature="0.00" axis="0 0 1" damping="3500" stiffness="150000" type="slide" name="SRL_virtual_damping_z" pos="0 0 0" range="-0.020 0.020" />
+
+    <geom name="board" pos="0 0 0" size="0.0005 0.1 0.1" type="box" density="100"/>
+
+    <!-- ############ SRL Structure ############ -->
+    <body name="SRL_root" pos="-{{ base_distance }} 0 -0.05" euler="0 0 0">
+        {% if enable_freejoint_z == 1 %}
+        <joint armature="0.00" axis="0 0 1" damping="0" name="SRL_freejoint_z" pos="{{ base_distance }} 0 0" range="-20 20" stiffness="0"/>
+        {% else %}
+        <!-- SRL_freejoint_z disabled -->
+        {% endif %}
+
+        {% if enable_freejoint_y == 1 %}
+        <joint armature="0.00" axis="0 1 0" damping="0" name="SRL_freejoint_y" pos="{{ base_distance }} 0 0" range="-20 20" stiffness="0"/>
+        {% else %}
+        <!-- SRL_freejoint_y disabled -->
+        {% endif %}
+
+        {% if enable_freejoint_x == 1 %}
+        <joint armature="0.00" axis="1 0 0" damping="0" name="SRL_freejoint_x" pos="{{ base_distance }} 0 0" range="-20 20" stiffness="0"/>
+        {% else %}
+        <!-- SRL_freejoint_x disabled -->
+        {% endif %}
+
+        <inertial pos="-0.063056 0 0.059865" mass="10.276" fullinertia="0.12836 0.15292 0.23481 0 -0.003528 0"/>
+
+        <geom mesh="base_link" class="visual"/>
+        <geom type="box" size="0.15 0.05 0.08" pos="0 0 0.1" class="collision"/>
+
+        <!-- ================= LEFT LEG CHAIN ================= -->
+        <body name="left_hip_x_link" pos="0.039 {{ hip_y_offset }} 0.06" euler="0 0 0">
+            <inertial pos="0.020751 0.0093109 0" mass="1.999" fullinertia="0.002205 0.003362 0.003412 0.000501 0 0"/>
+            <joint name="left_hip_x_joint" axis="1 0 0" range="-45.0 45.0" damping="20" stiffness="120" armature="0.1"/>
+
+            <geom mesh="left_hip_x_link" material="white_mat" class="visual"/>
+            <geom type="capsule" size="0.05" fromto="-0.05 0 0 0.05 0 0" class="collision"/>
+
+            <body name="left_hip_y_link" pos="-0.06 0.056 0" euler="0 20 0">
+                <inertial pos="0.0044865 0.029882 -0.11897" mass="5.4706" fullinertia="0.13911 0.11979 0.024508 -0.000374 -0.000469 -0.004176"/>
+                <joint name="left_hip_y_joint" axis="0 -1 0" range="-60.16 60.16" damping="25" stiffness="210" armature="0.1"/>
+
+                <geom mesh="left_hip_y_link" material="white_mat" class="visual"/>
+                <geom type="capsule" size="0.04" fromto="0 0 0 0 0.0155 -{{ leg1_length }}" class="collision"/>
+
+                <body name="left_knee_link" pos="0 0.0155 -{{ leg1_length }}" euler="0 -40 0">
+                    <inertial pos="0 0 -0.28802" mass="0.66217" fullinertia="0.031693 0.03171 0.00023 0 0 0"/>
+                    <joint name="left_knee_joint" axis="0 -1 0" range="-60.16 60.16" damping="40" stiffness="280" armature="0.1"/>
+
+                    <geom mesh="left_knee_link" class="visual"/>
+                    <geom type="capsule" size="0.035" fromto="0 0 0 0 0 -{{ leg2_length }}" class="collision"/>
+
+                    <body name="SRL_left_end" pos="0 0 -{{ leg2_end_offset }}">
+                        <inertial pos="0 0 0" mass="0.06" diaginertia="0.0001 0.0001 0.0001"/>
+                        <geom name="SRL_left_end" type="sphere" size="0.038"
+                              friction="0.9 0.01 0.005"
+                              contype="1" conaffinity="1"
+                              rgba="0.9 0.1 0.1 1"/>
+                        <site name="SRL_left_end_touch" size="0.05" rgba="0 1 0 0.2"/>
+                    </body>
+                </body>
+            </body>
+        </body>
+
+        <!-- ================= RIGHT LEG CHAIN ================= -->
+        <body name="right_hip_x_link" pos="0.039 -{{ hip_y_offset }} 0.06" euler="0 0 0">
+            <inertial pos="0.020751 -0.0093109 0" mass="1.999" fullinertia="0.002205 0.003362 0.003412 -0.000501 0 0"/>
+            <joint name="right_hip_x_joint" axis="-1 0 0" range="-45.0 45.0" damping="20" stiffness="120" armature="0.1"/>
+
+            <geom mesh="right_hip_x_link" material="white_mat" class="visual"/>
+            <geom type="capsule" size="0.05" fromto="-0.05 0 0 0.05 0 0" class="collision"/>
+
+            <body name="right_hip_y_link" pos="-0.06 -0.056 0" euler="0 20 0">
+                <inertial pos="0.0044865 -0.029882 -0.11897" mass="5.4706" fullinertia="0.13911 0.11979 0.024508 0.000374 -0.000469 0.004176"/>
+                <joint name="right_hip_y_joint" axis="0 -1 0" range="-60.16 60.16" damping="25" stiffness="210" armature="0.1"/>
+
+                <geom mesh="right_hip_y_link" material="white_mat" class="visual"/>
+                <geom type="capsule" size="0.04" fromto="0 0 0 0 -0.0155 -{{ leg1_length }}" class="collision"/>
+
+                <body name="right_knee_link" pos="0 -0.0155 -{{ leg1_length }}" euler="0 -40 0">
+                    <inertial pos="0 0 -0.28802" mass="0.66217" fullinertia="0.031693 0.03171 0.00023 0 0 0"/>
+                    <joint name="right_knee_joint" axis="0 -1 0" range="-60.16 60.16" damping="40" stiffness="280" armature="0.1"/>
+
+                    <geom mesh="right_knee_link" class="visual"/>
+                    <geom type="capsule" size="0.035" fromto="0 0 0 0 0 -{{ leg2_length }}" class="collision"/>
+
+                    <body name="SRL_right_end" pos="0 0 -{{ leg2_end_offset }}">
+                        <inertial pos="0 0 0" mass="0.06" diaginertia="0.0001 0.0001 0.0001"/>
+                        <geom name="SRL_right_end" type="sphere" size="0.038"
+                              friction="0.9 0.01 0.005"
+                              contype="1" conaffinity="1"
+                              rgba="0.9 0.1 0.1 1"/>
+                        <site name="SRL_right_end_touch" size="0.05" rgba="0 1 0 0.2"/>
+                    </body>
+                </body>
+            </body>
+        </body>
+    </body>
+</body>

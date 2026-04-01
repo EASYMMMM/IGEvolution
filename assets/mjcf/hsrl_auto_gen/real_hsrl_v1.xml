@@ -3,7 +3,7 @@
   <statistic extent="2" center="0.000000 0.000000 1.066667" />
 
   <option timestep="0.00555" />
-  <compiler angle="degree" meshdir="meshes/" />
+  <compiler angle="degree" meshdir="../srl_real_hri/meshes_v1/" />
   <default>
     <motor ctrlrange="-1 1" ctrllimited="true" />
     <default class="body">
@@ -41,32 +41,32 @@
     <material name="white_mat" rgba="1 1 1 1"/>
     <material name="collision_mat" rgba="0.8 0.5 0.3 0.5"/>
 
-    <mesh file="ab416240-b05b-47c2-b32d-dcce81724673/geom/Pelvis.stl" name="Pelvis_mesh"/>
-    <mesh file="ab416240-b05b-47c2-b32d-dcce81724673/geom/L_Hip.stl" name="L_Hip_mesh"/>
-    <mesh file="ab416240-b05b-47c2-b32d-dcce81724673/geom/R_Hip.stl" name="R_Hip_mesh"/>
-    <mesh file="ab416240-b05b-47c2-b32d-dcce81724673/geom/Torso.stl" name="Torso_mesh"/>
-    <mesh file="ab416240-b05b-47c2-b32d-dcce81724673/geom/L_Knee.stl" name="L_Knee_mesh"/>
-    <mesh file="ab416240-b05b-47c2-b32d-dcce81724673/geom/R_Knee.stl" name="R_Knee_mesh"/>
-    <mesh file="ab416240-b05b-47c2-b32d-dcce81724673/geom/Spine.stl" name="Spine_mesh"/>
-    <mesh file="ab416240-b05b-47c2-b32d-dcce81724673/geom/L_Ankle.stl" name="L_Ankle_mesh"/>
-    <mesh file="ab416240-b05b-47c2-b32d-dcce81724673/geom/R_Ankle.stl" name="R_Ankle_mesh"/>
-    <mesh file="ab416240-b05b-47c2-b32d-dcce81724673/geom/Chest.stl" name="Chest_mesh"/>
-    <mesh file="ab416240-b05b-47c2-b32d-dcce81724673/geom/L_Toe.stl" name="L_Toe_mesh"/>
-    <mesh file="ab416240-b05b-47c2-b32d-dcce81724673/geom/R_Toe.stl" name="R_Toe_mesh"/>
-    <mesh file="ab416240-b05b-47c2-b32d-dcce81724673/geom/Neck.stl" name="Neck_mesh"/>
-    <mesh file="ab416240-b05b-47c2-b32d-dcce81724673/geom/L_Thorax.stl" name="L_Thorax_mesh"/>
-    <mesh file="ab416240-b05b-47c2-b32d-dcce81724673/geom/R_Thorax.stl" name="R_Thorax_mesh"/>
-    <mesh file="ab416240-b05b-47c2-b32d-dcce81724673/geom/Head.stl" name="Head_mesh"/>
-    <mesh file="ab416240-b05b-47c2-b32d-dcce81724673/geom/L_Shoulder.stl" name="L_Shoulder_mesh"/>
-    <mesh file="ab416240-b05b-47c2-b32d-dcce81724673/geom/R_Shoulder.stl" name="R_Shoulder_mesh"/>
-    <mesh file="ab416240-b05b-47c2-b32d-dcce81724673/geom/L_Elbow.stl" name="L_Elbow_mesh"/>
-    <mesh file="ab416240-b05b-47c2-b32d-dcce81724673/geom/R_Elbow.stl" name="R_Elbow_mesh"/>
-    <mesh file="ab416240-b05b-47c2-b32d-dcce81724673/geom/L_Wrist.stl" name="L_Wrist_mesh"/>
-    <mesh file="ab416240-b05b-47c2-b32d-dcce81724673/geom/R_Wrist.stl" name="R_Wrist_mesh"/>
-    <mesh file="ab416240-b05b-47c2-b32d-dcce81724673/geom/L_Hand.stl" name="L_Hand_mesh"/>
-    <mesh file="ab416240-b05b-47c2-b32d-dcce81724673/geom/R_Hand.stl" name="R_Hand_mesh"/>
-    <mesh file="ab416240-b05b-47c2-b32d-dcce81724673/geom/L_Foot.stl" name="L_Foot_mesh"/>
-    <mesh file="ab416240-b05b-47c2-b32d-dcce81724673/geom/R_Foot.stl" name="R_Foot_mesh"/>
+    <mesh file="humanoid_meshes/geom/Pelvis.stl" name="Pelvis_mesh"/>
+    <mesh file="humanoid_meshes/geom/L_Hip.stl" name="L_Hip_mesh"/>
+    <mesh file="humanoid_meshes/geom/R_Hip.stl" name="R_Hip_mesh"/>
+    <mesh file="humanoid_meshes/geom/Torso.stl" name="Torso_mesh"/>
+    <mesh file="humanoid_meshes/geom/L_Knee.stl" name="L_Knee_mesh"/>
+    <mesh file="humanoid_meshes/geom/R_Knee.stl" name="R_Knee_mesh"/>
+    <mesh file="humanoid_meshes/geom/Spine.stl" name="Spine_mesh"/>
+    <mesh file="humanoid_meshes/geom/L_Ankle.stl" name="L_Ankle_mesh"/>
+    <mesh file="humanoid_meshes/geom/R_Ankle.stl" name="R_Ankle_mesh"/>
+    <mesh file="humanoid_meshes/geom/Chest.stl" name="Chest_mesh"/>
+    <mesh file="humanoid_meshes/geom/L_Toe.stl" name="L_Toe_mesh"/>
+    <mesh file="humanoid_meshes/geom/R_Toe.stl" name="R_Toe_mesh"/>
+    <mesh file="humanoid_meshes/geom/Neck.stl" name="Neck_mesh"/>
+    <mesh file="humanoid_meshes/geom/L_Thorax.stl" name="L_Thorax_mesh"/>
+    <mesh file="humanoid_meshes/geom/R_Thorax.stl" name="R_Thorax_mesh"/>
+    <mesh file="humanoid_meshes/geom/Head.stl" name="Head_mesh"/>
+    <mesh file="humanoid_meshes/geom/L_Shoulder.stl" name="L_Shoulder_mesh"/>
+    <mesh file="humanoid_meshes/geom/R_Shoulder.stl" name="R_Shoulder_mesh"/>
+    <mesh file="humanoid_meshes/geom/L_Elbow.stl" name="L_Elbow_mesh"/>
+    <mesh file="humanoid_meshes/geom/R_Elbow.stl" name="R_Elbow_mesh"/>
+    <mesh file="humanoid_meshes/geom/L_Wrist.stl" name="L_Wrist_mesh"/>
+    <mesh file="humanoid_meshes/geom/R_Wrist.stl" name="R_Wrist_mesh"/>
+    <mesh file="humanoid_meshes/geom/L_Hand.stl" name="L_Hand_mesh"/>
+    <mesh file="humanoid_meshes/geom/R_Hand.stl" name="R_Hand_mesh"/>
+    <mesh file="humanoid_meshes/geom/L_Foot.stl" name="L_Foot_mesh"/>
+    <mesh file="humanoid_meshes/geom/R_Foot.stl" name="R_Foot_mesh"/>
   </asset>
   
   <worldbody>
@@ -216,120 +216,106 @@
         </body>
       </body>
 
+<!-- SRL Robot Definition for srl_real_hri_v1 -->
 
 
-      <body name="SRL" pos="-0.15 0 0.15">
-        <joint armature="0.00" axis="1 0 0" damping="3500" stiffness="150000"  type="slide" name="SRL_virtual_damping_x" pos="0 0 0" range="-0.020 0.020" />
-		    <joint armature="0.00" axis="0 1 0" damping="3500" stiffness="150000"  type="slide" name="SRL_virtual_damping_y" pos="0 0 0" range="-0.020 0.020" />
-        <joint armature="0.00" axis="0 0 1" damping="3500" stiffness="150000"  type="slide" name="SRL_virtual_damping_z" pos="0 0 0" range="-0.020 0.020" />
-        <geom name="board" pos="0 0 0" size="0.0005 0.1 0.1 " type="box" density='100'/> 
-        <body name="SRL_root" pos="-0.60 0 -0.05" euler="0 0 0">
-          <joint armature="0.00" axis="0 0 1" damping="0" name="SRL_freejoint_z" pos="0.60 0 0" range="-20 20" stiffness="0"/>
-          <joint armature="0.00" axis="0 1 0" damping="0" name="SRL_freejoint_y" pos="0.60 0 0" range="-20 20" stiffness="0"/>
 
-          <inertial pos="-0.00060591 -1.445E-17 0.1" mass="10.665" fullinertia="0.163 0.109 0.201 0 0 0"/>
-          
-          <geom mesh="base_link" class="visual"/>
-          <geom type="box" size="0.15 0.05 0.08" pos="0 0 0.1" class="collision"/>
+<body name="SRL" pos="-0.15 0 0.15">
+    <joint armature="0.00" axis="1 0 0" damping="3500" stiffness="150000" type="slide" name="SRL_virtual_damping_x" pos="0 0 0" range="-0.020 0.020" />
+    <joint armature="0.00" axis="0 1 0" damping="3500" stiffness="150000" type="slide" name="SRL_virtual_damping_y" pos="0 0 0" range="-0.020 0.020" />
+    <joint armature="0.00" axis="0 0 1" damping="3500" stiffness="150000" type="slide" name="SRL_virtual_damping_z" pos="0 0 0" range="-0.020 0.020" />
 
-          <!-- ================= LEFT LEG CHAIN ================= -->
-          <body name="left_hip_x_link" pos="-0.065 0.2475 0.1" euler="0 0 180">
-            <inertial pos="-0.024642 -0.0076065 0" mass="2.832" fullinertia="0.006 0.007 0.007 0.001 0 0"/>
-            
-            <!-- Range converted: -0.2 rad -> -11.46 deg, 0.65 rad -> 37.24 deg -->
-            <joint name="left_hip_x_jonit" axis="-1 0 0" range="-11.46 37.24" damping="30" stiffness="300" armature="0.1"/>
-            
+    <geom name="board" pos="0 0 0" size="0.0005 0.1 0.1" type="box" density="100"/>
+
+    <!-- ############ SRL Structure ############ -->
+    <body name="SRL_root" pos="-0.5833257049792637 0 -0.05" euler="0 0 0">
+        
+        <joint armature="0.00" axis="0 0 1" damping="0" name="SRL_freejoint_z" pos="0.5833257049792637 0 0" range="-20 20" stiffness="0"/>
+        
+
+        
+        <joint armature="0.00" axis="0 1 0" damping="0" name="SRL_freejoint_y" pos="0.5833257049792637 0 0" range="-20 20" stiffness="0"/>
+        
+
+        
+        <!-- SRL_freejoint_x disabled -->
+        
+
+        <inertial pos="-0.063056 0 0.059865" mass="10.276" fullinertia="0.12836 0.15292 0.23481 0 -0.003528 0"/>
+
+        <geom mesh="base_link" class="visual"/>
+        <geom type="box" size="0.15 0.05 0.08" pos="0 0 0.1" class="collision"/>
+
+        <!-- ================= LEFT LEG CHAIN ================= -->
+        <body name="left_hip_x_link" pos="0.039 0.23643058778276904 0.06" euler="0 0 0">
+            <inertial pos="0.020751 0.0093109 0" mass="1.999" fullinertia="0.002205 0.003362 0.003412 0.000501 0 0"/>
+            <joint name="left_hip_x_joint" axis="1 0 0" range="-45.0 45.0" damping="20" stiffness="120" armature="0.1"/>
+
             <geom mesh="left_hip_x_link" material="white_mat" class="visual"/>
             <geom type="capsule" size="0.05" fromto="-0.05 0 0 0.05 0 0" class="collision"/>
 
-            <!-- Left Hip Y (Pitch - Thigh) -->
-            <!-- URDF: 0.0725 -0.075 0 -->
-            <body name="left_hip_y_link" pos="0.0725 -0.075 0">
-              <inertial pos="0.030377 -0.029787 -0.083461" mass="6.144" fullinertia="0.145 0.144 0.043 0.008 0.043 -0.022"/>
-              
-              <!-- Range converted: +/- 1.05 rad -> +/- 60.16 deg -->
-              <joint name="left_hip_y_jonit" axis="0 1 0" range="-60.16 60.16" damping="25" stiffness="250" armature="0.1"/>
-              
-              <geom mesh="left_hip_y_link" material="white_mat" class="visual"/>
-              <!-- 碰撞体：从HipY原点指向Knee连接点 (0.237, -0.104, -0.65) -->
-              <geom type="capsule" size="0.06" fromto="0 0 0 0.237 -0.104 -0.65" class="collision"/>
+            <body name="left_hip_y_link" pos="-0.06 0.056 0" euler="0 20 0">
+                <inertial pos="0.0044865 0.029882 -0.11897" mass="5.4706" fullinertia="0.13911 0.11979 0.024508 -0.000374 -0.000469 -0.004176"/>
+                <joint name="left_hip_y_joint" axis="0 -1 0" range="-60.16 60.16" damping="25" stiffness="210" armature="0.1"/>
 
-              <!-- Left Knee (Pitch - Shank) -->
-              <!-- URDF: 0.23761 -0.1045 -0.65284, RPY 0.698 0 1.57 -->
-              <!-- 使用四元数消除旋转歧义: Roll=40deg, Yaw=90deg -->
-              <body name="left_knee_link" pos="0.23761 -0.1045 -0.65284" quat="0.66446 0.24184 0.24184 0.66446">
-                <inertial pos="-1.16e-7 8.95e-8 -0.312" mass="0.697" fullinertia="0.039 0.039 0.00024 0 0 0"/>
-                
-                <!-- Range converted: +/- 1.05 rad -> +/- 60.16 deg -->
-                <joint name="left_knee_jonit" axis="1 0 0" range="-60.16 60.16" damping="40" stiffness="350" armature="0.1"/>
-                
-                <geom mesh="left_knee_link" class="visual"/>
-                <!-- 碰撞体：小腿约长 0.6m -->
-                <geom type="capsule" size="0.04" fromto="0 0 0 0 0 -0.6" class="collision"/>
-                
-                <!-- 脚底接触球 -->
-                <body name="SRL_left_end" pos="0 0 -0.645">
-                    <inertial pos="0 0 0" mass="0.06" diaginertia="0.0001 0.0001 0.0001"/>
-                    <geom name="SRL_left_end_contact" type="sphere" size="0.038" 
-                          friction="0.9 0.01 0.005" 
-                          contype="1" conaffinity="1" 
-                          rgba="0.9 0.1 0.1 1"/>
-                    <site name="SRL_left_end_touch" size="0.05" rgba="0 1 0 0.2"/>
+                <geom mesh="left_hip_y_link" material="white_mat" class="visual"/>
+                <geom type="capsule" size="0.04" fromto="0 0 0 0 0.0155 -0.5510440748979085" class="collision"/>
+
+                <body name="left_knee_link" pos="0 0.0155 -0.5510440748979085" euler="0 -40 0">
+                    <inertial pos="0 0 -0.28802" mass="0.66217" fullinertia="0.031693 0.03171 0.00023 0 0 0"/>
+                    <joint name="left_knee_joint" axis="0 -1 0" range="-60.16 60.16" damping="40" stiffness="280" armature="0.1"/>
+
+                    <geom mesh="left_knee_link" class="visual"/>
+                    <geom type="capsule" size="0.035" fromto="0 0 0 0 0 -0.739032862175486" class="collision"/>
+
+                    <body name="SRL_left_end" pos="0 0 -0.744032862175486">
+                        <inertial pos="0 0 0" mass="0.06" diaginertia="0.0001 0.0001 0.0001"/>
+                        <geom name="SRL_left_end" type="sphere" size="0.038"
+                              friction="0.9 0.01 0.005"
+                              contype="1" conaffinity="1"
+                              rgba="0.9 0.1 0.1 1"/>
+                        <site name="SRL_left_end_touch" size="0.05" rgba="0 1 0 0.2"/>
+                    </body>
                 </body>
-
-              </body>
             </body>
-          </body>
+        </body>
 
-          <!-- ================= RIGHT LEG CHAIN ================= -->
-          <body name="right_hip_x_link" pos="-0.065 -0.2475 0.1" euler="0 0 180">
-            <inertial pos="-0.024642 0.0076065 0" mass="2.832" fullinertia="0.006 0.007 0.007 -0.001 0 0"/>
-            
-            <!-- Range converted: -0.2 rad -> -11.46 deg, 0.65 rad -> 37.24 deg -->
-            <joint name="right_hip_x_jonit" axis="1 0 0" range="-11.46 37.24" damping="30" stiffness="300" armature="0.1"/>
-            
+        <!-- ================= RIGHT LEG CHAIN ================= -->
+        <body name="right_hip_x_link" pos="0.039 -0.23643058778276904 0.06" euler="0 0 0">
+            <inertial pos="0.020751 -0.0093109 0" mass="1.999" fullinertia="0.002205 0.003362 0.003412 -0.000501 0 0"/>
+            <joint name="right_hip_x_joint" axis="-1 0 0" range="-45.0 45.0" damping="20" stiffness="120" armature="0.1"/>
+
             <geom mesh="right_hip_x_link" material="white_mat" class="visual"/>
             <geom type="capsule" size="0.05" fromto="-0.05 0 0 0.05 0 0" class="collision"/>
 
-            <!-- Right Hip Y -->
-            <!-- URDF: 0.0725 0.075 0 -->
-            <body name="right_hip_y_link" pos="0.0725 0.075 0">
-              <inertial pos="0.030377 0.029786 -0.083461" mass="6.144" fullinertia="0.145 0.144 0.043 -0.008 0.043 0.022"/>
-              
-              <!-- Range converted: +/- 1.05 rad -> +/- 60.16 deg -->
-              <joint name="right_hip_y_jonit" axis="0 1 0" range="-60.16 60.16" damping="25" stiffness="250" armature="0.1"/>
-              
-              <geom mesh="right_hip_y_link" material="white_mat" class="visual"/>
-              <!-- 碰撞体：指向右腿膝盖位置 (0.237, 0.104, -0.65) -->
-              <geom type="capsule" size="0.06" fromto="0 0 0 0.237 0.104 -0.65" class="collision"/>
+            <body name="right_hip_y_link" pos="-0.06 -0.056 0" euler="0 20 0">
+                <inertial pos="0.0044865 -0.029882 -0.11897" mass="5.4706" fullinertia="0.13911 0.11979 0.024508 0.000374 -0.000469 0.004176"/>
+                <joint name="right_hip_y_joint" axis="0 -1 0" range="-60.16 60.16" damping="25" stiffness="210" armature="0.1"/>
 
-              <!-- Right Knee -->
-              <!-- URDF: 0.23761 0.1045 -0.65284 -->
-              <body name="right_knee_link" pos="0.23761 0.1045 -0.65284" quat="0.66446 0.24184 0.24184 0.66446">
-                <inertial pos="-1.16e-7 8.92e-8 -0.312" mass="0.697" fullinertia="0.039 0.039 0.00024 0 0 0"/>
-                
-                <!-- Range converted: +/- 1.05 rad -> +/- 60.16 deg -->
-                <joint name="right_knee_jonit" axis="1 0 0" range="-60.16 60.16" damping="40" stiffness="350" armature="0.1"/>
-                
-                <geom mesh="right_knee_link" class="visual"/>
-                <geom type="capsule" size="0.04" fromto="0 0 0 0 0 -0.6" class="collision"/>
-                
-                <!-- 脚底接触球 -->
-                <body name="SRL_right_end" pos="0 0 -0.645">
-                    <inertial pos="0 0 0" mass="0.06" diaginertia="0.0001 0.0001 0.0001"/>
-                    <geom name="SRL_right_end_contact" type="sphere" size="0.038" 
-                          friction="0.9 0.01 0.005" 
-                          contype="1" conaffinity="1" 
-                          rgba="0.9 0.1 0.1 1"/>
-                    <site name="SRL_right_end_touch" size="0.05" rgba="0 1 0 0.2"/>
+                <geom mesh="right_hip_y_link" material="white_mat" class="visual"/>
+                <geom type="capsule" size="0.04" fromto="0 0 0 0 -0.0155 -0.5510440748979085" class="collision"/>
+
+                <body name="right_knee_link" pos="0 -0.0155 -0.5510440748979085" euler="0 -40 0">
+                    <inertial pos="0 0 -0.28802" mass="0.66217" fullinertia="0.031693 0.03171 0.00023 0 0 0"/>
+                    <joint name="right_knee_joint" axis="0 -1 0" range="-60.16 60.16" damping="40" stiffness="280" armature="0.1"/>
+
+                    <geom mesh="right_knee_link" class="visual"/>
+                    <geom type="capsule" size="0.035" fromto="0 0 0 0 0 -0.739032862175486" class="collision"/>
+
+                    <body name="SRL_right_end" pos="0 0 -0.744032862175486">
+                        <inertial pos="0 0 0" mass="0.06" diaginertia="0.0001 0.0001 0.0001"/>
+                        <geom name="SRL_right_end" type="sphere" size="0.038"
+                              friction="0.9 0.01 0.005"
+                              contype="1" conaffinity="1"
+                              rgba="0.9 0.1 0.1 1"/>
+                        <site name="SRL_right_end_touch" size="0.05" rgba="0 1 0 0.2"/>
+                    </body>
                 </body>
-
-              </body>
             </body>
-          </body>
-
         </body>
-      </body>
+    </body>
+</body>
+
     </body>
   </worldbody>
 
@@ -362,13 +348,13 @@
     <motor name="left_ankle_x" gear="50" joint="left_ankle_x" />
     <motor name="left_ankle_y" gear="50" joint="left_ankle_y" />
     <motor name="left_ankle_z" gear="50" joint="left_ankle_z" />
-    <motor name="left_hip_x_torque" joint="left_hip_x_jonit" gear="450"  />
-    <motor name="left_hip_y_torque" joint="left_hip_y_jonit" gear="450"  />
-    <motor name="left_knee_torque" joint="left_knee_jonit" gear="450"  />
+    <motor name="left_hip_x_torque" joint="left_hip_x_joint" gear="450"  />
+    <motor name="left_hip_y_torque" joint="left_hip_y_joint" gear="450"  />
+    <motor name="left_knee_torque" joint="left_knee_joint" gear="450"  />
 
-    <motor name="right_hip_x_torque" joint="right_hip_x_jonit" gear="450"  />
-    <motor name="right_hip_y_torque" joint="right_hip_y_jonit" gear="450"  />
-    <motor name="right_knee_torque" joint="right_knee_jonit" gear="450"  />
+    <motor name="right_hip_x_torque" joint="right_hip_x_joint" gear="450"  />
+    <motor name="right_hip_y_torque" joint="right_hip_y_joint" gear="450"  />
+    <motor name="right_knee_torque" joint="right_knee_joint" gear="450"  />
   </actuator>
 
   <sensor>

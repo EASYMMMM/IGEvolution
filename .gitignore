@@ -1,4 +1,6 @@
 videos
+master_thesis_exp.bash
+master_thesis_data_analysis
 /isaacgymenvs/logs
 *train_dir*
 *wandb*

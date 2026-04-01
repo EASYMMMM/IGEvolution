@@ -191,10 +191,10 @@ actor_handles = []
 
 
 # =============== user define ===================
-dof_positions[6] = -0.36
-dof_positions[10] = 0.36
-dof_positions[-1] = 0.26
-dof_positions[-4] = 0.26
+dof_positions[6] = -0.38
+dof_positions[10] = 0.38
+dof_positions[-1] = 0.30
+dof_positions[-4] = 0.30
 # srl_joint_r1 = gym.find_asset_dof_index(asset,'SRL_joint_right_hipjoint_y')
 # srl_joint_r3 = gym.find_asset_dof_index(asset,'SRL_joint_right_kneejoint')
 # dof_positions[srl_joint_r1] = 0.15*np.pi

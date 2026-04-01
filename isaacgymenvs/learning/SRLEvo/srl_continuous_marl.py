@@ -136,10 +136,10 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             self._amp_input_mean_std = RunningMeanStd(self._amp_observation_space.shape).to(self.ppo_device)
         
         # Outer Loop Evaluate Values
-        self.evaluate_humanoid_rewards = deque(maxlen=6) 
-        self.evaluate_amp_rewards = deque(maxlen=6)
-        self.evaluate_ep_length = deque(maxlen=6)  
-        self.evaluate_srl_rewards = deque(maxlen=6)  
+        self.evaluate_humanoid_rewards = deque(maxlen=20) 
+        self.evaluate_amp_rewards = deque(maxlen=20)
+        self.evaluate_ep_length = deque(maxlen=20)  
+        self.evaluate_srl_rewards = deque(maxlen=20)  
 
         self.train_result = {}
 

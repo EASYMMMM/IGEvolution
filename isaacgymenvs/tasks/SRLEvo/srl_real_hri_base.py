@@ -66,6 +66,7 @@ class SRL_Real_HRI_Base(VecTask):
         self.hri_virtual_force_max = self.cfg["env"].get("hri_virtual_force_max", 1000.0)
         self.action_scale = self.cfg["env"].get("action_scale", 1.0)
         self.srl_dof_num = self.srl_actions_num + self.srl_free_actions_num
+        self.HMI_obs_enable = self.cfg["env"].get("HMI_obs_enable", True)
 
         # --- reward ---
         self.alive_reward_scale = self.cfg["env"]["alive_reward_scale"]
@@ -998,12 +999,12 @@ class SRL_Real_HRI_Base(VecTask):
                                                                           humanoid_legs_rot, dof_pos[:, -srl_dof_num:], dof_vel[:, -srl_dof_num:],
                                                                           load_cell_sensor, target_yaw, dof_force_tensor[:, -srl_dof_num:], 
                                                                           actions[:, -(self.srl_actions_num):], self.obs_scales_tensor, 
-                                                                          targets, potentials, self.control_dt, target_vel_x, self.gait_period )
+                                                                          targets, potentials, self.control_dt, target_vel_x, self.gait_period, self.HMI_obs_enable )
         srl_obs_mirrored = compute_srl_observations_mirrored(phase_buf, self.mirror_act_srl_mat, initial_dof_pos, srl_root_states, root_states,
                                                              humanoid_legs_rot, dof_pos[:, -srl_dof_num:], dof_vel[:, -srl_dof_num:],
                                                             load_cell_sensor,  target_yaw, dof_force_tensor[:, -srl_dof_num:], 
                                                             actions[:, -(self.srl_actions_num):], self.obs_scales_tensor, 
-                                                            targets, target_vel_x, self.gait_period )
+                                                            targets, target_vel_x, self.gait_period, self.HMI_obs_enable )
         priv_extra_obs = compute_priv_extra_observations(root_states, dof_pos, dof_vel,
                                             key_body_pos, self._local_root_obs,)
         priv_extra_obs_mirrored = compute_priv_extra_observations_mirrored(root_states, dof_pos, dof_vel,
@@ -1409,6 +1410,7 @@ def compute_srl_observations(
     dt,
     target_vel_x,
     gait_period,
+    HMI_obs_enable,
 )  :
     # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, Tensor, float) -> Tuple[Tensor, Tensor, Tensor]
     # root state 分解
@@ -1483,6 +1485,14 @@ def compute_srl_observations(
     # sin_phase = torch.where(standing_phase_mask.unsqueeze(-1), sin_phase*0, sin_phase)
     # cos_phase = torch.where(standing_phase_mask.unsqueeze(-1), cos_phase*0, cos_phase)
 
+    if HMI_obs_enable == False:
+        right_thigh_rel_pitch = right_thigh_rel_pitch * 0
+        right_shin_rel_pitch  = right_shin_rel_pitch * 0
+        left_thigh_rel_pitch  = left_thigh_rel_pitch * 0    
+        left_shin_rel_pitch   = left_shin_rel_pitch * 0
+        humanoid_euler_err    = humanoid_euler_err * 0
+        load_cell_force       = load_cell_force * 0
+
     obs = torch.cat((root_h,                             # 1    0
                      local_root_vel ,                    # 3    1:3
                      local_root_ang_vel ,                # 3    4:6
@@ -1530,6 +1540,7 @@ def compute_srl_observations_mirrored(
     targets,
     target_vel_x,
     gait_period,
+    HMI_obs_enable,
 )  :
     # type: ( Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float) ->  Tensor 
 
@@ -1627,6 +1638,14 @@ def compute_srl_observations_mirrored(
     # phase mirrored
     sin_phase = - sin_phase
     cos_phase = - cos_phase
+
+    if HMI_obs_enable == False:
+        right_thigh_rel_pitch = right_thigh_rel_pitch * 0
+        right_shin_rel_pitch  = right_shin_rel_pitch * 0
+        left_thigh_rel_pitch  = left_thigh_rel_pitch * 0    
+        left_shin_rel_pitch   = left_shin_rel_pitch * 0
+        humanoid_euler_err    = humanoid_euler_err * 0
+        load_cell_force       = load_cell_force * 0
 
     obs = torch.cat((root_h,                         # 1
                      local_root_vel  ,               # 3

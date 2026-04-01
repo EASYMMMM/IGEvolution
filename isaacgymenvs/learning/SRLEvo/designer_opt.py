@@ -92,14 +92,14 @@ class GeneticAlgorithmOptimizer(MorphologyOptimizer):
     def __init__(
         self, base_params, param_space, evaluate_fn,
         population_size=20, mutation_rate=0.3, crossover_rate=0.7,
-        num_iterations=10
+        num_iterations=10, initial_eval_epoch=700
     ):
         super().__init__(base_params, param_space, evaluate_fn)
         self.population_size = population_size
         self.mutation_rate = mutation_rate
         self.crossover_rate = crossover_rate
         self.num_iterations = num_iterations
-
+        self.initial_eval_epoch = initial_eval_epoch
         self.population = self.init_population()
 
     # -------------------------------------------------------------
@@ -161,7 +161,7 @@ class GeneticAlgorithmOptimizer(MorphologyOptimizer):
 
         for ind, sc in zip(population, norm_scores):
             curr += sc
-            if curr > pick:
+            if curr >= pick:
                 return ind
 
     # -------------------------------------------------------------
@@ -169,7 +169,12 @@ class GeneticAlgorithmOptimizer(MorphologyOptimizer):
         history = []
 
         for it in range(self.num_iterations):
-            scores = [self.evaluate_design_method(ind) for ind in self.population]
+            # scores = [self.evaluate_design_method(ind) for ind in self.population]
+            # 仅针对第一代的第一个个体特殊处理
+            scores = []
+            for i, ind in enumerate(self.population):
+                kwargs = {"max_epoch": self.initial_eval_epoch} if (it == 0 and i == 0) else {}
+                scores.append(self.evaluate_design_method(ind, **kwargs))
 
             # 找最优
             best_idx = int(np.argmax(scores))
@@ -217,8 +222,8 @@ class GeneticAlgorithmOptimizer_v2(GeneticAlgorithmOptimizer):
 class BayesianOptimizer(MorphologyOptimizer):
     def __init__(
         self, base_params, param_space, evaluate_fn,
-        num_iterations=100, initial_eval_epoch=700,
-        n_initial_points=5, acq_func='EI'
+        num_iterations=100, initial_eval_epoch=500,
+        n_initial_points=3, acq_func='EI'
     ):
         super().__init__(base_params, param_space, evaluate_fn)
         self.num_iterations = num_iterations
@@ -293,9 +298,10 @@ class BayesianOptimizer(MorphologyOptimizer):
 # Random Search
 # ================================================================
 class RandomOptimizer(MorphologyOptimizer):
-    def __init__(self, base_params, param_space, evaluate_fn, num_iterations=100):
+    def __init__(self, base_params, param_space, evaluate_fn, num_iterations=100, initial_eval_epoch=700):
         super().__init__(base_params, param_space, evaluate_fn)
         self.num_iterations = num_iterations
+        self.initial_eval_epoch = initial_eval_epoch
         self.history = []
 
     def random_sample(self):
@@ -303,8 +309,15 @@ class RandomOptimizer(MorphologyOptimizer):
 
     def optimize(self):
         for it in range(self.num_iterations):
-            params = self.random_sample()
-            score = self.evaluate_design_method(params)
+            if it == 0:
+                # 第一个采样点固定为默认值
+                params = self.base_params.copy()
+            else:
+                # 后续采样点随机生成
+                params = self.random_sample()
+
+            kwarg = {"max_epoch": self.initial_eval_epoch} if it == 0 else {}
+            score = self.evaluate_design_method(params, **kwarg)
 
             if score > self.best_score:
                 self.best_score = score

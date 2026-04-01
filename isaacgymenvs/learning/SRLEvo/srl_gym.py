@@ -42,6 +42,7 @@ class SRLGym():
         self.cfg = cfg
         self.mjcf_folder = 'mjcf/hsrl_auto_gen'
         self.hsrl_checkpoint = cfg['train']['params']['config']['hsrl_checkpoint']
+        self.init_hsrl_checkpoint = cfg['train']['params']['config']['hsrl_checkpoint']
         self.process_cls = SRLGym_process
         self.wandb_group_name = cfg['experiment'] + 'Group' + datetime.now().strftime("_%d-%H-%M-%S")
         self.wandb_exp_name = cfg['experiment'] + datetime.now().strftime("_%d-%H-%M-%S")
@@ -76,7 +77,7 @@ class SRLGym():
                 project=cfg.wandb_project,
                 group=cfg.wandb_group,
                 tags=cfg.wandb_tags,
-                sync_tensorboard=True,
+                sync_tensorboard=False,
                 id=wandb_unique_id,
                 name=wandb_experiment_name,
                 resume=True,
@@ -145,7 +146,6 @@ class SRLGym():
                 num_iterations=gym_cfg['GA_num_iterations'],
                 mutation_rate=gym_cfg['GA_mutation_rate'],
                 crossover_rate=gym_cfg['GA_crossover_rate'],
-                bounds_scale=gym_cfg['GA_bounds_scale']
             )
 
         # GA_v2
@@ -156,7 +156,6 @@ class SRLGym():
                 num_iterations=gym_cfg['GA_num_iterations'],
                 mutation_rate=gym_cfg['GA_mutation_rate'],
                 crossover_rate=gym_cfg['GA_crossover_rate'],
-                bounds_scale=gym_cfg['GA_bounds_scale']
             )
 
         # Random Search
@@ -295,7 +294,7 @@ class SRLGym():
 
     def design_evaluate(self, design_params, max_epoch=False):
         cfg = self.cfg
-        xml_name = 'hsrl_mode1'
+        xml_name = 'real_hsrl_v1'
 
         # 深拷贝配置
         train_cfg = deepcopy(cfg)
@@ -311,7 +310,7 @@ class SRLGym():
         self.generate_SRL_xml(xml_name, srl_params)
         train_cfg['task']['env']['asset']['assetFileName'] = \
             self.mjcf_folder + '/' + xml_name + '.xml'
-        train_cfg['train']['params']['config']['hsrl_checkpoint'] = False
+        train_cfg['train']['params']['config']['hsrl_checkpoint'] = self.init_hsrl_checkpoint
 
         # 设计参数打进 observation
         if train_cfg['task']['env']['design_param_obs']:
@@ -366,7 +365,7 @@ class SRLGym():
 
     def design_evaluate_with_general_model(self, design_params, max_epoch=False):
         cfg = self.cfg
-        xml_name = 'hsrl_mode1'
+        xml_name = 'real_hsrl_v1'
         train_cfg = deepcopy(cfg)
         train_cfg['wandb_activate'] = False
 
@@ -376,7 +375,7 @@ class SRLGym():
         train_cfg['train']['params']['config']['start_frame'] = 1
         srl_params = design_params
 
-        self.generate_SRL_xml(xml_name, srl_params )
+        self.generate_SRL_xml(xml_name, srl_params)
         train_cfg['task']['env']['asset']['assetFileName'] = self.mjcf_folder + '/' + xml_name + '.xml'
         train_cfg['train']['params']['config']['hsrl_checkpoint'] = self.hsrl_checkpoint
 
@@ -393,19 +392,24 @@ class SRLGym():
 
         runner = self.SubprocRunner(train_cfg)
         try:
-            evaluate_reward, evaluate_info, frame, epoch_num = runner.rlgpu(
-                self.wandb_exp_name, design_params=srl_params
-            ) 
+            job = runner.rlgpu(self.wandb_exp_name, design_params=srl_params)
+            res = job.join()
         except Exception as e:
             print("Error:", e)
             return -9999
         finally:
             runner.close()
 
+        if isinstance(res, Exception):
+            print("Subprocess Error:\n", res)
+            return -9999
+
+        evaluate_reward, evaluate_info, frame, epoch_num = res
+
         self.curr_frame += frame
 
         # compute score
-        evaluate_reward = self.calc_evaluate_reward(evaluate_info, design_params) 
+        evaluate_reward = self.calc_evaluate_reward(evaluate_info, design_params)
 
         # 若训练稳定，则更新 general model
         amp_reward = evaluate_info.get("amp_rewards", 0)
@@ -438,21 +442,21 @@ class SRLGym():
         humanoid_reward = evaluate_info.get("humanoid_rewards", 0)
         ep_length = evaluate_info.get("ep_length", 0)
         amp_reward = evaluate_info.get("amp_rewards", 0)
-        evaluate_reward = humanoid_reward*0.02 \
-                          + design_cost * 5 \
-                          + ep_length * 0.01 \
-                          + amp_reward * 0.01
-        if amp_reward < 150:
+        evaluate_reward = humanoid_reward*0.002 \
+                          + design_cost * 10 \
+                          + ep_length * 0.002 
+        if amp_reward < 1500:
             final_score = -1
         else:
             final_score = evaluate_reward
         return final_score
 
-
     def calc_design_cost(self, design_params):
-        a = math.pi * (0.03 ** 2) * design_params['leg1_length']
-        b = math.pi * (0.03 ** 2) * design_params['leg2_length']
-        return -( a + b )
+        leg1 = design_params['leg1_length']
+        leg2 = design_params['leg2_length']
+        base_distance = design_params['base_distance']
+
+        return -(0.12 * leg1 + 0.12 * leg2 + 0.60 * base_distance)
 
     def _log_evaluate_info(self, evaluate_info, evaluate_reward, srl_params ):
         amp_reward = evaluate_info.get("amp_rewards", 0)
@@ -464,7 +468,7 @@ class SRLGym():
             "Evolution/humanoid_task_reward": humanoid_reward,
             "Evolution/srl_reward": srl_reward,
             "Evolution/ep_length": ep_length,
-            "Evolution/design_cost": design_cost * 500,
+            "Evolution/design_cost": design_cost * 10,
             "Evolution/amp_reward": amp_reward,
             "Evolution/evaluate_value": evaluate_reward,
             "iteration": self.iteration
@@ -483,13 +487,15 @@ class SRLGym():
         train_cfg['train']['params']['config']['start_frame'] = 1
         srl_params = self.best_design_param
 
-        xml_name = 'hsrl_best_design'
-        self.generate_SRL_xml(xml_name,  srl_params)
+        xml_name = 'srl_real_hri_best_design'
+        self.generate_SRL_xml(xml_name, srl_params)
         save_path = os.path.join(self.experiment_dir, 'mjcf')
-        self.generate_SRL_xml(xml_name,  srl_params, save_path=save_path)
+        self.generate_SRL_xml(xml_name, srl_params, save_path=save_path)
 
         train_cfg['task']['env']['asset']['assetFileName'] = self.mjcf_folder + '/' + xml_name + '.xml'
-        train_cfg['train']['params']['config']['hsrl_checkpoint'] = os.path.join(self.experiment_dir, 'nn', 'best_model.pth')
+        train_cfg['train']['params']['config']['hsrl_checkpoint'] = os.path.join(
+            self.experiment_dir, 'nn', 'best_model.pth'
+        )
 
         if train_cfg['task']['env']['design_param_obs']:
             for k in train_cfg['task']['env']['design_params']:
@@ -504,22 +510,27 @@ class SRLGym():
 
         runner = self.SubprocRunner(train_cfg)
         try:
-            evaluate_reward, evaluate_info, frame, epoch_num = runner.rlgpu(
-                self.wandb_exp_name, design_params=srl_params
-            )
+            job = runner.rlgpu(self.wandb_exp_name, design_params=srl_params)
+            res = job.join()
         except Exception as e:
             print("Error:", e)
             return -9999
         finally:
             runner.close()
 
+        if isinstance(res, Exception):
+            print("Subprocess Error:\n", res)
+            return -9999
+
+        evaluate_reward, evaluate_info, frame, epoch_num = res
+
         self.curr_frame += frame
 
         # compute score
-        evaluate_reward = self.calc_evaluate_reward(evaluate_info, srl_params) 
+        evaluate_reward = self.calc_evaluate_reward(evaluate_info, srl_params)
 
         self._log_design_param(srl_params, self.iteration)
-        self._log_evaluate_info(evaluate_info, evaluate_reward, srl_params )
+        self._log_evaluate_info(evaluate_info, evaluate_reward, srl_params)
 
         self.iteration += 1
 
@@ -529,8 +540,8 @@ class SRLGym():
 
     def default_SRL_design_parameters(self):
         return {
-            "leg1_length": 0.60,
-            "leg2_length": 0.55,
+            "leg1_length": 0.661,
+            "leg2_length": 0.590,
             "base_width": 0.095,
             "base_distance": 0.60,
             "enable_freejoint_z": 1,
@@ -539,7 +550,7 @@ class SRLGym():
         }
 
     def SRL_param_space(self):
-        gym_cfg = self.cfg.get("gym", {})
+        gym_cfg = self.cfg["train"]["gym"]
         cfg_space = gym_cfg.get("morphology_space", None)
 
         # 如果 cfg 里没配，就用默认 hard-code 一份，防止报错

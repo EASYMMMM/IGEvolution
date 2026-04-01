@@ -63,6 +63,8 @@ env:
   hri_virtual_damping: 1200
   hri_virtual_force_max: 5000
 
+  HMI_obs_enable: True
+
   # reward weights
   humanoid_share_reward_scale: 0.0
   alive_reward_scale: 1.0
