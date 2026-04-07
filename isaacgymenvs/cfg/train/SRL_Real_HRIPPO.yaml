@@ -129,8 +129,8 @@ gym:
   morphology_space:
     leg1_length:
       type: real
-      low: 0.40
-      high: 0.80
+      low: 0.35
+      high: 0.75
 
     leg2_length:
       type: real

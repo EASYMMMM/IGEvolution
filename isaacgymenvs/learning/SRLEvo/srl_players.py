@@ -669,6 +669,80 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                             plt.tight_layout()  
                             plt.show()                                  
 
+                            # ==================== Analysis Metrics Summary ====================
+                            def _rmse(x):
+                                x = np.asarray(x, dtype=np.float64)
+                                return float(np.sqrt(np.mean(np.square(x))))
+
+                            print("\n" + "=" * 60)
+                            print(" >>> Analysis Metrics Summary <<<")
+                            print("=" * 60)
+
+                            analysis_metrics = []
+
+                            # 1) Forward speed tracking
+                            vel_x_rmse = _rmse(obs_array[:, 1] - obs_array[:, -3])
+                            analysis_metrics.append(("VelX_RMSE (m/s)", vel_x_rmse))
+
+                            # 2) Yaw-rate tracking
+                            yaw_rate_rmse = _rmse(obs_array[:, 6] - obs_array[:, -2])
+                            analysis_metrics.append(("YawRate_RMSE (rad/s)", yaw_rate_rmse))
+
+                            # 3) Base pitch stability
+                            # 这里沿用你当前绘图中的 obs_array[:, 8]，即 Ang Y
+                            base_pitch_rms = float(np.sqrt(np.mean(np.square(obs_array[:, 8]))))
+                            analysis_metrics.append(("BasePitch_RMS (rad)", base_pitch_rms))
+
+                            # 4) Interaction force metrics
+                            if 'srl_virtual_load_cell_array' in locals() and len(srl_virtual_load_cell_array) > 0:
+                                int_forces = np.asarray(srl_virtual_load_cell_array[:, 0:3], dtype=np.float64)
+                                fx = int_forces[:, 0]
+                                fy = int_forces[:, 1]
+                                fz = int_forces[:, 2]
+
+                                shear_force = np.sqrt(fx**2 + fy**2)
+                                force_norm = np.linalg.norm(int_forces, axis=1)
+
+                                analysis_metrics.append(("MeanFz (N)", float(np.mean(fz))))
+                                analysis_metrics.append(("ShearForce_RMS (N)", float(np.sqrt(np.mean(np.square(shear_force))))))
+                                analysis_metrics.append(("ForceNorm_P95 (N)", float(np.percentile(force_norm, 95))))
+                            else:
+                                analysis_metrics.append(("MeanFz (N)", np.nan))
+                                analysis_metrics.append(("ShearForce_RMS (N)", np.nan))
+                                analysis_metrics.append(("ForceNorm_P95 (N)", np.nan))
+
+                            # 5) Human lower-limb torque burden
+                            if 'humanoid_torques_array' in locals() and humanoid_torques_array.size > 0:
+                                leg_indices = [15, 22, 17, 24, 19, 26]  # Hip_Y_R/L, Knee_R/L, Ankle_R/L
+                                leg_tau = np.asarray(humanoid_torques_array[:, leg_indices], dtype=np.float64)
+                                human_leg_torque_rms = float(np.sqrt(np.mean(np.square(leg_tau))))
+                                analysis_metrics.append(("HumanLegTorque_RMS (Nm)", human_leg_torque_rms))
+                            else:
+                                analysis_metrics.append(("HumanLegTorque_RMS (Nm)", np.nan))
+
+                            # 6) SRL total absolute mechanical energy
+                            if 'pmet' in locals():
+                                srl_total_abs_energy = float(pmet['total']['E_total_abs'])
+                            else:
+                                srl_total_abs_energy = np.nan
+                            analysis_metrics.append(("SRL_TotalAbsEnergy (J)", srl_total_abs_energy))
+
+                            # Print table
+                            print(f"{'Metric':<28} | {'Value':>12}")
+                            print("-" * 45)
+                            for name, value in analysis_metrics:
+                                if np.isnan(value):
+                                    print(f"{name:<28} | {'N/A':>12}")
+                                else:
+                                    print(f"{name:<28} | {value:>12.4f}")
+                            for name, value in analysis_metrics:
+                                if np.isnan(value):
+                                    print(f"{'N/A':>12}")
+                                else:
+                                    print(f"{value:>12.4f}")
+                            print("-" * 45)
+                            # ==================== End of Analysis Metrics Summary ====================
+
 
                         if self._save_data:
                             if 0 in done_indices: # 第一个环境结束
