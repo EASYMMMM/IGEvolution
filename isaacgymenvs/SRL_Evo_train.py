@@ -212,7 +212,7 @@ def launch_rlg_hydra(cfg: DictConfig):
     runner.load(rlg_config_dict)
     runner.reset()
 
-    #'''
+    '''
     # 导出jit模型
     # =====================================================================
     import torch
@@ -292,7 +292,7 @@ def launch_rlg_hydra(cfg: DictConfig):
         'checkpoint': cfg.checkpoint,
         'sigma': cfg.sigma if cfg.sigma != '' else None
     })
-    '''
+    #'''
 
 if __name__ == "__main__":
     launch_rlg_hydra()

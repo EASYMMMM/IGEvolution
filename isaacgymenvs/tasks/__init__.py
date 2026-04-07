@@ -67,6 +67,7 @@ from .SRLEvo.srl_hri import SRL_HRI
 from .SRLEvo.srl_bot import SRL_bot
 from .SRLEvo.srl_real_bot import SRL_Real_Bot
 from .SRLEvo.srl_real_hri import SRL_Real_HRI
+from .SRLEvo.srl_real_bot_vir import SRL_Real_Bot_Vir
 
 def resolve_allegro_kuka(cfg, *args, **kwargs):
     subtask_name: str = cfg["env"]["subtask"]
@@ -132,5 +133,6 @@ isaacgym_task_map = {
     "SRL_HRI":SRL_HRI,
     "SRL_Real_Bot":SRL_Real_Bot,
     "SRL_Real_HRI":SRL_Real_HRI,
+    "SRL_Real_Bot_Vir":SRL_Real_Bot_Vir,
     # "HumanoidSRLGym": HumanoidAMPSRLTest,
 }
