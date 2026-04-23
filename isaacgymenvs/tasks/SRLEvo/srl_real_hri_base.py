@@ -43,6 +43,8 @@ class SRL_Real_HRI_Base(VecTask):
 
         self.max_episode_length = self.cfg["env"]["episodeLength"]
         self._local_root_obs = self.cfg["env"]["localRootObs"]
+        # Minimal omni-walk migration: keep train_stage aligned with humanoid solo training.
+        self.train_stage = self.cfg["env"].get("train_stage", 2)  # 1: 站立, 2: 直线, 3: 曲线, 4: 混合
         # self._contact_bodies = self.cfg["env"]["contactBodies"]
         self._contact_bodies = self.cfg["env"]["contactBodies"]  
         self._termination_height = self.cfg["env"]["terminationHeight"]
@@ -290,11 +292,15 @@ class SRL_Real_HRI_Base(VecTask):
         self._traj_sample_times = [0.5, 1.0, 1.5] # 轨迹参数
         self._num_traj_points = len(self._traj_sample_times)
         self._traj_obs_dim = self._num_traj_points * 2 
-        episode_duration = self.max_episode_length * self.control_dt
+        episode_duration = self.max_episode_length * 1.2 * self.control_dt
+        # Minimal omni-walk migration: reuse the same stage-conditioned trajectory labels as humanoid solo training.
+        is_testing = (not headless) or force_render
         self._traj_gen = TrajGenerator(self.num_envs, self.device, self.control_dt, episode_duration,
                                 speed_mean=1.0,      
-                                turn_speed_max=0.0,  # 不要太大，先设为0.5
-                                num_turns=2)         # 转向次数
+                                turn_speed_max=0.5,
+                                num_turns=2,
+                                train_stage=self.train_stage,
+                                is_test=is_testing)
         
         if self.viewer != None:
             self._init_camera()
@@ -821,6 +827,33 @@ class SRL_Real_HRI_Base(VecTask):
         wrench[:, 0:3] = - F
         return wrench
 
+    def _compute_humanoid_obs(self, env_ids=None):
+        # Minimal omni-walk migration: keep the base implementation as the old 6D-traj version,
+        # and let SRL_Real_HRI override this hook with stacked omni-directional commands.
+        virtual_load_cell = self._virtual_load_cell_from_dof(self._dof_pos, self._dof_vel)
+        if (env_ids is None):
+            root_states = self._root_states
+            dof_pos = self._dof_pos
+            dof_vel = self._dof_vel
+            key_body_pos = self._rigid_body_pos[:, self._key_body_ids, :]
+            load_cell_sensor = virtual_load_cell
+            current_time = self.progress_buf * self.control_dt
+            env_ids_flat = torch.arange(self.num_envs, device=self.device)
+            traj_points_world = self._traj_gen.get_observation_points(env_ids_flat, current_time, self._traj_sample_times)
+        else:
+            root_states = self._root_states[env_ids]
+            dof_pos = self._dof_pos[env_ids]
+            dof_vel = self._dof_vel[env_ids]
+            key_body_pos = self._rigid_body_pos[env_ids][:, self._key_body_ids, :]
+            load_cell_sensor = virtual_load_cell[env_ids]
+            current_time = self.progress_buf[env_ids] * self.control_dt
+            traj_points_world = self._traj_gen.get_observation_points(env_ids, current_time, self._traj_sample_times)
+
+        return compute_humanoid_observations(root_states, dof_pos, dof_vel,
+                                            key_body_pos, self._local_root_obs,
+                                            load_cell_sensor, self._humanoid_load_cell_obs,
+                                            traj_points_world)
+
 
     def _compute_observations(self, env_ids=None):
         humanoid_obs, srl_obs, srl_obs_mirrored, priv_extra_obs, priv_extra_obs_mirrored, teacher_srl_obs, potentials, prev_potentials, = self._compute_env_obs(env_ids)
@@ -965,9 +998,6 @@ class SRL_Real_HRI_Base(VecTask):
             left_thigh_rot = self.left_thigh_states[:,3:7]
             left_shin_rot = self.left_shin_states[:,3:7]
             humanoid_legs_rot = torch.stack([right_thigh_rot, right_shin_rot, left_thigh_rot, left_shin_rot], dim=1)
-            current_time = self.progress_buf * self.control_dt
-            env_ids_flat = torch.arange(self.num_envs, device=self.device)
-            traj_points_world = self._traj_gen.get_observation_points(env_ids_flat, current_time, self._traj_sample_times)
         else:
             root_states = self._root_states[env_ids]
             dof_pos = self._dof_pos[env_ids]
@@ -989,11 +1019,7 @@ class SRL_Real_HRI_Base(VecTask):
             left_thigh_rot = self.left_thigh_states[env_ids][:,3:7]
             left_shin_rot = self.left_shin_states[env_ids][:,3:7]
             humanoid_legs_rot = torch.stack([right_thigh_rot, right_shin_rot, left_thigh_rot, left_shin_rot], dim=1)
-            current_time = self.progress_buf[env_ids] * self.control_dt
-            traj_points_world = self._traj_gen.get_observation_points(env_ids, current_time, self._traj_sample_times)
-        humanoid_obs = compute_humanoid_observations(root_states, dof_pos, dof_vel,
-                                            key_body_pos, self._local_root_obs,
-                                            load_cell_sensor, self._humanoid_load_cell_obs, traj_points_world)
+        humanoid_obs = self._compute_humanoid_obs(env_ids)
         srl_dof_num = self.srl_dof_num
         srl_obs, teacher_srl_obs, potentials, prev_potentials,  = compute_srl_observations(phase_buf, initial_dof_pos, srl_root_states, root_states,
                                                                           humanoid_legs_rot, dof_pos[:, -srl_dof_num:], dof_vel[:, -srl_dof_num:],
@@ -1598,6 +1624,14 @@ def compute_srl_observations_mirrored(
     srl_rel_rot = quat_mul(humanoid_root_rot_inv, root_rot)
     humanoid_euler_err = quat_to_euler_ypr(srl_rel_rot)
 
+    if HMI_obs_enable == False:
+        right_thigh_rel_pitch = right_thigh_rel_pitch * 0
+        right_shin_rel_pitch  = right_shin_rel_pitch * 0
+        left_thigh_rel_pitch  = left_thigh_rel_pitch * 0    
+        left_shin_rel_pitch   = left_shin_rel_pitch * 0
+        humanoid_euler_err    = humanoid_euler_err * 0
+        load_cell_force       = load_cell_force * 0
+
     # Mirrored
     local_root_vel[:,1] = -local_root_vel[:,1] # y方向速度
     local_root_ang_vel[:,0] = -local_root_ang_vel[:,0] # x轴角速度
@@ -1614,14 +1648,10 @@ def compute_srl_observations_mirrored(
     humanoid_euler_err[:,0] = -humanoid_euler_err[:,0]
     humanoid_euler_err[:,2] = -humanoid_euler_err[:,2]
 
-    # right_thigh_rel_euler[:,0] = -right_thigh_rel_euler[:,0]
-    # right_thigh_rel_euler[:,2] = -right_thigh_rel_euler[:,2]
-    # right_shin_rel_euler[:,0]  = -right_shin_rel_euler[:,0]
-    # right_shin_rel_euler[:,2]  = -right_shin_rel_euler[:,2]
-    # left_thigh_rel_euler[:,0]  = -left_thigh_rel_euler[:,0]
-    # left_thigh_rel_euler[:,2]  = -left_thigh_rel_euler[:,2]
-    # left_shin_rel_euler[:,0]  = -left_shin_rel_euler[:,0]
-    # left_shin_rel_euler[:,2]  = -left_shin_rel_euler[:,2]
+    right_thigh_rel_pitch_mirrored = left_thigh_rel_pitch.clone()
+    right_shin_rel_pitch_mirrored = left_shin_rel_pitch.clone()
+    left_thigh_rel_pitch_mirrored = right_thigh_rel_pitch.clone()
+    left_shin_rel_pitch_mirrored = right_shin_rel_pitch.clone()
 
     # heading_proj[:,1] = -heading_proj[:,1]
 
@@ -1639,13 +1669,7 @@ def compute_srl_observations_mirrored(
     sin_phase = - sin_phase
     cos_phase = - cos_phase
 
-    if HMI_obs_enable == False:
-        right_thigh_rel_pitch = right_thigh_rel_pitch * 0
-        right_shin_rel_pitch  = right_shin_rel_pitch * 0
-        left_thigh_rel_pitch  = left_thigh_rel_pitch * 0    
-        left_shin_rel_pitch   = left_shin_rel_pitch * 0
-        humanoid_euler_err    = humanoid_euler_err * 0
-        load_cell_force       = load_cell_force * 0
+
 
     obs = torch.cat((root_h,                         # 1
                      local_root_vel  ,               # 3
@@ -1658,10 +1682,10 @@ def compute_srl_observations_mirrored(
                      cos_phase,     
                      humanoid_euler_err,                  
                      load_cell_force * obs_scales[4],       # 6   
-                     right_thigh_rel_pitch,              
-                     right_shin_rel_pitch,      
-                     left_thigh_rel_pitch,               
-                     left_shin_rel_pitch,                      
+                     right_thigh_rel_pitch_mirrored,              
+                     right_shin_rel_pitch_mirrored,      
+                     left_thigh_rel_pitch_mirrored,               
+                     left_shin_rel_pitch_mirrored,                      
                     ), dim=-1)
     return obs  
 
@@ -1726,6 +1750,7 @@ def compute_priv_extra_observations_mirrored(root_states, dof_pos, dof_vel, key_
     flat_local_key_pos_mirrored[:,3:6] = flat_local_key_pos[:,0:3]
     flat_local_key_pos_mirrored[:,6:9] = flat_local_key_pos[:,9:12]
     flat_local_key_pos_mirrored[:,9:12] = flat_local_key_pos[:,6:9]
+    flat_local_key_pos_mirrored[:, 1::3] = -flat_local_key_pos_mirrored[:, 1::3]
 
     # root_h 1; root_rot_obs 6; local_root_vel 3 ; local_root_ang_vel 3 ; dof_obs 58; dof_vel 36 ; load_cell_force 6, flat_local_key_pos 12
     obs = torch.cat((flat_local_key_pos_mirrored,  # 12
@@ -2003,16 +2028,9 @@ def compute_srl_reward(
     contact_threshold = 0.040  
     left_foot_height = srl_end_body_pos[:, 0, 2]  # 获取左脚的位置 
     right_foot_height = srl_end_body_pos[:, 1, 2]  # 获取右脚的位置 
-    # walking
+    # Keep the same dynamic-balance contact rule for walking and standing.
     no_feet_on_ground = (left_foot_height > contact_threshold) & (right_foot_height > contact_threshold)
-    # standing
-    no_both_feet_on_ground = (left_foot_height > contact_threshold) | (right_foot_height > contact_threshold)
-    both_feet_on_ground = (left_foot_height < contact_threshold) & (right_foot_height < contact_threshold)
-    fly_idx = torch.where(target_vel_x < 0.1, no_both_feet_on_ground, no_feet_on_ground)
-    standing_idx = torch.where(target_vel_x < 0.1, both_feet_on_ground, torch.zeros_like(no_feet_on_ground))
-    no_fly_penalty = torch.where(fly_idx, torch.ones_like(no_feet_on_ground) * no_fly_penalty_scale, torch.zeros_like(no_feet_on_ground))
-    standing_reward = torch.where(standing_idx, -0.5*torch.ones_like(no_feet_on_ground) * no_fly_penalty_scale, torch.zeros_like(no_feet_on_ground))
-    no_fly_penalty = no_fly_penalty + standing_reward
+    no_fly_penalty = torch.where(no_feet_on_ground, torch.ones_like(no_feet_on_ground) * no_fly_penalty_scale, torch.zeros_like(no_feet_on_ground))
     no_fly_penalty *= warmup
 
     # --- Feet Lateral Distance ---
@@ -2042,9 +2060,6 @@ def compute_srl_reward(
     flying_miss_left  = expect_flying_left  * is_contact_left
     flying_miss_right = expect_flying_right * is_contact_right
     gait_phase_penalty = gait_similarity_penalty_scale * (stance_miss_left + stance_miss_right + flying_miss_left + flying_miss_right)
-    # standing
-    gait_phase_penalty_coef = torch.where(target_vel_x < 0.1, torch.zeros_like(target_vel_x), torch.ones_like(target_vel_x))
-    gait_phase_penalty =  gait_phase_penalty*gait_phase_penalty_coef
     gait_phase_penalty *= warmup
 
     # --- foot clearance penalty ---
@@ -2205,6 +2220,3 @@ def set_task_target(
     # target_yaw = target_yaw + delta_yaw
 
     return target_vel_x, target_pelvis_height, target_ang_vel_z, target_yaw
-
-
-

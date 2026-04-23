@@ -18,10 +18,14 @@ env:
   stateInit: "Default"  # Default, Random, Hybrid
   hybridInitProb: 0.5
   numAMPObsSteps: 2
+  # Minimal omni-walk migration: keep MARL humanoid task labels aligned with solo humanoid training.
+  train_stage: 2
+  numStateHistSteps: 5
 
   action_scale: 1.0
 
-  localRootObs: False
+  # Minimal omni-walk migration: match the humanoid solo-training observation convention.
+  localRootObs: True
   contactBodies: ["right_foot", "left_foot","right_shin","left_shin"]
   terminationHeight: 0.7
   SRLterminationHeight: 0.70 
@@ -45,7 +49,8 @@ env:
     dynamicFriction: 1.0
     restitution: 0.0
 
-  humanoid_obs_num: 117 # 111 + 6D轨迹跟踪观测
+  # Minimal omni-walk migration: 111D humanoid state stacked by 5 + 12D omni command.
+  humanoid_obs_num: 567
   srl_obs_num: 43
   srl_obs_frame_stack: 5  
   srl_command_num: 3
@@ -208,4 +213,3 @@ task:
             distribution: "gaussian"
             schedule: "linear"  # "linear" will scale the current random sample by `min(current num steps, schedule_steps) / schedule_steps`
             schedule_steps: 3000
-
