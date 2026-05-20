@@ -91,12 +91,12 @@ class SimpleCurveGenerator:
                     next_probs[mask_was_stand, 2] = 0.25
                     next_probs[mask_was_stand, 3] = 0.25
                 
-                # 规则 2: 移动后 -> 30% 站立
+                # 规则 2: 移动后 -> 15% 短暂停留
                 if mask_was_move.any():
-                    next_probs[mask_was_move, 0] = 0.30
-                    next_probs[mask_was_move, 1] = 0.35
-                    next_probs[mask_was_move, 2] = 0.175
-                    next_probs[mask_was_move, 3] = 0.175
+                    next_probs[mask_was_move, 0] = 0.15
+                    next_probs[mask_was_move, 1] = 0.45
+                    next_probs[mask_was_move, 2] = 0.20
+                    next_probs[mask_was_move, 3] = 0.20
                 
                 current_state = torch.multinomial(next_probs, 1).squeeze(-1)
                 seg_types_list.append(current_state)
@@ -110,13 +110,13 @@ class SimpleCurveGenerator:
             mask_move = (seg_types > 0)
             
             if mask_stand.any():
-                raw_duration[mask_stand] = torch.rand(mask_stand.sum(), device=self.device) * 5.0 + 5.0
+                raw_duration[mask_stand] = torch.rand(mask_stand.sum(), device=self.device) * 1.5 + 1.5
             
             if mask_move.any():
-                raw_duration[mask_move] = torch.rand(mask_move.sum(), device=self.device) * 4.0 + 2.0
+                raw_duration[mask_move] = torch.rand(mask_move.sum(), device=self.device) * 2.0 + 3.0
 
-            # 强制每个 episode 开头先静止站立 3 秒
-            forced_stand_duration = 3.0
+            # 强制每个 episode 开头先短暂静止站立
+            forced_stand_duration = 1.5
             raw_duration[:, 0] = forced_stand_duration
 
             total_raw_rest = raw_duration[:, 1:].sum(dim=1, keepdim=True)
@@ -135,12 +135,16 @@ class SimpleCurveGenerator:
             seg_counts[:, -1] += self.num_steps - seg_counts.sum(dim=1)
 
             # === Step D: 构建关键值 ===
-            base_v = self.speed_mean
-            
             key_speed = torch.zeros_like(seg_types, dtype=torch.float)
             key_omega = torch.zeros_like(seg_types, dtype=torch.float)
             
-            key_speed[mask_move] = base_v
+            speed_bins = torch.tensor([0.5, 0.75, 1.0, 1.25, 1.5], device=self.device)
+            speed_probs = torch.tensor([0.15, 0.20, 0.30, 0.20, 0.15], device=self.device)
+            speed_indices = torch.multinomial(speed_probs, seg_types.numel(), replacement=True).view(seg_types.shape)
+            sampled_speed = speed_bins[speed_indices]
+            key_speed[mask_move] = sampled_speed[mask_move]
+            mask_turn = (seg_types == 2) | (seg_types == 3)
+            key_speed[mask_turn] = torch.clamp(key_speed[mask_turn], max=1.25)
             
             rand_omegas = torch.rand(seg_types.shape, device=self.device) * 0.3 + 0.15
             mask_left = (seg_types == 2)
@@ -161,16 +165,19 @@ class SimpleCurveGenerator:
             raw_omega = expanded_omega.view(n, self.num_steps)
 
             # 2. 正常平滑 (为了行走的自然过渡)
-            kernel_size = 60 
-            padding = kernel_size // 2
-            smoothing_kernel = torch.ones((1, 1, kernel_size), device=self.device) / kernel_size
+            speed_kernel_size = 20
+            speed_padding = speed_kernel_size // 2
+            speed_smoothing_kernel = torch.ones((1, 1, speed_kernel_size), device=self.device) / speed_kernel_size
             
             speed_in = raw_speed.unsqueeze(1)
-            speed_smoothed = F.conv1d(speed_in, smoothing_kernel, padding=padding).squeeze(1)
+            speed_smoothed = F.conv1d(speed_in, speed_smoothing_kernel, padding=speed_padding).squeeze(1)
             speed = speed_smoothed[:, :self.num_steps]
 
+            omega_kernel_size = 28
+            omega_padding = omega_kernel_size // 2
+            omega_smoothing_kernel = torch.ones((1, 1, omega_kernel_size), device=self.device) / omega_kernel_size
             omega_in = raw_omega.unsqueeze(1)
-            omega_smoothed = F.conv1d(omega_in, smoothing_kernel, padding=padding).squeeze(1)
+            omega_smoothed = F.conv1d(omega_in, omega_smoothing_kernel, padding=omega_padding).squeeze(1)
             omega = omega_smoothed[:, :self.num_steps]
 
             # 3. 【核心修改】强制覆盖：实现“Stage 1 式”的绝对静止

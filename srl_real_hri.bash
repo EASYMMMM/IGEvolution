@@ -199,9 +199,9 @@ python SRL_Evo_train.py task=SRL_Real_HRI headless=True wandb_project=SRL_Evo wa
     task.env.asset.assetFileName="mjcf/srl_real_hri/srl_real_hri_v1_HXYK_175_mesh.xml"  
 # check  
 python SRL_Evo_train.py test=True task=SRL_Real_HRI  num_envs=4 task.env.srl_max_effort=150 \
-       checkpoint=runs/SRL_Real_HRI_v1_22-14-58-26/nn/SRL_Real_HRI_v1_22-14-58-34.pth  \
+       checkpoint=runs/SRL_Real_HRI_v1_24-14-54-37/nn/SRL_Real_HRI_v1_24-14-54-43.pth   \
        task.env.train_stage=4  task.env.enableDebugVis=True num_envs=1\
-       task.env.episodeLength=2000    force_render=True task.env.cameraFollow=True  task.env.srl_free_actions_num=5  \
+       task.env.episodeLength=4000    force_render=True task.env.cameraFollow=True  task.env.srl_free_actions_num=5  \
        task.env.asset.assetFileName="mjcf/srl_real_hri/srl_real_hri_v1_HXYK_175_mesh.xml"
 
 

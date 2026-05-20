@@ -67,6 +67,9 @@ class SRL_Real_HRI_Base(VecTask):
         self.hri_virtual_damping = self.cfg["env"].get("hri_virtual_damping", 3000.0)
         self.hri_virtual_force_max = self.cfg["env"].get("hri_virtual_force_max", 1000.0)
         self.action_scale = self.cfg["env"].get("action_scale", 1.0)
+        self.srl_action_filter_enable = self.cfg["env"].get("srl_action_filter_enable", True)
+        self.srl_action_filter_cutoff_hz = self.cfg["env"].get("srl_action_filter_cutoff_hz", 4.0)
+        self.srl_action_filter_order = self.cfg["env"].get("srl_action_filter_order", 2)
         self.srl_dof_num = self.srl_actions_num + self.srl_free_actions_num
         self.HMI_obs_enable = self.cfg["env"].get("HMI_obs_enable", True)
 
@@ -130,6 +133,7 @@ class SRL_Real_HRI_Base(VecTask):
 
         dt = self.cfg["sim"]["dt"]
         self.control_dt = self.control_freq_inv * dt
+        self._init_srl_action_filter()
 
         # ==========================================================
         # 电机优化参数 (针对 RI80 设计)
@@ -199,6 +203,8 @@ class SRL_Real_HRI_Base(VecTask):
             self.num_envs, device=self.device, dtype=torch.long)
         self.actions = torch.zeros(
             (self.num_envs, self.num_actions), device=self.device, dtype=torch.float)
+        self.raw_actions = torch.zeros(
+            (self.num_envs, self.num_actions), device=self.device, dtype=torch.float)
         self._dof_state = gymtorch.wrap_tensor(dof_state_tensor)
         self._dof_pos = self._dof_state.view(self.num_envs, self.num_dof, 2)[..., 0]
         self._dof_vel = self._dof_state.view(self.num_envs, self.num_dof, 2)[..., 1]
@@ -260,6 +266,15 @@ class SRL_Real_HRI_Base(VecTask):
         self.srl_obs_buffer = torch.zeros((self.num_envs, self.srl_obs_frame_stack, self.srl_obs_num), device=self.device)
         self.srl_obs_mirrored_buffer = torch.zeros((self.num_envs, self.srl_obs_frame_stack, self.srl_obs_num), device=self.device)
         self.teacher_srl_obs_buffer = torch.zeros((self.num_envs, self.srl_obs_frame_stack, self.teacher_srl_obs_num), device=self.device)
+        self.srl_pd_targets = torch.zeros(
+            (self.num_envs, self.srl_actions_num), device=self.device, dtype=torch.float
+        )
+        q0 = self._dof_pos[:, -self.srl_actions_num:].clone()
+        self.srl_lpf_x1 = q0.clone()
+        self.srl_lpf_x2 = q0.clone()
+        self.srl_lpf_y1 = q0.clone()
+        self.srl_lpf_y2 = q0.clone()
+        self.srl_pd_targets[:] = q0
 
 
         self.humanoid_task_rew_buf = torch.zeros(
@@ -370,6 +385,52 @@ class SRL_Real_HRI_Base(VecTask):
             self.apply_randomizations(self.randomization_params)
 
         return
+
+    def _init_srl_action_filter(self):
+        if self.srl_action_filter_order != 2:
+            raise ValueError(
+                f"Only second-order Butterworth filter is supported, got order={self.srl_action_filter_order}."
+            )
+
+        sample_freq = 1.0 / self.control_dt
+        cutoff_hz = min(self.srl_action_filter_cutoff_hz, 0.499 * sample_freq)
+        k = math.tan(math.pi * cutoff_hz / sample_freq)
+        norm = 1.0 / (1.0 + math.sqrt(2.0) * k + k * k)
+        self.srl_lpf_b0 = float(k * k * norm)
+        self.srl_lpf_b1 = float(2.0 * self.srl_lpf_b0)
+        self.srl_lpf_b2 = float(self.srl_lpf_b0)
+        self.srl_lpf_a1 = float(2.0 * (k * k - 1.0) * norm)
+        self.srl_lpf_a2 = float((1.0 - math.sqrt(2.0) * k + k * k) * norm)
+
+    def _reset_srl_action_filter(self, env_ids):
+        q0 = self._dof_pos[env_ids, -self.srl_actions_num:].clone()
+        self.srl_lpf_x1[env_ids] = q0
+        self.srl_lpf_x2[env_ids] = q0
+        self.srl_lpf_y1[env_ids] = q0
+        self.srl_lpf_y2[env_ids] = q0
+        self.srl_pd_targets[env_ids] = q0
+        return
+
+    def _apply_srl_pd_target_filter(self, raw_srl_pd_target):
+        # SRL-only causal second-order Butterworth LPF for sim-to-real action smoothing.
+        # Training and deployment should use the same filter to avoid deployment-only phase lag.
+        y = (
+            self.srl_lpf_b0 * raw_srl_pd_target
+            + self.srl_lpf_b1 * self.srl_lpf_x1
+            + self.srl_lpf_b2 * self.srl_lpf_x2
+            - self.srl_lpf_a1 * self.srl_lpf_y1
+            - self.srl_lpf_a2 * self.srl_lpf_y2
+        )
+        self.srl_lpf_x2[:] = self.srl_lpf_x1
+        self.srl_lpf_x1[:] = raw_srl_pd_target
+        self.srl_lpf_y2[:] = self.srl_lpf_y1
+        self.srl_lpf_y1[:] = y
+        return y
+
+    def _srl_pd_targets_to_action(self, srl_pd_target):
+        action_offset = self._pd_action_offset[-self.srl_actions_num:]
+        action_scale = self._pd_action_scale[-self.srl_actions_num:] * self.action_scale
+        return torch.clamp((srl_pd_target - action_offset) / (action_scale + 1e-8), -1.0, 1.0)
 
     def reset_idx(self, env_ids):
         self._reset_actors(env_ids)
@@ -1055,6 +1116,7 @@ class SRL_Real_HRI_Base(VecTask):
         self.gym.set_dof_state_tensor_indexed(self.sim,
                                               gymtorch.unwrap_tensor(self._dof_state),
                                               gymtorch.unwrap_tensor(env_ids_int32), len(env_ids_int32))
+        self._reset_srl_action_filter(env_ids)
 
         self.progress_buf[env_ids] = 0
         self.reset_buf[env_ids] = 0
@@ -1063,14 +1125,24 @@ class SRL_Real_HRI_Base(VecTask):
         return
 
     def pre_physics_step(self, actions):
-        self.actions = actions.to(self.device).clone()
+        self.raw_actions = actions.to(self.device).clone()
+        self.actions = self.raw_actions.clone()
         # [humanoid_joint, free_joint, srl_joint]
         total_action_num = self.humanoid_actions_num+self.srl_free_actions_num+self.srl_actions_num
         _action = torch.zeros([self.num_envs, total_action_num ], device=self.device)
-        _action[:, :self.humanoid_actions_num] = self.actions[:, :self.humanoid_actions_num]
-        _action[:, -self.srl_actions_num:] = self.actions[:, -self.srl_actions_num:]
+        _action[:, :self.humanoid_actions_num] = self.raw_actions[:, :self.humanoid_actions_num]
+        _action[:, -self.srl_actions_num:] = self.raw_actions[:, -self.srl_actions_num:]
+
+        pd_tar = self._action_to_pd_targets(_action)
+        raw_srl_pd_target = pd_tar[:, -self.srl_actions_num:].clone()
+        if self.srl_action_filter_enable:
+            filtered_srl_pd_target = self._apply_srl_pd_target_filter(raw_srl_pd_target)
+            pd_tar[:, -self.srl_actions_num:] = filtered_srl_pd_target
+            # Keep humanoid actions raw while exposing the executed SRL command to obs/reward history.
+            self.actions[:, -self.srl_actions_num:] = self._srl_pd_targets_to_action(filtered_srl_pd_target)
+        self.srl_pd_targets[:] = pd_tar[:, -self.srl_actions_num:]
+
         if self._force_control:
-            pd_tar = self._action_to_pd_targets(_action)
             torques = self.p_gains*(pd_tar - self._dof_pos) - self.d_gains*self._dof_vel
             self.torques = torch.clip(torques, -self.torque_limits, self.torque_limits).view(self.torques.shape)
             self.humanoid_torques = self.torques[:,:self.get_humanoid_action_size()].clone()
@@ -1083,7 +1155,6 @@ class SRL_Real_HRI_Base(VecTask):
             # self.torques[:, self.srl_virtual_damping_ids] = Fv
             self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(self.torques))
         if self._pd_control:
-            pd_tar = self._action_to_pd_targets(_action) # pd_tar.shape: [num_actors, num_dofs]
             if self._force_control:
                 pd_tar[:,self.get_humanoid_action_size():] = 0.00
             pd_tar_tensor = gymtorch.unwrap_tensor(pd_tar)
@@ -1107,7 +1178,11 @@ class SRL_Real_HRI_Base(VecTask):
 
         # SRL reward & Obs
         self.extras["srl_rewards"] = self.srl_rew_buf.to(self.rl_device)
-        self.extras["x_velocity"] = self.obs_buf[:,7]                            
+        self.extras["x_velocity"] = self.obs_buf[:,7]
+        self.extras["srl_debug_actions"] = self.actions[0, -self.srl_actions_num:].to(self.rl_device)
+        self.extras["srl_debug_pd_targets"] = self.srl_pd_targets[0].to(self.rl_device)
+        self.extras["srl_debug_torques"] = self.torques[0, -self.srl_actions_num:].to(self.rl_device)
+        self.extras["srl_debug_joint_pos"] = self._dof_pos[0, -self.srl_actions_num:].to(self.rl_device)
 
         # plotting
         if self.viewer != None:

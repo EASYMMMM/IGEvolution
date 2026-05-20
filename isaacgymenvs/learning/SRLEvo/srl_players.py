@@ -30,6 +30,9 @@ SRL-Gym
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import csv
+import os
+
 import torch 
 
 from rl_games.algos_torch import torch_ext
@@ -172,166 +175,188 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
             current_action = action
         if self.has_batch_dimension == False:
             current_action = torch.squeeze(current_action.detach())
+        current_action = current_action.detach()
 
         if self.clip_actions:
-            return rescale_actions(self.actions_low, self.actions_high, torch.clamp(current_action, -1.0, 1.0))
+            applied_action = rescale_actions(self.actions_low, self.actions_high, torch.clamp(current_action, -1.0, 1.0))
         else:
-            return current_action
+            applied_action = current_action
+        return applied_action
         
         
     def run(self):
         with torch.no_grad():
-            n_games = self.games_num
-            render = self.render_env
-            n_game_life = self.n_game_life
-            is_determenistic = self.play_deterministic
-            sum_rewards = 0
-            sum_steps = 0
-            sum_game_res = 0
-            n_games = n_games * n_game_life
-            games_played = 0
-            has_masks = False
-            has_masks_func = getattr(self.env, "has_action_mask", None) is not None
+            csv_dir = os.path.join('run_data')
+            os.makedirs(csv_dir, exist_ok=True)
+            csv_path = os.path.join(csv_dir, 'srl_policy_outputs_env0.csv')
+            srl_action_dim = self.env.get_srl_action_size()
+            csv_header = ['episode', 'step', 'time_sec']
+            csv_header += [f'action_{i}' for i in range(srl_action_dim)]
+            csv_header += [f'pd_target_{i}' for i in range(srl_action_dim)]
+            csv_header += [f'torque_{i}' for i in range(srl_action_dim)]
+            csv_header += [f'joint_pos_{i}' for i in range(srl_action_dim)]
+            with open(csv_path, 'w', newline='') as csv_file:
+                csv_writer = csv.writer(csv_file)
+                csv_writer.writerow(csv_header)
 
-            op_agent = getattr(self.env, "create_agent", None)
-            if op_agent:
-                agent_inited = True
+                n_games = self.games_num
+                render = self.render_env
+                n_game_life = self.n_game_life
+                is_determenistic = self.play_deterministic
+                sum_rewards = 0
+                sum_steps = 0
+                sum_game_res = 0
+                n_games = n_games * n_game_life
+                games_played = 0
+                has_masks = False
+                has_masks_func = getattr(self.env, "has_action_mask", None) is not None
 
-            if has_masks_func:
-                has_masks = self.env.has_action_mask()
+                op_agent = getattr(self.env, "create_agent", None)
+                if op_agent:
+                    agent_inited = True
 
-            # 存储第一个环境的动作数据
-            actions_env0 = []
-            episode_count_env0 = 0
-            # 新增：为每个 episode 创建列表来存储数据
-            episode_data = {
-                'root_pos': [],
-                'srl_end_pos': [],
-                'srl_end_vel': [],
-                'key_body_pos': [],
-                'action':[],
-                'obs':[],
-                'done':[],
-            }
+                if has_masks_func:
+                    has_masks = self.env.has_action_mask()
 
-            load_cell_data = []
+                # 存储第一个环境的动作数据
+                actions_env0 = []
+                episode_count_env0 = 0
+                # 新增：为每个 episode 创建列表来存储数据
+                episode_data = {
+                    'root_pos': [],
+                    'srl_end_pos': [],
+                    'srl_end_vel': [],
+                    'key_body_pos': [],
+                    'action':[],
+                    'obs':[],
+                    'done':[],
+                }
 
-            need_init_rnn = self.is_rnn
-            print('Start Playing')
-            for _ in range(n_games):
-                if games_played >= n_games:
-                    break
+                load_cell_data = []
 
-                obs_dict = self.env_reset(self.env)
-                batch_size = 1
-                batch_size = self.get_batch_size(obs_dict['obs'], batch_size)
+                need_init_rnn = self.is_rnn
+                print('Start Playing')
+                print(f"Saving SRL policy outputs to {csv_path}")
+                for _ in range(n_games):
+                    if games_played >= n_games:
+                        break
 
-                if need_init_rnn:
-                    self.init_rnn()
-                    need_init_rnn = False
+                    obs_dict = self.env_reset(self.env)
+                    batch_size = 1
+                    batch_size = self.get_batch_size(obs_dict['obs'], batch_size)
 
-                cr = torch.zeros(batch_size, dtype=torch.float32)
-                cr_srl = torch.zeros(batch_size, dtype=torch.float32)
-                steps = torch.zeros(batch_size, dtype=torch.float32)
+                    if need_init_rnn:
+                        self.init_rnn()
+                        need_init_rnn = False
 
-                print_game_res = False
+                    cr = torch.zeros(batch_size, dtype=torch.float32)
+                    cr_srl = torch.zeros(batch_size, dtype=torch.float32)
+                    steps = torch.zeros(batch_size, dtype=torch.float32)
 
-                episode_actions = []
-                episode_velocity = []
+                    print_game_res = False
 
-                for n in range(self.max_steps):
-                    obs_dict, done_env_ids = self._env_reset_done()
+                    episode_actions = []
+                    episode_velocity = []
 
-                    if has_masks:
-                        masks = self.env.get_action_mask()
-                        action = self.get_masked_action(obs_dict, masks, is_determenistic)
-                    else:
-                        action = self.get_action(obs_dict, is_determenistic)
+                    for n in range(self.max_steps):
+                        obs_dict, done_env_ids = self._env_reset_done()
 
-                    obs_dict, r, done, info =  self.env_step(self.env, action)
-                    cr += r
-                    steps += 1
-                    rewards_srl = info["srl_rewards"].cpu()
-                    cr_srl += rewards_srl
+                        if has_masks:
+                            masks = self.env.get_action_mask()
+                            action = self.get_masked_action(obs_dict, masks, is_determenistic)
+                        else:
+                            action = self.get_action(obs_dict, is_determenistic)
 
-                    obs = obs_dict['obs']  # shape: [num_envs, obs_dim]
-                    if isinstance(obs, torch.Tensor):
-                        obs_np = obs.detach().cpu().numpy()[0, -self.obs_num_srl:]  # 取第一个环境
-                    else:
-                        obs_np = np.array(obs[0, :])
-                    self.obs_log.append(obs_np)
-                    self.target_yaw_log.append(info['target_yaw'].cpu().numpy())
-                    self.load_cell_fd_log.append(info['load_cell_fd'].cpu().numpy())
-                    self.load_cell_log.append(info['load_cell'].cpu().numpy())
-                    self.srl_virtual_passive_pos_log.append(info['srl_virtual_passive_pos'].cpu().numpy())
-                    self.srl_virtual_load_cell_log.append(info['srl_virtual_load_cell'].cpu().numpy())
-                    self.srl_torques_log.append(info['srl_torques'].cpu().numpy())
-                    self.humanoid_torques_log.append(info['humanoid_torques'].cpu().numpy())
-                    self._post_step(info)
+                        obs_dict, r, done, info =  self.env_step(self.env, action)
+                        csv_row = [episode_count_env0 + 1, n, n * float(self.env.control_dt)]
+                        csv_row += info['srl_debug_actions'].detach().cpu().tolist()
+                        csv_row += info['srl_debug_pd_targets'].detach().cpu().tolist()
+                        csv_row += info['srl_debug_torques'].detach().cpu().tolist()
+                        csv_row += info['srl_debug_joint_pos'].detach().cpu().tolist()
+                        csv_writer.writerow(csv_row)
+                        cr += r
+                        steps += 1
+                        rewards_srl = info["srl_rewards"].cpu()
+                        cr_srl += rewards_srl
+
+                        obs = obs_dict['obs']  # shape: [num_envs, obs_dim]
+                        if isinstance(obs, torch.Tensor):
+                            obs_np = obs.detach().cpu().numpy()[0, -self.obs_num_srl:]  # 取第一个环境
+                        else:
+                            obs_np = np.array(obs[0, :])
+                        self.obs_log.append(obs_np)
+                        self.target_yaw_log.append(info['target_yaw'].cpu().numpy())
+                        self.load_cell_fd_log.append(info['load_cell_fd'].cpu().numpy())
+                        self.load_cell_log.append(info['load_cell'].cpu().numpy())
+                        self.srl_virtual_passive_pos_log.append(info['srl_virtual_passive_pos'].cpu().numpy())
+                        self.srl_virtual_load_cell_log.append(info['srl_virtual_load_cell'].cpu().numpy())
+                        self.srl_torques_log.append(info['srl_torques'].cpu().numpy())
+                        self.humanoid_torques_log.append(info['humanoid_torques'].cpu().numpy())
+                        self._post_step(info)
                     
-                    # 只记录第一个环境的动作
-                    episode_actions.append(action[0].cpu().numpy())  # 假设动作输出是Tensor
-                    episode_velocity.append(info["x_velocity"][0].cpu().numpy()) # 
+                        # 只记录第一个环境的动作
+                        episode_actions.append(action[0].cpu().numpy())  # 假设动作输出是Tensor
+                        episode_velocity.append(info["x_velocity"][0].cpu().numpy()) # 
 
-                    # 记录第一个智能体的肢体位置数据
-                    root_pos = info["root_pos"].cpu().numpy()
-                    srl_end_pos = info["srl_end_pos"].cpu().numpy()
-                    srl_end_vel = info["srl_end_vel"].cpu().numpy()
-                    key_body_pos = info["key_body_pos"].cpu().numpy()
-                    dof_pos = info["dof_pos"].cpu().numpy()
-                    # 将这些数据分别存储在当前 episode 的对应列表中
-                    episode_data['root_pos'].append(root_pos)
-                    episode_data['srl_end_pos'].append(srl_end_pos)
-                    episode_data['srl_end_vel'].append(srl_end_vel)
-                    episode_data['key_body_pos'].append(key_body_pos)
-                    episode_data['action'].append(action[0].cpu().numpy())
-                    episode_data['obs'].append( dof_pos)
+                        # 记录第一个智能体的肢体位置数据
+                        root_pos = info["root_pos"].cpu().numpy()
+                        srl_end_pos = info["srl_end_pos"].cpu().numpy()
+                        srl_end_vel = info["srl_end_vel"].cpu().numpy()
+                        key_body_pos = info["key_body_pos"].cpu().numpy()
+                        dof_pos = info["dof_pos"].cpu().numpy()
+                        # 将这些数据分别存储在当前 episode 的对应列表中
+                        episode_data['root_pos'].append(root_pos)
+                        episode_data['srl_end_pos'].append(srl_end_pos)
+                        episode_data['srl_end_vel'].append(srl_end_vel)
+                        episode_data['key_body_pos'].append(key_body_pos)
+                        episode_data['action'].append(action[0].cpu().numpy())
+                        episode_data['obs'].append( dof_pos)
 
-                    if self._save_load_cell_data:
-                        # MLY: 绘图时选择交互位置六轴力传感器或者足部数据
-                        # load_cell_val = info["load_cell"].cpu().numpy()
-                        load_cell_val = info["right_srl_end_sensor"].cpu().numpy()
-                        load_cell_data.append(load_cell_val)
+                        if self._save_load_cell_data:
+                            # MLY: 绘图时选择交互位置六轴力传感器或者足部数据
+                            # load_cell_val = info["load_cell"].cpu().numpy()
+                            load_cell_val = info["right_srl_end_sensor"].cpu().numpy()
+                            load_cell_data.append(load_cell_val)
                     
-                    if render:
-                        self.env.render(mode = 'human')
-                        time.sleep(self.render_sleep)
+                        if render:
+                            self.env.render(mode = 'human')
+                            time.sleep(self.render_sleep)
 
-                    all_done_indices = done.nonzero(as_tuple=False)
-                    done_indices = all_done_indices[::self.num_agents]
-                    done_count = len(done_indices)
-                    games_played += done_count
-                    if 0 in done_indices:
-                        episode_data['done'].append(1)
-                    else:
-                        episode_data['done'].append(0)
-
-                    # FIXME: 是否画图
-                    if done_count > 0: # if done_count > 0:
+                        all_done_indices = done.nonzero(as_tuple=False)
+                        done_indices = all_done_indices[::self.num_agents]
+                        done_count = len(done_indices)
+                        games_played += done_count
                         if 0 in done_indices:
-                            # 转为 numpy 数组，shape: [T, D]
-                            target_yaw = []
-                            obs_array = np.stack(self.obs_log, axis=0)
-                            target_yaw = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.target_yaw_log], axis=0)
-                            load_cell_fd_array = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.load_cell_fd_log], axis=0)
-                            load_cell_array = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.load_cell_log], axis=0)
-                            srl_virtual_passive_pos_array = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.srl_virtual_passive_pos_log], axis=0)
-                            srl_virtual_load_cell_array = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.srl_virtual_load_cell_log], axis=0)
-                            srl_torques_array = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.srl_torques_log], axis=0)
-                            humanoid_torques_array = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.humanoid_torques_log], axis=0)
-                            self.obs_log.clear()
-                            self.target_yaw_log.clear()
-                            self.load_cell_fd_log.clear()
-                            self.load_cell_log.clear()
-                            self.srl_virtual_passive_pos_log.clear()
-                            self.srl_virtual_load_cell_log.clear()
-                            self.srl_torques_log.clear()
-                            self.humanoid_torques_log.clear()
-                            
-                            num_dims = 51 
-                            split1 = 17  # Part 1 包含 0 到 16 (共 17 维)
-                            split2 = 34  # Part 2 包含 17 到 33 (共 17 维)
-                            dims_per_plot = split1 # 每张图的维度数量，这里是 17
+                            episode_data['done'].append(1)
+                        else:
+                            episode_data['done'].append(0)
+
+                        # FIXME: 是否画图
+                        if done_count > 0: # if done_count > 0:
+                            if 0 in done_indices:
+                                # 转为 numpy 数组，shape: [T, D]
+                                target_yaw = []
+                                obs_array = np.stack(self.obs_log, axis=0)
+                                target_yaw = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.target_yaw_log], axis=0)
+                                load_cell_fd_array = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.load_cell_fd_log], axis=0)
+                                load_cell_array = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.load_cell_log], axis=0)
+                                srl_virtual_passive_pos_array = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.srl_virtual_passive_pos_log], axis=0)
+                                srl_virtual_load_cell_array = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.srl_virtual_load_cell_log], axis=0)
+                                srl_torques_array = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.srl_torques_log], axis=0)
+                                humanoid_torques_array = np.stack([t if isinstance(t, np.ndarray) else t.cpu().numpy() for t in self.humanoid_torques_log], axis=0)
+                                self.obs_log.clear()
+                                self.target_yaw_log.clear()
+                                self.load_cell_fd_log.clear()
+                                self.load_cell_log.clear()
+                                self.srl_virtual_passive_pos_log.clear()
+                                self.srl_virtual_load_cell_log.clear()
+                                self.srl_torques_log.clear()
+                                self.humanoid_torques_log.clear()
+                                
+                                num_dims = 51 
+                                split1 = 17  # Part 1 包含 0 到 16 (共 17 维)
+                                split2 = 34  # Part 2 包含 17 到 33 (共 17 维)
+                                dims_per_plot = split1 # 每张图的维度数量，这里是 17
 
                             # --- Part 1: 维度 0 到 split1 - 1 (共 17 维) ---
                             start_dim1 = 0
@@ -868,37 +893,41 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
 
                                 load_cell_data = []
 
-                        if self.is_rnn:
-                            for s in self.states:
-                                s[:,all_done_indices,:] = s[:,all_done_indices,:] * 0.0
+                        if done_count > 0:
+                            if self.is_rnn:
+                                for s in self.states:
+                                    s[:,all_done_indices,:] = s[:,all_done_indices,:] * 0.0
 
-                        cur_rewards = cr[done_indices].sum().item()
-                        cur_steps = steps[done_indices].sum().item()
-                        cur_srl_rewards = cr_srl[done_indices].sum().item()
+                            cur_rewards = cr[done_indices].sum().item()
+                            cur_steps = steps[done_indices].sum().item()
+                            cur_srl_rewards = cr_srl[done_indices].sum().item()
 
-                        cr = cr * (1.0 - done.float())
-                        cr_srl = cr_srl * (1.0 - done.float())
-                        steps = steps * (1.0 - done.float())
-                        sum_rewards += cur_rewards
-                        sum_steps += cur_steps
+                            cr = cr * (1.0 - done.float())
+                            cr_srl = cr_srl * (1.0 - done.float())
+                            steps = steps * (1.0 - done.float())
+                            sum_rewards += cur_rewards
+                            sum_steps += cur_steps
 
-                        game_res = 0.0
-                        if self.print_stats:
-                            if print_game_res:
-                                print('reward:', cur_rewards/done_count, 'steps:', cur_steps/done_count, 'w:', game_res)
-                            else:
-                                print('reward:', cur_rewards/done_count, 'steps:', cur_steps/done_count)
-                                print('SRL reward:', cur_srl_rewards/done_count, 'steps:', cur_steps/done_count)
+                            game_res = 0.0
+                            if self.print_stats:
+                                if print_game_res:
+                                    print('reward:', cur_rewards/done_count, 'steps:', cur_steps/done_count, 'w:', game_res)
+                                else:
+                                    print('reward:', cur_rewards/done_count, 'steps:', cur_steps/done_count)
+                                    print('SRL reward:', cur_srl_rewards/done_count, 'steps:', cur_steps/done_count)
 
-                        sum_game_res += game_res
-                        if batch_size//self.num_agents == 1 or games_played >= n_games:
-                            break
+                            sum_game_res += game_res
+                            if batch_size//self.num_agents == 1 or games_played >= n_games:
+                                break
 
         print(sum_rewards)
-        if print_game_res:
-            print('av reward:', sum_rewards / games_played * n_game_life, 'av steps:', sum_steps / games_played * n_game_life, 'winrate:', sum_game_res / games_played * n_game_life)
+        if games_played > 0:
+            if print_game_res:
+                print('av reward:', sum_rewards / games_played * n_game_life, 'av steps:', sum_steps / games_played * n_game_life, 'winrate:', sum_game_res / games_played * n_game_life)
+            else:
+                print('av reward:', sum_rewards / games_played * n_game_life, 'av steps:', sum_steps / games_played * n_game_life)
         else:
-            print('av reward:', sum_rewards / games_played * n_game_life, 'av steps:', sum_steps / games_played * n_game_life)
+            print('No completed episodes were recorded during this run.')
 
         return
     def action0_ave(self, actions_env0):

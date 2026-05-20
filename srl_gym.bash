@@ -64,6 +64,6 @@ python SRLGym_train.py task=SRL_Real_HRI experiment=SRLGym_real_hsrl_GA  headles
 
 # check
 python SRL_Evo_train.py test=True task=SRL_Real_HRI  num_envs=4 task.env.srl_max_effort=150 \
-       checkpoint=runs/SRLGym_real_hsrl_BO_Evo_25-12-29-27/nn/final_best_model.pth \
-       task.env.episodeLength=2000    force_render=True task.env.cameraFollow=True  task.env.srl_free_actions_num=5  \
-       task.env.asset.assetFileName="mjcf/hsrl_auto_gen/srl_real_hri_best_design.xml"
+       checkpoint=runs/SRLGym_real_hsrl_GA_Evo_30-16-32-54/nn/final_best_model.pth \
+       task.env.episodeLength=4000    force_render=True task.env.cameraFollow=True  task.env.srl_free_actions_num=5  \
+       task.env.asset.assetFileName="mjcf/hsrl_auto_gen/GA_30-16_srl_real_hri_best_design.xml"

@@ -667,6 +667,7 @@ class SRL_Real_HRI(SRL_Real_HRI_Base):
         self.progress_buf[env_ids] = 0
         self.reset_buf[env_ids] = 0
         self._terminate_buf[env_ids] = 0
+        self._reset_srl_action_filter(env_ids)
 
         return
     
@@ -776,6 +777,7 @@ class SRL_Real_HRI(SRL_Real_HRI_Base):
                                                     gymtorch.unwrap_tensor(env_ids_int32), len(env_ids_int32))
         self.gym.set_dof_state_tensor_indexed(self.sim, gymtorch.unwrap_tensor(self._dof_state),
                                                     gymtorch.unwrap_tensor(env_ids_int32), len(env_ids_int32))
+        self._reset_srl_action_filter(env_ids)
         return
 
     def _update_hist_amp_obs(self, env_ids=None):
