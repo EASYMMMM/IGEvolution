@@ -51,7 +51,10 @@ env:
 
   # Minimal omni-walk migration: 111D humanoid state stacked by 5 + 12D omni command.
   humanoid_obs_num: 567
+  # srl_obs_num is the complete single-frame SRL obs used by reward/reset.
+  # srl_obs_buf seen by the policy removes these simulator-only fields.
   srl_obs_num: 43
+  srl_policy_obs_remove_ids: [0, 1, 2, 3]  # root_h and local_root_vel
   srl_obs_frame_stack: 5  
   srl_command_num: 3
   teacher_srl_obs_num: 30

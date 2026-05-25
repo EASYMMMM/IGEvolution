@@ -326,6 +326,7 @@ class SRL_Real_HRI(SRL_Real_HRI_Base):
         for env_id in env_ids:
             self.srl_obs_buffer[env_id] = 0
             self.srl_obs_mirrored_buffer[env_id] = 0
+            self.srl_full_obs_buffer[env_id] = 0
             self.teacher_srl_obs_buffer[env_id] = 0
         self.srl_tau2_ema[env_ids] = 0.0
         self.srl_peak_ratio_window[env_ids] = 0.0
@@ -589,7 +590,7 @@ class SRL_Real_HRI(SRL_Real_HRI_Base):
             self.humanoid_task_rew_buf[:] = walk_reward
 
         self.srl_rew_buf[:]  = compute_srl_reward(
-            self.srl_obs_buf[:],
+            self.srl_full_obs_buf[:],
             clearance_reward,
             to_target,
             self.progress_buf,
@@ -604,7 +605,7 @@ class SRL_Real_HRI(SRL_Real_HRI_Base):
             self.max_episode_length,
             self.gait_period,
             self.humanoid_task_rew_buf,
-            srl_obs_num=self.srl_obs_num,
+            srl_obs_num=self.srl_full_obs_num,
             alive_reward_scale=self.alive_reward_scale,
             humanoid_share_reward_scale=self.humanoid_share_reward_scale,
             progress_reward_scale=self.progress_reward_scale,

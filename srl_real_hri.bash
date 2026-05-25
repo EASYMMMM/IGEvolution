@@ -145,6 +145,7 @@ python SRL_Evo_train.py test=True task=SRL_Real_HRI  num_envs=4 task.env.srl_max
        task.env.asset.assetFileName="mjcf/srl_real_hri/srl_real_hri_v1_HXYK_175_mesh.xml"
 
 # (4.17) SRL+HUMANOID MARL框架中引入全向行走  
+# (5.20) obs中去除高度，线速度
 # 从s4 humanoid预训练结果开始, 暂时训练S2直线
 python SRL_Evo_train.py task=SRL_Real_HRI headless=True wandb_project=SRL_Evo wandb_activate=True \
     train.params.config.humanoid_checkpoint=runs/Humanoid_175_Pretrain_s3_20-13-56-52/nn/Humanoid_175_Pretrain_s3_20-13-56-58.pth \
@@ -161,13 +162,13 @@ python SRL_Evo_train.py task=SRL_Real_HRI headless=True wandb_project=SRL_Evo wa
     task.env.asset.assetFileName="mjcf/srl_real_hri/srl_real_hri_v1_HXYK_175_mesh.xml"  
 # check
 python SRL_Evo_train.py test=True task=SRL_Real_HRI  num_envs=4 task.env.srl_max_effort=150 \
-       checkpoint=runs/SRL_Real_HRI_v1_17-17-28-18/nn/SRL_Real_HRI_v1_17-17-28-26.pth  \
+       checkpoint=runs/SRL_Real_HRI_v1_20-19-11-50/nn/SRL_Real_HRI_v1_20-19-11-57.pth  \
        task.env.train_stage=2\
        task.env.episodeLength=2000    force_render=True task.env.cameraFollow=True  task.env.srl_free_actions_num=5  \
        task.env.asset.assetFileName="mjcf/srl_real_hri/srl_real_hri_v1_HXYK_175_mesh.xml"
 # 第二阶段训练: S3曲线 + 取消高度跟踪，提高水平跟踪权重。增加电机功率惩罚。
 python SRL_Evo_train.py task=SRL_Real_HRI headless=True wandb_project=SRL_Evo wandb_activate=True \
-    train.params.config.hsrl_checkpoint=runs/SRL_Real_HRI_v1_17-17-28-18/nn/SRL_Real_HRI_v1_17-17-28-26.pth \
+    train.params.config.hsrl_checkpoint=runs/SRL_Real_HRI_v1_20-19-11-50/nn/SRL_Real_HRI_v1_20-19-11-57.pth \
     task.env.train_stage=3 \
     task.env.srl_max_effort=150  task.env.srl_motor_cost_scale=0.3\
     experiment=SRL_Real_HRI_v1   max_iterations=4000   \
@@ -180,13 +181,13 @@ python SRL_Evo_train.py task=SRL_Real_HRI headless=True wandb_project=SRL_Evo wa
     task.env.asset.assetFileName="mjcf/srl_real_hri/srl_real_hri_v1_HXYK_175_mesh.xml"  
 # check  
 python SRL_Evo_train.py test=True task=SRL_Real_HRI  num_envs=4 task.env.srl_max_effort=150 \
-       checkpoint=runs/SRL_Real_HRI_v1_21-17-51-54/nn/SRL_Real_HRI_v1_21-17-52-01.pth  \
+       checkpoint=runs/SRL_Real_HRI_v1_21-11-20-16/nn/SRL_Real_HRI_v1_21-11-20-24.pth  \
        task.env.train_stage=3  task.env.enableDebugVis=True num_envs=1\
        task.env.episodeLength=2000    force_render=True task.env.cameraFollow=True  task.env.srl_free_actions_num=5  \
        task.env.asset.assetFileName="mjcf/srl_real_hri/srl_real_hri_v1_HXYK_175_mesh.xml"
 # 第三阶段训练: S4全向行走 + 取消高度跟踪，提高水平跟踪权重。增加电机功率惩罚。
 python SRL_Evo_train.py task=SRL_Real_HRI headless=True wandb_project=SRL_Evo wandb_activate=True \
-    train.params.config.hsrl_checkpoint=runs/SRL_Real_HRI_v1_21-17-51-54/nn/SRL_Real_HRI_v1_21-17-52-01.pth \
+    train.params.config.hsrl_checkpoint=runs/SRL_Real_HRI_v1_21-11-20-16/nn/SRL_Real_HRI_v1_21-11-20-24.pth \
     task.env.train_stage=4 \
     task.env.srl_max_effort=150  task.env.srl_motor_cost_scale=0.3\
     experiment=SRL_Real_HRI_v1   max_iterations=4000   \
@@ -199,7 +200,7 @@ python SRL_Evo_train.py task=SRL_Real_HRI headless=True wandb_project=SRL_Evo wa
     task.env.asset.assetFileName="mjcf/srl_real_hri/srl_real_hri_v1_HXYK_175_mesh.xml"  
 # check  
 python SRL_Evo_train.py test=True task=SRL_Real_HRI  num_envs=4 task.env.srl_max_effort=150 \
-       checkpoint=runs/SRL_Real_HRI_v1_24-14-54-37/nn/SRL_Real_HRI_v1_24-14-54-43.pth   \
+       checkpoint=runs/SRL_Real_HRI_v1_21-14-34-23/nn/SRL_Real_HRI_v1_21-14-34-29.pth   \
        task.env.train_stage=4  task.env.enableDebugVis=True num_envs=1\
        task.env.episodeLength=4000    force_render=True task.env.cameraFollow=True  task.env.srl_free_actions_num=5  \
        task.env.asset.assetFileName="mjcf/srl_real_hri/srl_real_hri_v1_HXYK_175_mesh.xml"

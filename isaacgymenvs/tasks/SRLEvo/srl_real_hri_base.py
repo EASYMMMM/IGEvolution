@@ -55,6 +55,13 @@ class SRL_Real_HRI_Base(VecTask):
         self.humanoid_obs_num = self.cfg["env"]["humanoid_obs_num"]
         self.humanoid_actions_num = self.cfg["env"]["humanoid_actions_num"]
         self.srl_obs_num = self.cfg["env"]["srl_obs_num"]
+        self.srl_full_obs_num = self.srl_obs_num
+        # Full obs keeps simulator-only state for reward/reset; policy obs removes fields unavailable on hardware.
+        self.srl_policy_obs_remove_ids = self.cfg["env"].get("srl_policy_obs_remove_ids", [0, 1, 2, 3])
+        self.srl_policy_obs_ids_list = [
+            i for i in range(self.srl_full_obs_num) if i not in set(self.srl_policy_obs_remove_ids)
+        ]
+        self.srl_policy_obs_num = len(self.srl_policy_obs_ids_list)
         self.srl_actions_num = self.cfg["env"]["srl_actions_num"]
         self.teacher_srl_obs_num = self.cfg["env"]["teacher_srl_obs_num"]
         self.srl_free_actions_num = self.cfg["env"]["srl_free_actions_num"]
@@ -248,11 +255,17 @@ class SRL_Real_HRI_Base(VecTask):
         self._contact_forces = gymtorch.wrap_tensor(contact_force_tensor).view(self.num_envs, self.num_bodies, 3)
         
         self._terminate_buf = torch.ones(self.num_envs, device=self.device, dtype=torch.long)
+        self.srl_policy_obs_ids = to_torch(self.srl_policy_obs_ids_list, device=self.device, dtype=torch.long)
 
+        # srl_obs_buf: masked, hardware-realistic SRL policy observation.
         self.srl_obs_buf = torch.zeros(
             (self.num_envs, self.get_srl_obs_size()), device=self.device, dtype=torch.float)
         self.srl_obs_mirrored_buf = torch.zeros(
             (self.num_envs, self.get_srl_obs_size()), device=self.device, dtype=torch.float)
+
+        # srl_full_obs_buf: complete SRL observation with simulator-only fields, used by reward/reset.
+        self.srl_full_obs_buf = torch.zeros(
+            (self.num_envs, self.get_srl_full_obs_size()), device=self.device, dtype=torch.float)
 
         self.srl_priv_extra_obs_buf = torch.zeros(
             (self.num_envs, self.get_srl_priv_obs_size()-self.get_srl_obs_size()), device=self.device, dtype=torch.float)
@@ -263,8 +276,11 @@ class SRL_Real_HRI_Base(VecTask):
             (self.num_envs, self.get_teacher_srl_obs_size()), device=self.device, dtype=torch.float)
 
         # frame stack buffer
-        self.srl_obs_buffer = torch.zeros((self.num_envs, self.srl_obs_frame_stack, self.srl_obs_num), device=self.device)
-        self.srl_obs_mirrored_buffer = torch.zeros((self.num_envs, self.srl_obs_frame_stack, self.srl_obs_num), device=self.device)
+        # srl_obs_buffer: masked per-frame policy obs history.
+        self.srl_obs_buffer = torch.zeros((self.num_envs, self.srl_obs_frame_stack, self.srl_policy_obs_num), device=self.device)
+        self.srl_obs_mirrored_buffer = torch.zeros((self.num_envs, self.srl_obs_frame_stack, self.srl_policy_obs_num), device=self.device)
+        # srl_full_obs_buffer: complete per-frame obs history for reward terms that need hidden sim state.
+        self.srl_full_obs_buffer = torch.zeros((self.num_envs, self.srl_obs_frame_stack, self.srl_full_obs_num), device=self.device)
         self.teacher_srl_obs_buffer = torch.zeros((self.num_envs, self.srl_obs_frame_stack, self.teacher_srl_obs_num), device=self.device)
         self.srl_pd_targets = torch.zeros(
             (self.num_envs, self.srl_actions_num), device=self.device, dtype=torch.float
@@ -361,10 +377,13 @@ class SRL_Real_HRI_Base(VecTask):
         return self.humanoid_obs_num
     
     def get_srl_obs_size(self):
-        return self.srl_obs_num*self.srl_obs_frame_stack + self.srl_command_num
+        return self.srl_policy_obs_num*self.srl_obs_frame_stack + self.srl_command_num
+
+    def get_srl_full_obs_size(self):
+        return self.srl_full_obs_num*self.srl_obs_frame_stack + self.srl_command_num
 
     def get_srl_priv_obs_size(self):
-        return 12 + self.srl_obs_num*self.srl_obs_frame_stack + self.srl_command_num
+        return 12 + self.get_srl_obs_size()
 
     def create_sim(self):
         self.up_axis_idx = 2 # index of up axis: Y=1, Z=2
@@ -437,6 +456,7 @@ class SRL_Real_HRI_Base(VecTask):
         for env_id in env_ids:
             self.srl_obs_buffer[env_id] = 0
             self.srl_obs_mirrored_buffer[env_id] = 0
+            self.srl_full_obs_buffer[env_id] = 0
             self.teacher_srl_obs_buffer[env_id] = 0
         # reset SRL motor running stats (peak/thermal)
         self.srl_tau2_ema[env_ids] = 0.0
@@ -791,7 +811,7 @@ class SRL_Real_HRI_Base(VecTask):
         self.rew_buf[:], self.humanoid_task_rew_buf[:] = compute_humanoid_reward(self.obs_buf, self._dof_pos, 
                                                   self._dof_vel, self._dof_vel_prev, 
                                                   humanoid_target_point, humanoid_root_pos, load_cell_sensor*self.obs_scales["load_cell"],)
-        self.srl_rew_buf[:]  = compute_srl_reward(self.srl_obs_buf[:],
+        self.srl_rew_buf[:]  = compute_srl_reward(self.srl_full_obs_buf[:],
                                             clearance_reward,
                                             to_target,
                                             self.progress_buf,
@@ -806,7 +826,7 @@ class SRL_Real_HRI_Base(VecTask):
                                             self.max_episode_length,
                                             self.gait_period,
                                             self.humanoid_task_rew_buf,
-                                            srl_obs_num = self.srl_obs_num,
+                                            srl_obs_num = self.srl_full_obs_num,
                                             alive_reward_scale = self.alive_reward_scale,
                                             humanoid_share_reward_scale = self.humanoid_share_reward_scale,
                                             progress_reward_scale = self.progress_reward_scale,
@@ -831,7 +851,7 @@ class SRL_Real_HRI_Base(VecTask):
         return
 
     def _compute_reset(self):
-        self.reset_buf[:], self._terminate_buf[:] = compute_humanoid_reset(self.reset_buf, self.progress_buf, self.srl_obs_buf,
+        self.reset_buf[:], self._terminate_buf[:] = compute_humanoid_reset(self.reset_buf, self.progress_buf, self.srl_full_obs_buf,
                                                    self._contact_forces, self._contact_body_ids,
                                                    self._rigid_body_pos, self.max_episode_length,
                                                    self._enable_early_termination, self._termination_height, self._srl_termination_height)
@@ -918,26 +938,36 @@ class SRL_Real_HRI_Base(VecTask):
 
     def _compute_observations(self, env_ids=None):
         humanoid_obs, srl_obs, srl_obs_mirrored, priv_extra_obs, priv_extra_obs_mirrored, teacher_srl_obs, potentials, prev_potentials, = self._compute_env_obs(env_ids)
+        srl_full_obs = srl_obs
+        srl_policy_obs = torch.index_select(srl_full_obs, dim=1, index=self.srl_policy_obs_ids)
+        srl_policy_obs_mirrored = torch.index_select(srl_obs_mirrored, dim=1, index=self.srl_policy_obs_ids)
 
         if (env_ids is None):
             # frame rolling
             self.srl_obs_buffer = torch.roll(self.srl_obs_buffer, shifts=1, dims=1)  # 向后移动数据
-            self.srl_obs_buffer[:, 0, :] = srl_obs.clone()  # 将新的观测数据放到队列的开头
+            self.srl_obs_buffer[:, 0, :] = srl_policy_obs.clone()  # 将新的策略观测数据放到队列的开头
             self.srl_obs_mirrored_buffer = torch.roll(self.srl_obs_mirrored_buffer, shifts=1, dims=1)  
-            self.srl_obs_mirrored_buffer[:, 0, :] = srl_obs_mirrored.clone()   
+            self.srl_obs_mirrored_buffer[:, 0, :] = srl_policy_obs_mirrored.clone()
+            self.srl_full_obs_buffer = torch.roll(self.srl_full_obs_buffer, shifts=1, dims=1)
+            self.srl_full_obs_buffer[:, 0, :] = srl_full_obs.clone()
             self.teacher_srl_obs_buffer = torch.roll(self.teacher_srl_obs_buffer, shifts=1, dims=1) 
             self.teacher_srl_obs_buffer[:, 0, :] = teacher_srl_obs.clone()   
 
             # ======= minimal add: reset-safe zero-frame fill (avoid stacked zeros after reset) =======
             zf = (self.srl_obs_buffer.abs().sum(dim=-1) == 0)  # [num_envs, stack]
             if zf.any():
-                fill = srl_obs.unsqueeze(1).expand(-1, self.srl_obs_buffer.size(1), -1)
+                fill = srl_policy_obs.unsqueeze(1).expand(-1, self.srl_obs_buffer.size(1), -1)
                 self.srl_obs_buffer[zf] = fill[zf]
 
             zf_m = (self.srl_obs_mirrored_buffer.abs().sum(dim=-1) == 0)
             if zf_m.any():
-                fill_m = srl_obs_mirrored.unsqueeze(1).expand(-1, self.srl_obs_mirrored_buffer.size(1), -1)
+                fill_m = srl_policy_obs_mirrored.unsqueeze(1).expand(-1, self.srl_obs_mirrored_buffer.size(1), -1)
                 self.srl_obs_mirrored_buffer[zf_m] = fill_m[zf_m]
+
+            zf_full = (self.srl_full_obs_buffer.abs().sum(dim=-1) == 0)
+            if zf_full.any():
+                fill_full = srl_full_obs.unsqueeze(1).expand(-1, self.srl_full_obs_buffer.size(1), -1)
+                self.srl_full_obs_buffer[zf_full] = fill_full[zf_full]
 
             zf_t = (self.teacher_srl_obs_buffer.abs().sum(dim=-1) == 0)
             if zf_t.any():
@@ -947,6 +977,7 @@ class SRL_Real_HRI_Base(VecTask):
 
             srl_base_obs = self.srl_obs_buffer.reshape(self.num_envs, -1)
             srl_base_mirrored_obs = self.srl_obs_mirrored_buffer.reshape(self.num_envs, -1)
+            srl_full_base_obs = self.srl_full_obs_buffer.reshape(self.num_envs, -1)
             teacher_srl_base_obs = self.teacher_srl_obs_buffer.reshape(self.num_envs, -1)
 
             task_params = torch.stack((
@@ -961,12 +992,14 @@ class SRL_Real_HRI_Base(VecTask):
             ), dim=-1)  # shape [num_envs, 3]
             srl_stacked_obs = torch.cat([srl_base_obs, task_params], dim=-1)
             srl_mirrored_stacked_obs = torch.cat([srl_base_mirrored_obs, mirrored_task_params], dim=-1)
+            srl_full_stacked_obs = torch.cat([srl_full_base_obs, task_params], dim=-1)
             teacher_srl_stacked_obs = torch.cat([teacher_srl_base_obs, task_params], dim=-1)
 
             total_obs = torch.cat((humanoid_obs, srl_stacked_obs), dim=1)
             self.obs_buf[:] = total_obs
             self.srl_obs_buf[:] = srl_stacked_obs
             self.srl_obs_mirrored_buf[:] = srl_mirrored_stacked_obs      
+            self.srl_full_obs_buf[:] = srl_full_stacked_obs
             self.srl_priv_extra_obs_buf[:] = priv_extra_obs
             self.srl_priv_extra_mirrored_obs_buf[:] = priv_extra_obs_mirrored
             self.teacher_srl_obs_buf[:] = teacher_srl_stacked_obs
@@ -977,9 +1010,11 @@ class SRL_Real_HRI_Base(VecTask):
         else:
             # 对指定环境进行更新
             self.srl_obs_buffer[env_ids] = torch.roll(self.srl_obs_buffer[env_ids], shifts=1, dims=1)
-            self.srl_obs_buffer[env_ids, 0, :] = srl_obs.clone()
+            self.srl_obs_buffer[env_ids, 0, :] = srl_policy_obs.clone()
             self.srl_obs_mirrored_buffer[env_ids] = torch.roll(self.srl_obs_mirrored_buffer[env_ids], shifts=1, dims=1)
-            self.srl_obs_mirrored_buffer[env_ids, 0, :] = srl_obs_mirrored.clone()
+            self.srl_obs_mirrored_buffer[env_ids, 0, :] = srl_policy_obs_mirrored.clone()
+            self.srl_full_obs_buffer[env_ids] = torch.roll(self.srl_full_obs_buffer[env_ids], shifts=1, dims=1)
+            self.srl_full_obs_buffer[env_ids, 0, :] = srl_full_obs.clone()
             self.teacher_srl_obs_buffer[env_ids] = torch.roll(self.teacher_srl_obs_buffer[env_ids], shifts=1, dims=1)
             self.teacher_srl_obs_buffer[env_ids, 0, :] = teacher_srl_obs.clone()
 
@@ -987,16 +1022,23 @@ class SRL_Real_HRI_Base(VecTask):
             ob = self.srl_obs_buffer[env_ids]
             zf = (ob.abs().sum(dim=-1) == 0)  # [len(env_ids), stack]
             if zf.any():
-                fill = srl_obs.unsqueeze(1).expand(-1, ob.size(1), -1)
+                fill = srl_policy_obs.unsqueeze(1).expand(-1, ob.size(1), -1)
                 ob[zf] = fill[zf]
                 self.srl_obs_buffer[env_ids] = ob
 
             mob = self.srl_obs_mirrored_buffer[env_ids]
             zf_m = (mob.abs().sum(dim=-1) == 0)
             if zf_m.any():
-                fill_m = srl_obs_mirrored.unsqueeze(1).expand(-1, mob.size(1), -1)
+                fill_m = srl_policy_obs_mirrored.unsqueeze(1).expand(-1, mob.size(1), -1)
                 mob[zf_m] = fill_m[zf_m]
                 self.srl_obs_mirrored_buffer[env_ids] = mob
+
+            fob = self.srl_full_obs_buffer[env_ids]
+            zf_full = (fob.abs().sum(dim=-1) == 0)
+            if zf_full.any():
+                fill_full = srl_full_obs.unsqueeze(1).expand(-1, fob.size(1), -1)
+                fob[zf_full] = fill_full[zf_full]
+                self.srl_full_obs_buffer[env_ids] = fob
 
             tob = self.teacher_srl_obs_buffer[env_ids]
             zf_t = (tob.abs().sum(dim=-1) == 0)
@@ -1008,6 +1050,7 @@ class SRL_Real_HRI_Base(VecTask):
 
             srl_base_obs = self.srl_obs_buffer[env_ids, :, :].reshape(len(env_ids), -1)
             srl_base_mirrored_obs = self.srl_obs_mirrored_buffer[env_ids, :, :].reshape(len(env_ids), -1)
+            srl_full_base_obs = self.srl_full_obs_buffer[env_ids, :, :].reshape(len(env_ids), -1)
             teacher_srl_base_obs = self.teacher_srl_obs_buffer[env_ids, :, :].reshape(len(env_ids), -1)
 
             task_params = torch.stack((
@@ -1022,12 +1065,14 @@ class SRL_Real_HRI_Base(VecTask):
             ), dim=-1)  # shape [len(env_ids), 3]
             srl_stacked_obs = torch.cat([srl_base_obs, task_params], dim=-1)
             srl_mirrored_stacked_obs = torch.cat([srl_base_mirrored_obs, mirrored_task_params], dim=-1)
+            srl_full_stacked_obs = torch.cat([srl_full_base_obs, task_params], dim=-1)
             teacher_srl_stacked_obs = torch.cat([teacher_srl_base_obs, task_params], dim=-1)
 
             total_obs = torch.cat((humanoid_obs, srl_stacked_obs), dim=1)
             self.obs_buf[env_ids] = total_obs
             self.srl_obs_buf[env_ids] = srl_stacked_obs
             self.srl_obs_mirrored_buf[env_ids] = srl_mirrored_stacked_obs
+            self.srl_full_obs_buf[env_ids] = srl_full_stacked_obs
             self.srl_priv_extra_obs_buf[env_ids] = priv_extra_obs
             self.srl_priv_extra_mirrored_obs_buf[env_ids] = priv_extra_obs_mirrored
             self.teacher_srl_obs_buf[env_ids] = teacher_srl_stacked_obs
