@@ -63,6 +63,10 @@ class SRL_Real_Bot(VecTask):
         self.joints_at_limit_cost_scale = self.cfg["env"]["jointsAtLimitCost"]
         self.camera_follow = self.cfg["env"].get("cameraFollow", False)
 
+        self.print_wobble_metrics = self.cfg["env"].get("printWobbleMetrics", False)
+        self.wobble_print_interval = self.cfg["env"].get("wobblePrintInterval", 200)
+        self.wobble_warmup_steps = self.cfg["env"].get("wobbleWarmupSteps", 200)
+
         self.debug_viz = self.cfg["env"]["enableDebugVis"]
         self.plane_static_friction = self.cfg["env"]["plane"]["staticFriction"]
         self.plane_dynamic_friction = self.cfg["env"]["plane"]["dynamicFriction"]
@@ -208,6 +212,17 @@ class SRL_Real_Bot(VecTask):
         self.target_vel_x = torch.full((self.num_envs,), 1.0, device=self.device)  
 
         self._terminate_buf = torch.ones(self.num_envs, device=self.device, dtype=torch.long)
+
+        self._wobble_history = {
+            "yaw": deque(),
+            "pitch": deque(),
+            "roll": deque(),
+            "wx": deque(),
+            "wy": deque(),
+            "wz": deque(),
+            "root_h": deque(),
+            "vel_x": deque(),
+        }
 
         self._rigid_body_state = gymtorch.wrap_tensor(rigid_body_state)
         self._rigid_body_pos = self._rigid_body_state.view(self.num_envs, self.num_bodies, 13)[..., 0:3]
@@ -807,6 +822,8 @@ class SRL_Real_Bot(VecTask):
         self.compute_observations()
         self.compute_reward(self.actions)
 
+        self._update_wobble_metrics()
+
         # TODO: Task Randomization
         self.set_task_target()
         
@@ -844,6 +861,90 @@ class SRL_Real_Bot(VecTask):
         self.gym.refresh_dof_force_tensor(self.sim)
         self.gym.refresh_net_contact_force_tensor(self.sim)
         return
+    
+    def _reset_wobble_metrics(self):
+        for key in self._wobble_history:
+            self._wobble_history[key].clear()
+
+    def _wrap_to_pi(self, x):
+        return torch.atan2(torch.sin(x), torch.cos(x))
+
+    def _compute_wobble_metrics(self):
+        stacked = {}
+        for key, values in self._wobble_history.items():
+            if len(values) == 0:
+                return None
+            stacked[key] = torch.stack(list(values))
+
+        yaw = self._wrap_to_pi(stacked["yaw"])
+        pitch = self._wrap_to_pi(stacked["pitch"])
+        roll = self._wrap_to_pi(stacked["roll"])
+        wx = stacked["wx"]
+        wy = stacked["wy"]
+        wz = stacked["wz"]
+        root_h = stacked["root_h"]
+        vel_x = stacked["vel_x"]
+
+        def _rms(x):
+            return torch.sqrt(torch.mean(x * x)).item()
+
+        def _pp(x):
+            return (torch.max(x) - torch.min(x)).item()
+
+        result = {
+            "yaw_rms_rad": _rms(yaw),
+            "pitch_rms_rad": _rms(pitch),
+            "roll_rms_rad": _rms(roll),
+            "yaw_pp_rad": _pp(yaw),
+            "pitch_pp_rad": _pp(pitch),
+            "roll_pp_rad": _pp(roll),
+            "wx_rms_rad_s": _rms(wx),
+            "wy_rms_rad_s": _rms(wy),
+            "wz_rms_rad_s": _rms(wz),
+            "root_h_mean_m": torch.mean(root_h).item(),
+            "root_h_std_m": torch.std(root_h, unbiased=False).item(),
+            "vel_x_mean_m_s": torch.mean(vel_x).item(),
+            "vel_x_std_m_s": torch.std(vel_x, unbiased=False).item(),
+        }
+        result["base_wobble_score"] = (
+            result["pitch_rms_rad"]
+            + result["roll_rms_rad"]
+            + 0 * (result["wy_rms_rad_s"] + result["wx_rms_rad_s"])
+        )
+        return result
+
+    def _update_wobble_metrics(self):
+        if not self.print_wobble_metrics or self.num_envs <= 0:
+            return
+
+        env_id = 0
+        progress = int(self.progress_buf[env_id].item())
+        if progress == 0:
+            self._reset_wobble_metrics()
+
+        if progress < self.wobble_warmup_steps:
+            return
+
+        root_quat = self.root_states[env_id:env_id + 1, 3:7]
+        euler = quat_to_euler_xyz(root_quat)[0]
+        local_root_ang_vel = quat_rotate_inverse(root_quat, self.root_states[env_id:env_id + 1, 10:13])[0]
+        local_root_vel = quat_rotate_inverse(root_quat, self.srl_root_states[env_id:env_id + 1, 7:10])[0]
+
+        self._wobble_history["yaw"].append(euler[0].detach().clone())
+        self._wobble_history["pitch"].append(euler[1].detach().clone())
+        self._wobble_history["roll"].append(euler[2].detach().clone())
+        self._wobble_history["wx"].append(local_root_ang_vel[0].detach().clone())
+        self._wobble_history["wy"].append(local_root_ang_vel[1].detach().clone())
+        self._wobble_history["wz"].append(local_root_ang_vel[2].detach().clone())
+        self._wobble_history["root_h"].append(self.srl_root_states[env_id, 2].detach().clone())
+        self._wobble_history["vel_x"].append(local_root_vel[0].detach().clone())
+
+        if self.wobble_print_interval > 0 and progress % self.wobble_print_interval == 0:
+            result = self._compute_wobble_metrics()
+            if result is not None:
+                print("\n=== Isaac Base Wobble Metrics (env0) ===")
+                for key in sorted(result.keys()):
+                    print("{}: {:.6f}".format(key, result[key]))
     
     def _action_to_pd_targets(self, action):
         action = action * self.action_scale

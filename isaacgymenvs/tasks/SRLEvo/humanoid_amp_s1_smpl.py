@@ -19,11 +19,20 @@ from isaacgymenvs.tasks.amp.utils_amp import gym_util
 from isaacgymenvs.tasks.amp.utils_amp.motion_lib import MotionLib
 
 from isaacgymenvs.tasks.SRLEvo.traj_generator import SimpleCurveGenerator as TrajGenerator
-from isaacgymenvs.utils.torch_jit_utils import quat_mul, to_torch, calc_heading_quat_inv, quat_to_tan_norm, my_quat_rotate
+#from isaacgymenvs.utils.torch_jit_utils import quat_mul, to_torch, calc_heading_quat_inv, quat_to_tan_norm, my_quat_rotate
+from isaacgymenvs.utils.torch_jit_utils import quat_mul, quat_conjugate, quat_to_exp_map, to_torch, calc_heading_quat_inv, quat_to_tan_norm, my_quat_rotate
 
-
+print("[IMPORT CHECK] humanoid_amp_s1_smpl loaded from:", __file__)
 
 NUM_AMP_OBS_PER_STEP = 13 + 52 + 28 + 12 # [root_h, root_rot, root_vel, root_ang_vel, dof_pos, dof_vel, key_body_pos]
+LOWER_BODY_DOF_GROUPS = {
+    "r_hip": [14, 15, 16],
+    "r_knee": [17],
+    "r_ankle": [18, 19, 20],
+    "l_hip": [21, 22, 23],
+    "l_knee": [24],
+    "l_ankle": [25, 26, 27],
+}
 
 
 class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
@@ -87,6 +96,48 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
             self.envs[0], self.humanoid_handles[0], "right_foot"
         )
 
+        self._diag_compare_3dof = self.cfg["env"].get("diagCompare3Dof", False)
+        self._diag_compare_interval = self.cfg["env"].get("diagCompare3DofInterval", 30)
+        self._diag_compare_env = self.cfg["env"].get("diagCompare3DofEnv", 0)
+        self._diag_compare_base_obs = self.cfg["env"].get("diagCompareBaseObs", False)
+        self._diag_compare_cmd_obs = self.cfg["env"].get("diagCompareCmdObs", False)
+        self._diag_print_dof_torque = self.cfg["env"].get("diagPrintDofTorque", False)
+        self._diag_torque_interval = self.cfg["env"].get("diagDofTorqueInterval", 10)
+        self._diag_print_action_target = self.cfg["env"].get("diagPrintActionTarget", False)
+        self._diag_action_target_interval = self.cfg["env"].get("diagActionTargetInterval", 10)
+        self._diag_print_native_pd_compare = self.cfg["env"].get("diagPrintNativePdCompare", False)
+        self._diag_native_pd_interval = self.cfg["env"].get("diagNativePdInterval", 30)
+
+        self._export_reset_state_db = self.cfg["env"].get("exportResetStateDb", False)
+        self._export_reset_state_db_path = self.cfg["env"].get("exportResetStateDbPath", "humanoid_reset_states.npz")
+        self._export_reset_state_db_max_samples = int(self.cfg["env"].get("exportResetStateDbMaxSamples", 5000))
+        self._export_reset_state_db_num_per_reset = int(self.cfg["env"].get("exportResetStateDbNumPerReset", 32))
+        self._export_reset_state_db_flush_every = int(self.cfg["env"].get("exportResetStateDbFlushEvery", 256))
+        self._export_reset_state_db_saved_once = False
+        self._reset_state_db = {
+            "root_pos": [],
+            "root_rot": [],
+            "dof_pos": [],
+            "root_vel": [],
+            "root_ang_vel": [],
+            "dof_vel": [],
+            "source_mode": [],
+        }
+
+
+        self._diag_body_ids = {
+            "pelvis": self.gym.find_actor_rigid_body_handle(self.envs[0], self.humanoid_handles[0], "pelvis"),
+            "torso": self.gym.find_actor_rigid_body_handle(self.envs[0], self.humanoid_handles[0], "torso"),
+            "head": self.gym.find_actor_rigid_body_handle(self.envs[0], self.humanoid_handles[0], "head"),
+            "right_upper_arm": self.gym.find_actor_rigid_body_handle(self.envs[0], self.humanoid_handles[0], "right_upper_arm"),
+            "left_upper_arm": self.gym.find_actor_rigid_body_handle(self.envs[0], self.humanoid_handles[0], "left_upper_arm"),
+            "right_thigh": self.gym.find_actor_rigid_body_handle(self.envs[0], self.humanoid_handles[0], "right_thigh"),
+            "left_thigh": self.gym.find_actor_rigid_body_handle(self.envs[0], self.humanoid_handles[0], "left_thigh"),
+            "right_shin": self.gym.find_actor_rigid_body_handle(self.envs[0], self.humanoid_handles[0], "right_shin"),
+            "left_shin": self.gym.find_actor_rigid_body_handle(self.envs[0], self.humanoid_handles[0], "left_shin"),
+            "right_foot": self.gym.find_actor_rigid_body_handle(self.envs[0], self.humanoid_handles[0], "right_foot"),
+            "left_foot": self.gym.find_actor_rigid_body_handle(self.envs[0], self.humanoid_handles[0], "left_foot"),
+        }
 
         # standing phase 朝向缓存
         # 保存“进入 standing phase 时”的世界系 XY 朝向单位向量
@@ -155,7 +206,522 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
 
         if self.viewer and self.debug_viz:
             self._draw_debug_traj()
-        return
+
+        if self._diag_compare_3dof:
+            self._print_3dof_alignment_diag()
+        if self._diag_compare_base_obs:
+            self._print_base_obs_alignment_diag()
+        if self._diag_compare_cmd_obs:
+            self._print_cmd_obs_alignment_diag()
+        if self._diag_print_dof_torque:
+            self._print_dof_torque_diag()
+        if self._diag_print_action_target:
+            self._print_action_target_diag()
+        if self._diag_print_native_pd_compare:
+            self._print_native_pd_compare_diag()
+        return    
+
+    def _relative_quat(self, env_id, parent_name, child_name):
+        parent_id = self._diag_body_ids[parent_name]
+        child_id = self._diag_body_ids[child_name]
+        q_parent = self._rigid_body_rot[env_id, parent_id]
+        q_child = self._rigid_body_rot[env_id, child_id]
+        return quat_mul(quat_conjugate(q_parent), q_child)
+
+    def _relative_ang_vel_local(self, env_id, parent_name, child_name):
+        parent_id = self._diag_body_ids[parent_name]
+        child_id = self._diag_body_ids[child_name]
+        w_parent = self._rigid_body_ang_vel[env_id, parent_id]
+        w_child = self._rigid_body_ang_vel[env_id, child_id]
+        w_rel_world = w_child - w_parent
+        q_parent = self._rigid_body_rot[env_id, parent_id]
+        return my_quat_rotate(
+            quat_conjugate(q_parent).unsqueeze(0),
+            w_rel_world.unsqueeze(0)
+        )[0]
+
+    def _relative_ang_vel_world(self, env_id, parent_name, child_name):
+        parent_id = self._diag_body_ids[parent_name]
+        child_id = self._diag_body_ids[child_name]
+        w_parent = self._rigid_body_ang_vel[env_id, parent_id]
+        w_child = self._rigid_body_ang_vel[env_id, child_id]
+        return w_child - w_parent
+
+    def _relative_ang_vel_child_local(self, env_id, parent_name, child_name):
+        child_id = self._diag_body_ids[child_name]
+        w_rel_world = self._relative_ang_vel_world(env_id, parent_name, child_name)
+        q_child = self._rigid_body_rot[env_id, child_id]
+        return my_quat_rotate(
+            quat_conjugate(q_child).unsqueeze(0),
+            w_rel_world.unsqueeze(0)
+        )[0]
+
+    def _relative_ang_vel_joint_local(self, env_id, parent_name, child_name):
+        w_rel_world = self._relative_ang_vel_world(env_id, parent_name, child_name)
+        q_rel = self._relative_quat(env_id, parent_name, child_name)
+        return my_quat_rotate(
+            quat_conjugate(q_rel).unsqueeze(0),
+            w_rel_world.unsqueeze(0)
+        )[0]
+
+
+    def _print_3dof_alignment_diag(self):
+        env_id = int(self._diag_compare_env)
+        if env_id < 0 or env_id >= self.num_envs:
+            return
+
+        step = int(self.progress_buf[env_id].item())
+        if step % self._diag_compare_interval != 0:
+            return
+
+        native_dof_pos = self._dof_pos[env_id]
+        native_dof_vel = self._dof_vel[env_id]
+
+        compare_specs = [
+            ("abdomen", 0, 3, "pelvis", "torso"),
+            ("neck", 3, 6, "torso", "head"),
+            ("right_shoulder", 6, 9, "torso", "right_upper_arm"),
+            ("left_shoulder", 10, 13, "torso", "left_upper_arm"),
+            ("right_hip", 14, 17, "pelvis", "right_thigh"),
+            ("right_ankle", 18, 21, "right_shin", "right_foot"),
+            ("left_hip", 21, 24, "pelvis", "left_thigh"),
+            ("left_ankle", 25, 28, "left_shin", "left_foot"),
+        ]
+
+        print("\n" + "=" * 80)
+        print(f"[3DoF Align Diag] env={env_id} step={step} train_stage={self.train_stage}")
+        print("=" * 80)
+        for name, start, end, parent_name, child_name in compare_specs:
+            native_pos = native_dof_pos[start:end].detach().cpu().numpy()
+            native_vel = native_dof_vel[start:end].detach().cpu().numpy()
+
+            recon_pos = quat_to_exp_map(
+                self._relative_quat(env_id, parent_name, child_name).unsqueeze(0)
+            )[0].detach().cpu().numpy()
+            recon_vel_parent = self._relative_ang_vel_local(env_id, parent_name, child_name).detach().cpu().numpy()
+            recon_vel_world = self._relative_ang_vel_world(env_id, parent_name, child_name).detach().cpu().numpy()
+            recon_vel_child = self._relative_ang_vel_child_local(env_id, parent_name, child_name).detach().cpu().numpy()
+            recon_vel_joint = self._relative_ang_vel_joint_local(env_id, parent_name, child_name).detach().cpu().numpy()
+
+            print(f"{name}:")
+            print(f"  native pos = {np.array2string(native_pos, precision=4, suppress_small=True)}")
+            print(f"  recon  pos = {np.array2string(recon_pos, precision=4, suppress_small=True)}")
+            print(f"  native vel = {np.array2string(native_vel, precision=4, suppress_small=True)}")
+            print(f"  recon vel parent_local = {np.array2string(recon_vel_parent, precision=4, suppress_small=True)}")
+            print(f"  recon vel child_local  = {np.array2string(recon_vel_child, precision=4, suppress_small=True)}")
+            print(f"  recon vel joint_local  = {np.array2string(recon_vel_joint, precision=4, suppress_small=True)}")
+            print(f"  recon vel world        = {np.array2string(recon_vel_world, precision=4, suppress_small=True)}")
+
+    def _print_dof_torque_diag(self):
+        env_id = int(self._diag_compare_env)
+        if env_id < 0 or env_id >= self.num_envs:
+            return
+
+        step = int(self.progress_buf[env_id].item())
+        if step % self._diag_torque_interval != 0:
+            return
+
+        dof_force = self.dof_force_tensor[env_id].detach().cpu().numpy()
+        motor_effort = self.motor_efforts.detach().cpu().numpy()
+
+        print("=" * 80)
+        print(f"[DOF Torque Diag] env={env_id} step={step} train_stage={self.train_stage}")
+        print("=" * 80)
+        for name, idxs in LOWER_BODY_DOF_GROUPS.items():
+            idxs_np = np.asarray(idxs, dtype=np.int32)
+            group_force = dof_force[idxs_np]
+            group_effort = np.maximum(np.abs(motor_effort[idxs_np]), 1e-8)
+            group_ratio = np.abs(group_force) / group_effort
+            print(
+                f"{name}: "
+                f"force={np.array2string(group_force, precision=4, suppress_small=True)} | "
+                f"|force|/effort={np.array2string(group_ratio, precision=4, suppress_small=True)} | "
+                f"max_ratio={group_ratio.max():.4f} mean_ratio={group_ratio.mean():.4f}"
+            )
+    def _print_action_target_diag(self):
+        env_id = int(self._diag_compare_env)
+        if env_id < 0 or env_id >= self.num_envs:
+            return
+
+        step = int(self.progress_buf[env_id].item())
+        if step % self._diag_action_target_interval != 0:
+            return
+
+        raw_action = self.actions[env_id].detach().cpu().numpy()
+        if self._pd_control:
+            target_pos = self._action_to_pd_targets(self.actions[env_id:env_id + 1])[0].detach().cpu().numpy()
+        else:
+            target_pos = raw_action.copy()
+
+        print("=" * 80)
+        print(f"[Action Target Diag] env={env_id} step={step} train_stage={self.train_stage}")
+        print("=" * 80)
+        print(
+            "raw_action = "
+            + np.array2string(raw_action, precision=4, suppress_small=True, max_line_width=100000)
+        )
+        print(
+            "target_pos = "
+            + np.array2string(target_pos, precision=4, suppress_small=True, max_line_width=100000)
+        )
+        print(
+            "raw_action stats: "
+            f"min={raw_action.min():.4f} max={raw_action.max():.4f} "
+            f"mean={raw_action.mean():.4f} norm={np.linalg.norm(raw_action):.4f}"
+        )
+        print(
+            "target_pos stats: "
+            f"min={target_pos.min():.4f} max={target_pos.max():.4f} "
+            f"mean={target_pos.mean():.4f} norm={np.linalg.norm(target_pos):.4f}"
+        )
+    def _print_native_pd_compare_diag(self):
+        if not self._pd_control:
+            return
+
+        env_id = int(self._diag_compare_env)
+        if env_id < 0 or env_id >= self.num_envs:
+            return
+
+        step = int(self.progress_buf[env_id].item())
+        if step % self._diag_native_pd_interval != 0:
+            return
+
+        native_dof_pos = self._dof_pos[env_id]
+        native_dof_vel = self._dof_vel[env_id]
+        target_pos = self._action_to_pd_targets(self.actions[env_id:env_id + 1])[0]
+        dof_force = self.dof_force_tensor[env_id]
+        pd_stiffness = self._pd_stiffness
+        pd_damping = self._pd_damping
+
+        compare_specs = [
+            ("abdomen", 0, 3),
+            ("neck", 3, 6),
+            ("right_shoulder", 6, 9),
+            ("left_shoulder", 10, 13),
+            ("right_hip", 14, 17),
+            ("right_knee", 17, 18),
+            ("right_ankle", 18, 21),
+            ("left_hip", 21, 24),
+            ("left_knee", 24, 25),
+            ("left_ankle", 25, 28),
+        ]
+
+        print("=" * 80)
+        print(f"[Native PD Compare] env={env_id} step={step} train_stage={self.train_stage}")
+        print("=" * 80)
+        for name, start, end in compare_specs:
+            q_native = native_dof_pos[start:end]
+            qd_native = native_dof_vel[start:end]
+            q_target = target_pos[start:end]
+            tau_measured = dof_force[start:end]
+            tau_pred = pd_stiffness[start:end] * (q_target - q_native) - pd_damping[start:end] * qd_native
+            tau_delta = tau_measured - tau_pred
+
+            q_native_np = q_native.detach().cpu().numpy()
+            qd_native_np = qd_native.detach().cpu().numpy()
+            q_target_np = q_target.detach().cpu().numpy()
+            tau_measured_np = tau_measured.detach().cpu().numpy()
+            tau_pred_np = tau_pred.detach().cpu().numpy()
+            tau_delta_np = tau_delta.detach().cpu().numpy()
+
+            print(f"{name}:")
+            print(f"  q_native     = {np.array2string(q_native_np, precision=4, suppress_small=True)}")
+            print(f"  qd_native    = {np.array2string(qd_native_np, precision=4, suppress_small=True)}")
+            print(f"  q_target     = {np.array2string(q_target_np, precision=4, suppress_small=True)}")
+            print(f"  tau_measured = {np.array2string(tau_measured_np, precision=4, suppress_small=True)}")
+            print(f"  tau_pred     = {np.array2string(tau_pred_np, precision=4, suppress_small=True)}")
+            print(f"  tau_delta    = {np.array2string(tau_delta_np, precision=4, suppress_small=True)}")
+            print(
+                f"  norms: measured={np.linalg.norm(tau_measured_np):.4f} "
+                f"pred={np.linalg.norm(tau_pred_np):.4f} "
+                f"delta={np.linalg.norm(tau_delta_np):.4f}"
+            )
+
+
+    def _build_reconstructed_base_obs(self, env_id):
+        root_states = self._root_states[env_id:env_id + 1]
+        root_pos = root_states[:, 0:3]
+        root_rot = root_states[:, 3:7]
+        root_vel = root_states[:, 7:10]
+        root_ang_vel = root_states[:, 10:13]
+
+        root_h = root_pos[:, 2:3]
+        heading_rot = calc_heading_quat_inv(root_rot)
+
+        if self._local_root_obs:
+            root_rot_obs = quat_mul(heading_rot, root_rot)
+        else:
+            root_rot_obs = root_rot
+        root_rot_obs = quat_to_tan_norm(root_rot_obs)
+
+        local_root_vel = my_quat_rotate(heading_rot, root_vel)
+        local_root_ang_vel = my_quat_rotate(heading_rot, root_ang_vel)
+
+        recon_dof_pos = self._dof_pos[env_id].clone()
+        recon_dof_vel = self._dof_vel[env_id].clone()
+        compare_specs = [
+            (0, 3, "pelvis", "torso"),
+            (3, 6, "torso", "head"),
+            (6, 9, "torso", "right_upper_arm"),
+            (10, 13, "torso", "left_upper_arm"),
+            (14, 17, "pelvis", "right_thigh"),
+            (18, 21, "right_shin", "right_foot"),
+            (21, 24, "pelvis", "left_thigh"),
+            (25, 28, "left_shin", "left_foot"),
+        ]
+
+        for start, end, parent_name, child_name in compare_specs:
+            recon_dof_pos[start:end] = quat_to_exp_map(
+                self._relative_quat(env_id, parent_name, child_name).unsqueeze(0)
+            )[0]
+            recon_dof_vel[start:end] = self._relative_ang_vel_child_local(env_id, parent_name, child_name)
+
+        dof_obs = dof_to_obs(recon_dof_pos.unsqueeze(0))
+
+        key_body_pos = self._rigid_body_pos[env_id:env_id + 1][:, self._key_body_ids, :]
+        local_key_body_pos = key_body_pos - root_pos.unsqueeze(-2)
+        heading_rot_expand = heading_rot.unsqueeze(-2).repeat((1, local_key_body_pos.shape[1], 1))
+        flat_end_pos = local_key_body_pos.view(local_key_body_pos.shape[0] * local_key_body_pos.shape[1], 3)
+        flat_heading_rot = heading_rot_expand.view(heading_rot_expand.shape[0] * heading_rot_expand.shape[1], 4)
+        local_end_pos = my_quat_rotate(flat_heading_rot, flat_end_pos)
+        flat_local_key_pos = local_end_pos.view(1, -1)
+
+        load_cell_force = torch.zeros((1, 6), device=self.device, dtype=torch.float)
+
+        recon_base_obs = torch.cat((
+            root_h,
+            root_rot_obs,
+            local_root_vel,
+            local_root_ang_vel,
+            dof_obs,
+            recon_dof_vel.unsqueeze(0),
+            load_cell_force,
+            flat_local_key_pos
+        ), dim=-1)
+        return recon_base_obs[0]
+
+    def _print_base_obs_alignment_diag(self):
+        env_id = int(self._diag_compare_env)
+        if env_id < 0 or env_id >= self.num_envs:
+            return
+
+        step = int(self.progress_buf[env_id].item())
+        if step % self._diag_compare_interval != 0:
+            return
+
+        native_base_obs = super()._compute_humanoid_obs(torch.tensor([env_id], device=self.device))[0]
+        recon_base_obs = self._build_reconstructed_base_obs(env_id)
+        abs_diff = torch.abs(native_base_obs - recon_base_obs)
+
+        slices = [
+            ("root_h", 0, 1),
+            ("root_rot_obs", 1, 7),
+            ("local_root_vel", 7, 10),
+            ("local_root_ang_vel", 10, 13),
+            ("dof_obs", 13, 65),
+            ("dof_vel", 65, 93),
+            ("load_cell", 93, 99),
+            ("key_body_pos", 99, 111),
+        ]
+
+        print("\n" + "=" * 80)
+        print(f"[Base Obs Align Diag] env={env_id} step={step} train_stage={self.train_stage}")
+        print("=" * 80)
+        for name, start, end in slices:
+            native_chunk = native_base_obs[start:end].detach().cpu().numpy()
+            recon_chunk = recon_base_obs[start:end].detach().cpu().numpy()
+            diff_chunk = abs_diff[start:end].detach().cpu().numpy()
+            print(f"{name}: max_abs_diff={diff_chunk.max():.6f}, mean_abs_diff={diff_chunk.mean():.6f}")
+            print(f"  native[:6] = {np.array2string(native_chunk[:6], precision=4, suppress_small=True)}")
+            print(f"  recon [:6] = {np.array2string(recon_chunk[:6], precision=4, suppress_small=True)}")
+
+    def _build_reconstructed_cmd_obs(self, env_id):
+        env_ids = torch.tensor([env_id], device=self.device, dtype=torch.long)
+        current_time = self.progress_buf[env_ids] * self.control_dt
+        root_pos = self._root_states[env_ids, 0:3]
+        root_rot = self._root_states[env_ids, 3:7]
+
+        target_pos = self._traj_gen.get_position(env_ids, current_time)
+        traj_points_world = self._traj_gen.get_observation_points(
+            env_ids, current_time, self._traj_sample_times
+        )
+
+        traj_delta = traj_points_world[:, 0, 0:2] - target_pos[:, 0:2]
+        target_dist = torch.norm(traj_delta, dim=-1, keepdim=True)
+
+        prev_state = self._standing_phase_state[env_ids]
+        prev_is_standing = self._prev_is_standing_phase[env_ids]
+
+        enter_mask = target_dist[:, 0] < self._stand_enter_thres
+        exit_mask = target_dist[:, 0] > self._stand_exit_thres
+
+        is_standing_phase = torch.where(
+            enter_mask,
+            torch.ones_like(prev_state),
+            torch.where(
+                exit_mask,
+                torch.zeros_like(prev_state),
+                prev_state
+            )
+        )
+
+        current_heading_xy = self._calc_current_heading_xy(root_rot)
+        saved_heading_xy = self._stand_heading_dir[env_ids].clone()
+        entering_standing = torch.logical_and(
+            is_standing_phase,
+            torch.logical_not(prev_is_standing)
+        )
+        if torch.any(entering_standing):
+            saved_heading_xy[entering_standing] = current_heading_xy[entering_standing]
+
+        heading_inv = calc_heading_quat_inv(root_rot)
+        num_samples = self._num_traj_points
+        heading_inv_expand = heading_inv.unsqueeze(1).expand(-1, num_samples, -1).reshape(-1, 4)
+
+        delta_pos = traj_points_world - root_pos.unsqueeze(1)
+        delta_pos_flat = delta_pos.reshape(-1, 3)
+        local_traj_points = my_quat_rotate(heading_inv_expand, delta_pos_flat)
+        local_traj_points = local_traj_points.view(root_pos.shape[0], num_samples, 3)
+        traj_obs = local_traj_points[..., 0:2].reshape(root_pos.shape[0], -1)
+
+        cmd_speed = target_dist / self._traj_sample_times[0]
+        standness = (self._stand_exit_thres - target_dist) / (
+            self._stand_exit_thres - self._stand_enter_thres + 1e-6
+        )
+        standness = torch.clamp(standness, 0.0, 1.0)
+
+        walk_dir = torch.nn.functional.normalize(traj_delta, dim=-1, eps=1e-6)
+
+        walk_yaw_cos = torch.sum(current_heading_xy * walk_dir, dim=-1, keepdim=True)
+        walk_yaw_sin = (
+            current_heading_xy[:, 0:1] * walk_dir[:, 1:2]
+            - current_heading_xy[:, 1:2] * walk_dir[:, 0:1]
+        )
+
+        stand_yaw_cos = torch.sum(current_heading_xy * saved_heading_xy, dim=-1, keepdim=True)
+        stand_yaw_sin = (
+            current_heading_xy[:, 0:1] * saved_heading_xy[:, 1:2]
+            - current_heading_xy[:, 1:2] * saved_heading_xy[:, 0:1]
+        )
+
+        return torch.cat([
+            traj_obs,
+            cmd_speed,
+            standness,
+            walk_yaw_cos,
+            walk_yaw_sin,
+            stand_yaw_cos,
+            stand_yaw_sin,
+        ], dim=-1)[0]
+
+    def _print_cmd_obs_alignment_diag(self):
+        env_id = int(self._diag_compare_env)
+        if env_id < 0 or env_id >= self.num_envs:
+            return
+
+        step = int(self.progress_buf[env_id].item())
+        if step % self._diag_compare_interval != 0:
+            return
+
+        env_ids = torch.tensor([env_id], device=self.device, dtype=torch.long)
+        base_obs = super()._compute_humanoid_obs(env_ids)
+
+        current_time = self.progress_buf[env_ids] * self.control_dt
+        root_pos = self._root_states[env_ids, 0:3]
+        root_rot = self._root_states[env_ids, 3:7]
+        target_pos = self._traj_gen.get_position(env_ids, current_time)
+        traj_points_world = self._traj_gen.get_observation_points(
+            env_ids, current_time, self._traj_sample_times
+        )
+
+        traj_delta = traj_points_world[:, 0, 0:2] - target_pos[:, 0:2]
+        target_dist_flat = torch.norm(traj_delta, dim=-1)
+
+        prev_state = self._standing_phase_state[env_ids]
+        prev_is_standing = self._prev_is_standing_phase[env_ids]
+
+        enter_mask = target_dist_flat < self._stand_enter_thres
+        exit_mask = target_dist_flat > self._stand_exit_thres
+
+        is_standing_phase = torch.where(
+            enter_mask,
+            torch.ones_like(prev_state),
+            torch.where(
+                exit_mask,
+                torch.zeros_like(prev_state),
+                prev_state
+            )
+        )
+
+        current_heading_xy = self._calc_current_heading_xy(root_rot)
+        saved_heading_xy = self._stand_heading_dir[env_ids].clone()
+        entering_standing = torch.logical_and(
+            is_standing_phase,
+            torch.logical_not(prev_is_standing)
+        )
+        if torch.any(entering_standing):
+            saved_heading_xy[entering_standing] = current_heading_xy[entering_standing]
+
+        heading_inv = calc_heading_quat_inv(root_rot)
+        num_samples = self._num_traj_points
+        heading_inv_expand = heading_inv.unsqueeze(1).expand(-1, num_samples, -1).reshape(-1, 4)
+        delta_pos = traj_points_world - root_pos.unsqueeze(1)
+        delta_pos_flat = delta_pos.reshape(-1, 3)
+        local_traj_points = my_quat_rotate(heading_inv_expand, delta_pos_flat)
+        local_traj_points = local_traj_points.view(root_pos.shape[0], num_samples, 3)
+
+        native_traj_obs = local_traj_points[..., 0:2].reshape(root_pos.shape[0], -1)
+        native_cmd_speed = target_dist_flat.unsqueeze(-1) / self._traj_sample_times[0]
+        native_standness = (self._stand_exit_thres - target_dist_flat.unsqueeze(-1)) / (
+            self._stand_exit_thres - self._stand_enter_thres + 1e-6
+        )
+        native_standness = torch.clamp(native_standness, 0.0, 1.0)
+
+        walk_dir = torch.nn.functional.normalize(traj_delta, dim=-1, eps=1e-6)
+        native_walk_yaw_cos = torch.sum(current_heading_xy * walk_dir, dim=-1, keepdim=True)
+        native_walk_yaw_sin = (
+            current_heading_xy[:, 0:1] * walk_dir[:, 1:2]
+            - current_heading_xy[:, 1:2] * walk_dir[:, 0:1]
+        )
+        native_stand_yaw_cos = torch.sum(current_heading_xy * saved_heading_xy, dim=-1, keepdim=True)
+        native_stand_yaw_sin = (
+            current_heading_xy[:, 0:1] * saved_heading_xy[:, 1:2]
+            - current_heading_xy[:, 1:2] * saved_heading_xy[:, 0:1]
+        )
+
+        native_cmd_obs = torch.cat([
+            native_traj_obs,
+            native_cmd_speed,
+            native_standness,
+            native_walk_yaw_cos,
+            native_walk_yaw_sin,
+            native_stand_yaw_cos,
+            native_stand_yaw_sin,
+        ], dim=-1)[0]
+
+        recon_cmd_obs = self._build_reconstructed_cmd_obs(env_id)
+        abs_diff = torch.abs(native_cmd_obs - recon_cmd_obs)
+
+        slices = [
+            ("traj_obs", 0, 6),
+            ("cmd_speed", 6, 7),
+            ("standness", 7, 8),
+            ("walk_yaw_cos", 8, 9),
+            ("walk_yaw_sin", 9, 10),
+            ("stand_yaw_cos", 10, 11),
+            ("stand_yaw_sin", 11, 12),
+        ]
+
+        print("\n" + "=" * 80)
+        print(f"[Cmd Obs Align Diag] env={env_id} step={step} train_stage={self.train_stage}")
+        print("=" * 80)
+        for name, start, end in slices:
+            native_chunk = native_cmd_obs[start:end].detach().cpu().numpy()
+            recon_chunk = recon_cmd_obs[start:end].detach().cpu().numpy()
+            diff_chunk = abs_diff[start:end].detach().cpu().numpy()
+            print(f"{name}: max_abs_diff={diff_chunk.max():.6f}, mean_abs_diff={diff_chunk.mean():.6f}")
+            print(f"  native = {np.array2string(native_chunk, precision=4, suppress_small=True)}")
+            print(f"  recon  = {np.array2string(recon_chunk, precision=4, suppress_small=True)}")
 
     def _calc_current_heading_xy(self, root_rot):
         """
@@ -487,6 +1053,7 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
         self._reset_ref_env_ids = []
         self._reset_actors(env_ids)
         self._refresh_sim_tensors()
+        self._maybe_export_reset_state_db(env_ids)
 
         root_pos = self._root_states[env_ids, 0:3]
         root_rot = self._root_states[env_ids, 3:7]
@@ -496,6 +1063,80 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
 
         self._compute_observations(env_ids)
         self._init_amp_obs(env_ids)
+        return
+
+    def _maybe_export_reset_state_db(self, env_ids):
+        if (not self._export_reset_state_db) or self._export_reset_state_db_saved_once:
+            return
+
+        if self._export_reset_state_db_max_samples <= 0 or len(env_ids) == 0:
+            return
+
+        remaining = self._export_reset_state_db_max_samples - len(self._reset_state_db["root_pos"])
+        if remaining <= 0:
+            self._flush_reset_state_db(force=True)
+            return
+
+        env_ids_np = env_ids.detach().cpu().numpy()
+        num_take = min(len(env_ids_np), self._export_reset_state_db_num_per_reset, remaining)
+        if num_take <= 0:
+            return
+
+        if num_take < len(env_ids_np):
+            choose_idx = np.random.choice(len(env_ids_np), size=num_take, replace=False)
+            sample_env_ids = env_ids_np[choose_idx]
+        else:
+            sample_env_ids = env_ids_np
+
+        sample_env_ids_t = torch.as_tensor(sample_env_ids, device=self.device, dtype=torch.long)
+
+        source_mode = np.zeros(num_take, dtype=np.int32)
+        if len(self._reset_ref_env_ids) > 0:
+            ref_env_ids = set(self._reset_ref_env_ids.detach().cpu().numpy().tolist())
+            source_mode = np.array([1 if int(eid) in ref_env_ids else 0 for eid in sample_env_ids], dtype=np.int32)
+
+        root_states = self._root_states[sample_env_ids_t].detach().cpu().numpy()
+        dof_pos = self._dof_pos[sample_env_ids_t].detach().cpu().numpy()
+        dof_vel = self._dof_vel[sample_env_ids_t].detach().cpu().numpy()
+
+        self._reset_state_db["root_pos"].extend(root_states[:, 0:3].astype(np.float32))
+        self._reset_state_db["root_rot"].extend(root_states[:, 3:7].astype(np.float32))
+        self._reset_state_db["root_vel"].extend(root_states[:, 7:10].astype(np.float32))
+        self._reset_state_db["root_ang_vel"].extend(root_states[:, 10:13].astype(np.float32))
+        self._reset_state_db["dof_pos"].extend(dof_pos.astype(np.float32))
+        self._reset_state_db["dof_vel"].extend(dof_vel.astype(np.float32))
+        self._reset_state_db["source_mode"].extend(source_mode.tolist())
+
+        total = len(self._reset_state_db["root_pos"])
+        if total % self._export_reset_state_db_flush_every == 0 or total >= self._export_reset_state_db_max_samples:
+            self._flush_reset_state_db(force=(total >= self._export_reset_state_db_max_samples))
+        return
+
+    def _flush_reset_state_db(self, force=False):
+        if len(self._reset_state_db["root_pos"]) == 0:
+            return
+
+        save_dir = os.path.dirname(self._export_reset_state_db_path)
+        if save_dir != "":
+            os.makedirs(save_dir, exist_ok=True)
+
+        payload = {
+            "root_pos": np.asarray(self._reset_state_db["root_pos"], dtype=np.float32),
+            "root_rot": np.asarray(self._reset_state_db["root_rot"], dtype=np.float32),
+            "dof_pos": np.asarray(self._reset_state_db["dof_pos"], dtype=np.float32),
+            "root_vel": np.asarray(self._reset_state_db["root_vel"], dtype=np.float32),
+            "root_ang_vel": np.asarray(self._reset_state_db["root_ang_vel"], dtype=np.float32),
+            "dof_vel": np.asarray(self._reset_state_db["dof_vel"], dtype=np.float32),
+            "source_mode": np.asarray(self._reset_state_db["source_mode"], dtype=np.int32),
+        }
+        np.savez(self._export_reset_state_db_path, **payload)
+
+        total = payload["root_pos"].shape[0]
+        print("[ResetStateDB] saved {:d} samples to {}".format(total, self._export_reset_state_db_path))
+
+        if force or total >= self._export_reset_state_db_max_samples:
+            self._export_reset_state_db_saved_once = True
+            print("[ResetStateDB] collection finished.")
         return
 
     def _compute_humanoid_obs(self, env_ids=None):

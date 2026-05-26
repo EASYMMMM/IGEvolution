@@ -226,6 +226,8 @@ class HumanoidAMP_s1_Smpl_Base(VecTask):
         self.envs = []
         self.dof_limits_lower = []
         self.dof_limits_upper = []
+        self._pd_stiffness = None
+        self._pd_damping = None
         
         for i in range(self.num_envs):
             # create env instance
@@ -261,6 +263,8 @@ class HumanoidAMP_s1_Smpl_Base(VecTask):
 
         self.dof_limits_lower = to_torch(self.dof_limits_lower, device=self.device)
         self.dof_limits_upper = to_torch(self.dof_limits_upper, device=self.device)
+        self._pd_stiffness = to_torch(dof_prop['stiffness'], device=self.device, dtype=torch.float)
+        self._pd_damping = to_torch(dof_prop['damping'], device=self.device, dtype=torch.float)
 
         self._key_body_ids = self._build_key_body_ids_tensor(env_ptr, handle)
         self._contact_body_ids = self._build_contact_body_ids_tensor(env_ptr, handle)
