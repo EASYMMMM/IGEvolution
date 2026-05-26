@@ -43,6 +43,8 @@ class SRL_Real_HRI_Base(VecTask):
 
         self.max_episode_length = self.cfg["env"]["episodeLength"]
         self._local_root_obs = self.cfg["env"]["localRootObs"]
+        # Minimal omni-walk migration: keep train_stage aligned with humanoid solo training.
+        self.train_stage = self.cfg["env"].get("train_stage", 2)  # 1: 站立, 2: 直线, 3: 曲线, 4: 混合
         # self._contact_bodies = self.cfg["env"]["contactBodies"]
         self._contact_bodies = self.cfg["env"]["contactBodies"]  
         self._termination_height = self.cfg["env"]["terminationHeight"]
@@ -53,6 +55,13 @@ class SRL_Real_HRI_Base(VecTask):
         self.humanoid_obs_num = self.cfg["env"]["humanoid_obs_num"]
         self.humanoid_actions_num = self.cfg["env"]["humanoid_actions_num"]
         self.srl_obs_num = self.cfg["env"]["srl_obs_num"]
+        self.srl_full_obs_num = self.srl_obs_num
+        # Full obs keeps simulator-only state for reward/reset; policy obs removes fields unavailable on hardware.
+        self.srl_policy_obs_remove_ids = self.cfg["env"].get("srl_policy_obs_remove_ids", [0, 1, 2, 3])
+        self.srl_policy_obs_ids_list = [
+            i for i in range(self.srl_full_obs_num) if i not in set(self.srl_policy_obs_remove_ids)
+        ]
+        self.srl_policy_obs_num = len(self.srl_policy_obs_ids_list)
         self.srl_actions_num = self.cfg["env"]["srl_actions_num"]
         self.teacher_srl_obs_num = self.cfg["env"]["teacher_srl_obs_num"]
         self.srl_free_actions_num = self.cfg["env"]["srl_free_actions_num"]
@@ -65,6 +74,9 @@ class SRL_Real_HRI_Base(VecTask):
         self.hri_virtual_damping = self.cfg["env"].get("hri_virtual_damping", 3000.0)
         self.hri_virtual_force_max = self.cfg["env"].get("hri_virtual_force_max", 1000.0)
         self.action_scale = self.cfg["env"].get("action_scale", 1.0)
+        self.srl_action_filter_enable = self.cfg["env"].get("srl_action_filter_enable", True)
+        self.srl_action_filter_cutoff_hz = self.cfg["env"].get("srl_action_filter_cutoff_hz", 4.0)
+        self.srl_action_filter_order = self.cfg["env"].get("srl_action_filter_order", 2)
         self.srl_dof_num = self.srl_actions_num + self.srl_free_actions_num
         self.HMI_obs_enable = self.cfg["env"].get("HMI_obs_enable", True)
 
@@ -128,6 +140,7 @@ class SRL_Real_HRI_Base(VecTask):
 
         dt = self.cfg["sim"]["dt"]
         self.control_dt = self.control_freq_inv * dt
+        self._init_srl_action_filter()
 
         # ==========================================================
         # 电机优化参数 (针对 RI80 设计)
@@ -197,6 +210,8 @@ class SRL_Real_HRI_Base(VecTask):
             self.num_envs, device=self.device, dtype=torch.long)
         self.actions = torch.zeros(
             (self.num_envs, self.num_actions), device=self.device, dtype=torch.float)
+        self.raw_actions = torch.zeros(
+            (self.num_envs, self.num_actions), device=self.device, dtype=torch.float)
         self._dof_state = gymtorch.wrap_tensor(dof_state_tensor)
         self._dof_pos = self._dof_state.view(self.num_envs, self.num_dof, 2)[..., 0]
         self._dof_vel = self._dof_state.view(self.num_envs, self.num_dof, 2)[..., 1]
@@ -240,11 +255,17 @@ class SRL_Real_HRI_Base(VecTask):
         self._contact_forces = gymtorch.wrap_tensor(contact_force_tensor).view(self.num_envs, self.num_bodies, 3)
         
         self._terminate_buf = torch.ones(self.num_envs, device=self.device, dtype=torch.long)
+        self.srl_policy_obs_ids = to_torch(self.srl_policy_obs_ids_list, device=self.device, dtype=torch.long)
 
+        # srl_obs_buf: masked, hardware-realistic SRL policy observation.
         self.srl_obs_buf = torch.zeros(
             (self.num_envs, self.get_srl_obs_size()), device=self.device, dtype=torch.float)
         self.srl_obs_mirrored_buf = torch.zeros(
             (self.num_envs, self.get_srl_obs_size()), device=self.device, dtype=torch.float)
+
+        # srl_full_obs_buf: complete SRL observation with simulator-only fields, used by reward/reset.
+        self.srl_full_obs_buf = torch.zeros(
+            (self.num_envs, self.get_srl_full_obs_size()), device=self.device, dtype=torch.float)
 
         self.srl_priv_extra_obs_buf = torch.zeros(
             (self.num_envs, self.get_srl_priv_obs_size()-self.get_srl_obs_size()), device=self.device, dtype=torch.float)
@@ -255,9 +276,21 @@ class SRL_Real_HRI_Base(VecTask):
             (self.num_envs, self.get_teacher_srl_obs_size()), device=self.device, dtype=torch.float)
 
         # frame stack buffer
-        self.srl_obs_buffer = torch.zeros((self.num_envs, self.srl_obs_frame_stack, self.srl_obs_num), device=self.device)
-        self.srl_obs_mirrored_buffer = torch.zeros((self.num_envs, self.srl_obs_frame_stack, self.srl_obs_num), device=self.device)
+        # srl_obs_buffer: masked per-frame policy obs history.
+        self.srl_obs_buffer = torch.zeros((self.num_envs, self.srl_obs_frame_stack, self.srl_policy_obs_num), device=self.device)
+        self.srl_obs_mirrored_buffer = torch.zeros((self.num_envs, self.srl_obs_frame_stack, self.srl_policy_obs_num), device=self.device)
+        # srl_full_obs_buffer: complete per-frame obs history for reward terms that need hidden sim state.
+        self.srl_full_obs_buffer = torch.zeros((self.num_envs, self.srl_obs_frame_stack, self.srl_full_obs_num), device=self.device)
         self.teacher_srl_obs_buffer = torch.zeros((self.num_envs, self.srl_obs_frame_stack, self.teacher_srl_obs_num), device=self.device)
+        self.srl_pd_targets = torch.zeros(
+            (self.num_envs, self.srl_actions_num), device=self.device, dtype=torch.float
+        )
+        q0 = self._dof_pos[:, -self.srl_actions_num:].clone()
+        self.srl_lpf_x1 = q0.clone()
+        self.srl_lpf_x2 = q0.clone()
+        self.srl_lpf_y1 = q0.clone()
+        self.srl_lpf_y2 = q0.clone()
+        self.srl_pd_targets[:] = q0
 
 
         self.humanoid_task_rew_buf = torch.zeros(
@@ -290,11 +323,15 @@ class SRL_Real_HRI_Base(VecTask):
         self._traj_sample_times = [0.5, 1.0, 1.5] # 轨迹参数
         self._num_traj_points = len(self._traj_sample_times)
         self._traj_obs_dim = self._num_traj_points * 2 
-        episode_duration = self.max_episode_length * self.control_dt
+        episode_duration = self.max_episode_length * 1.2 * self.control_dt
+        # Minimal omni-walk migration: reuse the same stage-conditioned trajectory labels as humanoid solo training.
+        is_testing = (not headless) or force_render
         self._traj_gen = TrajGenerator(self.num_envs, self.device, self.control_dt, episode_duration,
                                 speed_mean=1.0,      
-                                turn_speed_max=0.0,  # 不要太大，先设为0.5
-                                num_turns=2)         # 转向次数
+                                turn_speed_max=0.5,
+                                num_turns=2,
+                                train_stage=self.train_stage,
+                                is_test=is_testing)
         
         if self.viewer != None:
             self._init_camera()
@@ -340,10 +377,13 @@ class SRL_Real_HRI_Base(VecTask):
         return self.humanoid_obs_num
     
     def get_srl_obs_size(self):
-        return self.srl_obs_num*self.srl_obs_frame_stack + self.srl_command_num
+        return self.srl_policy_obs_num*self.srl_obs_frame_stack + self.srl_command_num
+
+    def get_srl_full_obs_size(self):
+        return self.srl_full_obs_num*self.srl_obs_frame_stack + self.srl_command_num
 
     def get_srl_priv_obs_size(self):
-        return 12 + self.srl_obs_num*self.srl_obs_frame_stack + self.srl_command_num
+        return 12 + self.get_srl_obs_size()
 
     def create_sim(self):
         self.up_axis_idx = 2 # index of up axis: Y=1, Z=2
@@ -365,11 +405,58 @@ class SRL_Real_HRI_Base(VecTask):
 
         return
 
+    def _init_srl_action_filter(self):
+        if self.srl_action_filter_order != 2:
+            raise ValueError(
+                f"Only second-order Butterworth filter is supported, got order={self.srl_action_filter_order}."
+            )
+
+        sample_freq = 1.0 / self.control_dt
+        cutoff_hz = min(self.srl_action_filter_cutoff_hz, 0.499 * sample_freq)
+        k = math.tan(math.pi * cutoff_hz / sample_freq)
+        norm = 1.0 / (1.0 + math.sqrt(2.0) * k + k * k)
+        self.srl_lpf_b0 = float(k * k * norm)
+        self.srl_lpf_b1 = float(2.0 * self.srl_lpf_b0)
+        self.srl_lpf_b2 = float(self.srl_lpf_b0)
+        self.srl_lpf_a1 = float(2.0 * (k * k - 1.0) * norm)
+        self.srl_lpf_a2 = float((1.0 - math.sqrt(2.0) * k + k * k) * norm)
+
+    def _reset_srl_action_filter(self, env_ids):
+        q0 = self._dof_pos[env_ids, -self.srl_actions_num:].clone()
+        self.srl_lpf_x1[env_ids] = q0
+        self.srl_lpf_x2[env_ids] = q0
+        self.srl_lpf_y1[env_ids] = q0
+        self.srl_lpf_y2[env_ids] = q0
+        self.srl_pd_targets[env_ids] = q0
+        return
+
+    def _apply_srl_pd_target_filter(self, raw_srl_pd_target):
+        # SRL-only causal second-order Butterworth LPF for sim-to-real action smoothing.
+        # Training and deployment should use the same filter to avoid deployment-only phase lag.
+        y = (
+            self.srl_lpf_b0 * raw_srl_pd_target
+            + self.srl_lpf_b1 * self.srl_lpf_x1
+            + self.srl_lpf_b2 * self.srl_lpf_x2
+            - self.srl_lpf_a1 * self.srl_lpf_y1
+            - self.srl_lpf_a2 * self.srl_lpf_y2
+        )
+        self.srl_lpf_x2[:] = self.srl_lpf_x1
+        self.srl_lpf_x1[:] = raw_srl_pd_target
+        self.srl_lpf_y2[:] = self.srl_lpf_y1
+        self.srl_lpf_y1[:] = y
+        return y
+
+    def _srl_pd_targets_to_action(self, srl_pd_target):
+        action_offset = self._pd_action_offset[-self.srl_actions_num:]
+        action_scale = self._pd_action_scale[-self.srl_actions_num:] * self.action_scale
+        return torch.clamp((srl_pd_target - action_offset) / (action_scale + 1e-8), -1.0, 1.0)
+
     def reset_idx(self, env_ids):
         self._reset_actors(env_ids)
         for env_id in env_ids:
             self.srl_obs_buffer[env_id] = 0
             self.srl_obs_mirrored_buffer[env_id] = 0
+            self.srl_full_obs_buffer[env_id] = 0
             self.teacher_srl_obs_buffer[env_id] = 0
         # reset SRL motor running stats (peak/thermal)
         self.srl_tau2_ema[env_ids] = 0.0
@@ -724,7 +811,7 @@ class SRL_Real_HRI_Base(VecTask):
         self.rew_buf[:], self.humanoid_task_rew_buf[:] = compute_humanoid_reward(self.obs_buf, self._dof_pos, 
                                                   self._dof_vel, self._dof_vel_prev, 
                                                   humanoid_target_point, humanoid_root_pos, load_cell_sensor*self.obs_scales["load_cell"],)
-        self.srl_rew_buf[:]  = compute_srl_reward(self.srl_obs_buf[:],
+        self.srl_rew_buf[:]  = compute_srl_reward(self.srl_full_obs_buf[:],
                                             clearance_reward,
                                             to_target,
                                             self.progress_buf,
@@ -739,7 +826,7 @@ class SRL_Real_HRI_Base(VecTask):
                                             self.max_episode_length,
                                             self.gait_period,
                                             self.humanoid_task_rew_buf,
-                                            srl_obs_num = self.srl_obs_num,
+                                            srl_obs_num = self.srl_full_obs_num,
                                             alive_reward_scale = self.alive_reward_scale,
                                             humanoid_share_reward_scale = self.humanoid_share_reward_scale,
                                             progress_reward_scale = self.progress_reward_scale,
@@ -764,7 +851,7 @@ class SRL_Real_HRI_Base(VecTask):
         return
 
     def _compute_reset(self):
-        self.reset_buf[:], self._terminate_buf[:] = compute_humanoid_reset(self.reset_buf, self.progress_buf, self.srl_obs_buf,
+        self.reset_buf[:], self._terminate_buf[:] = compute_humanoid_reset(self.reset_buf, self.progress_buf, self.srl_full_obs_buf,
                                                    self._contact_forces, self._contact_body_ids,
                                                    self._rigid_body_pos, self.max_episode_length,
                                                    self._enable_early_termination, self._termination_height, self._srl_termination_height)
@@ -821,29 +908,66 @@ class SRL_Real_HRI_Base(VecTask):
         wrench[:, 0:3] = - F
         return wrench
 
+    def _compute_humanoid_obs(self, env_ids=None):
+        # Minimal omni-walk migration: keep the base implementation as the old 6D-traj version,
+        # and let SRL_Real_HRI override this hook with stacked omni-directional commands.
+        virtual_load_cell = self._virtual_load_cell_from_dof(self._dof_pos, self._dof_vel)
+        if (env_ids is None):
+            root_states = self._root_states
+            dof_pos = self._dof_pos
+            dof_vel = self._dof_vel
+            key_body_pos = self._rigid_body_pos[:, self._key_body_ids, :]
+            load_cell_sensor = virtual_load_cell
+            current_time = self.progress_buf * self.control_dt
+            env_ids_flat = torch.arange(self.num_envs, device=self.device)
+            traj_points_world = self._traj_gen.get_observation_points(env_ids_flat, current_time, self._traj_sample_times)
+        else:
+            root_states = self._root_states[env_ids]
+            dof_pos = self._dof_pos[env_ids]
+            dof_vel = self._dof_vel[env_ids]
+            key_body_pos = self._rigid_body_pos[env_ids][:, self._key_body_ids, :]
+            load_cell_sensor = virtual_load_cell[env_ids]
+            current_time = self.progress_buf[env_ids] * self.control_dt
+            traj_points_world = self._traj_gen.get_observation_points(env_ids, current_time, self._traj_sample_times)
+
+        return compute_humanoid_observations(root_states, dof_pos, dof_vel,
+                                            key_body_pos, self._local_root_obs,
+                                            load_cell_sensor, self._humanoid_load_cell_obs,
+                                            traj_points_world)
+
 
     def _compute_observations(self, env_ids=None):
         humanoid_obs, srl_obs, srl_obs_mirrored, priv_extra_obs, priv_extra_obs_mirrored, teacher_srl_obs, potentials, prev_potentials, = self._compute_env_obs(env_ids)
+        srl_full_obs = srl_obs
+        srl_policy_obs = torch.index_select(srl_full_obs, dim=1, index=self.srl_policy_obs_ids)
+        srl_policy_obs_mirrored = torch.index_select(srl_obs_mirrored, dim=1, index=self.srl_policy_obs_ids)
 
         if (env_ids is None):
             # frame rolling
             self.srl_obs_buffer = torch.roll(self.srl_obs_buffer, shifts=1, dims=1)  # 向后移动数据
-            self.srl_obs_buffer[:, 0, :] = srl_obs.clone()  # 将新的观测数据放到队列的开头
+            self.srl_obs_buffer[:, 0, :] = srl_policy_obs.clone()  # 将新的策略观测数据放到队列的开头
             self.srl_obs_mirrored_buffer = torch.roll(self.srl_obs_mirrored_buffer, shifts=1, dims=1)  
-            self.srl_obs_mirrored_buffer[:, 0, :] = srl_obs_mirrored.clone()   
+            self.srl_obs_mirrored_buffer[:, 0, :] = srl_policy_obs_mirrored.clone()
+            self.srl_full_obs_buffer = torch.roll(self.srl_full_obs_buffer, shifts=1, dims=1)
+            self.srl_full_obs_buffer[:, 0, :] = srl_full_obs.clone()
             self.teacher_srl_obs_buffer = torch.roll(self.teacher_srl_obs_buffer, shifts=1, dims=1) 
             self.teacher_srl_obs_buffer[:, 0, :] = teacher_srl_obs.clone()   
 
             # ======= minimal add: reset-safe zero-frame fill (avoid stacked zeros after reset) =======
             zf = (self.srl_obs_buffer.abs().sum(dim=-1) == 0)  # [num_envs, stack]
             if zf.any():
-                fill = srl_obs.unsqueeze(1).expand(-1, self.srl_obs_buffer.size(1), -1)
+                fill = srl_policy_obs.unsqueeze(1).expand(-1, self.srl_obs_buffer.size(1), -1)
                 self.srl_obs_buffer[zf] = fill[zf]
 
             zf_m = (self.srl_obs_mirrored_buffer.abs().sum(dim=-1) == 0)
             if zf_m.any():
-                fill_m = srl_obs_mirrored.unsqueeze(1).expand(-1, self.srl_obs_mirrored_buffer.size(1), -1)
+                fill_m = srl_policy_obs_mirrored.unsqueeze(1).expand(-1, self.srl_obs_mirrored_buffer.size(1), -1)
                 self.srl_obs_mirrored_buffer[zf_m] = fill_m[zf_m]
+
+            zf_full = (self.srl_full_obs_buffer.abs().sum(dim=-1) == 0)
+            if zf_full.any():
+                fill_full = srl_full_obs.unsqueeze(1).expand(-1, self.srl_full_obs_buffer.size(1), -1)
+                self.srl_full_obs_buffer[zf_full] = fill_full[zf_full]
 
             zf_t = (self.teacher_srl_obs_buffer.abs().sum(dim=-1) == 0)
             if zf_t.any():
@@ -853,6 +977,7 @@ class SRL_Real_HRI_Base(VecTask):
 
             srl_base_obs = self.srl_obs_buffer.reshape(self.num_envs, -1)
             srl_base_mirrored_obs = self.srl_obs_mirrored_buffer.reshape(self.num_envs, -1)
+            srl_full_base_obs = self.srl_full_obs_buffer.reshape(self.num_envs, -1)
             teacher_srl_base_obs = self.teacher_srl_obs_buffer.reshape(self.num_envs, -1)
 
             task_params = torch.stack((
@@ -867,12 +992,14 @@ class SRL_Real_HRI_Base(VecTask):
             ), dim=-1)  # shape [num_envs, 3]
             srl_stacked_obs = torch.cat([srl_base_obs, task_params], dim=-1)
             srl_mirrored_stacked_obs = torch.cat([srl_base_mirrored_obs, mirrored_task_params], dim=-1)
+            srl_full_stacked_obs = torch.cat([srl_full_base_obs, task_params], dim=-1)
             teacher_srl_stacked_obs = torch.cat([teacher_srl_base_obs, task_params], dim=-1)
 
             total_obs = torch.cat((humanoid_obs, srl_stacked_obs), dim=1)
             self.obs_buf[:] = total_obs
             self.srl_obs_buf[:] = srl_stacked_obs
             self.srl_obs_mirrored_buf[:] = srl_mirrored_stacked_obs      
+            self.srl_full_obs_buf[:] = srl_full_stacked_obs
             self.srl_priv_extra_obs_buf[:] = priv_extra_obs
             self.srl_priv_extra_mirrored_obs_buf[:] = priv_extra_obs_mirrored
             self.teacher_srl_obs_buf[:] = teacher_srl_stacked_obs
@@ -883,9 +1010,11 @@ class SRL_Real_HRI_Base(VecTask):
         else:
             # 对指定环境进行更新
             self.srl_obs_buffer[env_ids] = torch.roll(self.srl_obs_buffer[env_ids], shifts=1, dims=1)
-            self.srl_obs_buffer[env_ids, 0, :] = srl_obs.clone()
+            self.srl_obs_buffer[env_ids, 0, :] = srl_policy_obs.clone()
             self.srl_obs_mirrored_buffer[env_ids] = torch.roll(self.srl_obs_mirrored_buffer[env_ids], shifts=1, dims=1)
-            self.srl_obs_mirrored_buffer[env_ids, 0, :] = srl_obs_mirrored.clone()
+            self.srl_obs_mirrored_buffer[env_ids, 0, :] = srl_policy_obs_mirrored.clone()
+            self.srl_full_obs_buffer[env_ids] = torch.roll(self.srl_full_obs_buffer[env_ids], shifts=1, dims=1)
+            self.srl_full_obs_buffer[env_ids, 0, :] = srl_full_obs.clone()
             self.teacher_srl_obs_buffer[env_ids] = torch.roll(self.teacher_srl_obs_buffer[env_ids], shifts=1, dims=1)
             self.teacher_srl_obs_buffer[env_ids, 0, :] = teacher_srl_obs.clone()
 
@@ -893,16 +1022,23 @@ class SRL_Real_HRI_Base(VecTask):
             ob = self.srl_obs_buffer[env_ids]
             zf = (ob.abs().sum(dim=-1) == 0)  # [len(env_ids), stack]
             if zf.any():
-                fill = srl_obs.unsqueeze(1).expand(-1, ob.size(1), -1)
+                fill = srl_policy_obs.unsqueeze(1).expand(-1, ob.size(1), -1)
                 ob[zf] = fill[zf]
                 self.srl_obs_buffer[env_ids] = ob
 
             mob = self.srl_obs_mirrored_buffer[env_ids]
             zf_m = (mob.abs().sum(dim=-1) == 0)
             if zf_m.any():
-                fill_m = srl_obs_mirrored.unsqueeze(1).expand(-1, mob.size(1), -1)
+                fill_m = srl_policy_obs_mirrored.unsqueeze(1).expand(-1, mob.size(1), -1)
                 mob[zf_m] = fill_m[zf_m]
                 self.srl_obs_mirrored_buffer[env_ids] = mob
+
+            fob = self.srl_full_obs_buffer[env_ids]
+            zf_full = (fob.abs().sum(dim=-1) == 0)
+            if zf_full.any():
+                fill_full = srl_full_obs.unsqueeze(1).expand(-1, fob.size(1), -1)
+                fob[zf_full] = fill_full[zf_full]
+                self.srl_full_obs_buffer[env_ids] = fob
 
             tob = self.teacher_srl_obs_buffer[env_ids]
             zf_t = (tob.abs().sum(dim=-1) == 0)
@@ -914,6 +1050,7 @@ class SRL_Real_HRI_Base(VecTask):
 
             srl_base_obs = self.srl_obs_buffer[env_ids, :, :].reshape(len(env_ids), -1)
             srl_base_mirrored_obs = self.srl_obs_mirrored_buffer[env_ids, :, :].reshape(len(env_ids), -1)
+            srl_full_base_obs = self.srl_full_obs_buffer[env_ids, :, :].reshape(len(env_ids), -1)
             teacher_srl_base_obs = self.teacher_srl_obs_buffer[env_ids, :, :].reshape(len(env_ids), -1)
 
             task_params = torch.stack((
@@ -928,12 +1065,14 @@ class SRL_Real_HRI_Base(VecTask):
             ), dim=-1)  # shape [len(env_ids), 3]
             srl_stacked_obs = torch.cat([srl_base_obs, task_params], dim=-1)
             srl_mirrored_stacked_obs = torch.cat([srl_base_mirrored_obs, mirrored_task_params], dim=-1)
+            srl_full_stacked_obs = torch.cat([srl_full_base_obs, task_params], dim=-1)
             teacher_srl_stacked_obs = torch.cat([teacher_srl_base_obs, task_params], dim=-1)
 
             total_obs = torch.cat((humanoid_obs, srl_stacked_obs), dim=1)
             self.obs_buf[env_ids] = total_obs
             self.srl_obs_buf[env_ids] = srl_stacked_obs
             self.srl_obs_mirrored_buf[env_ids] = srl_mirrored_stacked_obs
+            self.srl_full_obs_buf[env_ids] = srl_full_stacked_obs
             self.srl_priv_extra_obs_buf[env_ids] = priv_extra_obs
             self.srl_priv_extra_mirrored_obs_buf[env_ids] = priv_extra_obs_mirrored
             self.teacher_srl_obs_buf[env_ids] = teacher_srl_stacked_obs
@@ -965,9 +1104,6 @@ class SRL_Real_HRI_Base(VecTask):
             left_thigh_rot = self.left_thigh_states[:,3:7]
             left_shin_rot = self.left_shin_states[:,3:7]
             humanoid_legs_rot = torch.stack([right_thigh_rot, right_shin_rot, left_thigh_rot, left_shin_rot], dim=1)
-            current_time = self.progress_buf * self.control_dt
-            env_ids_flat = torch.arange(self.num_envs, device=self.device)
-            traj_points_world = self._traj_gen.get_observation_points(env_ids_flat, current_time, self._traj_sample_times)
         else:
             root_states = self._root_states[env_ids]
             dof_pos = self._dof_pos[env_ids]
@@ -989,11 +1125,7 @@ class SRL_Real_HRI_Base(VecTask):
             left_thigh_rot = self.left_thigh_states[env_ids][:,3:7]
             left_shin_rot = self.left_shin_states[env_ids][:,3:7]
             humanoid_legs_rot = torch.stack([right_thigh_rot, right_shin_rot, left_thigh_rot, left_shin_rot], dim=1)
-            current_time = self.progress_buf[env_ids] * self.control_dt
-            traj_points_world = self._traj_gen.get_observation_points(env_ids, current_time, self._traj_sample_times)
-        humanoid_obs = compute_humanoid_observations(root_states, dof_pos, dof_vel,
-                                            key_body_pos, self._local_root_obs,
-                                            load_cell_sensor, self._humanoid_load_cell_obs, traj_points_world)
+        humanoid_obs = self._compute_humanoid_obs(env_ids)
         srl_dof_num = self.srl_dof_num
         srl_obs, teacher_srl_obs, potentials, prev_potentials,  = compute_srl_observations(phase_buf, initial_dof_pos, srl_root_states, root_states,
                                                                           humanoid_legs_rot, dof_pos[:, -srl_dof_num:], dof_vel[:, -srl_dof_num:],
@@ -1029,6 +1161,7 @@ class SRL_Real_HRI_Base(VecTask):
         self.gym.set_dof_state_tensor_indexed(self.sim,
                                               gymtorch.unwrap_tensor(self._dof_state),
                                               gymtorch.unwrap_tensor(env_ids_int32), len(env_ids_int32))
+        self._reset_srl_action_filter(env_ids)
 
         self.progress_buf[env_ids] = 0
         self.reset_buf[env_ids] = 0
@@ -1037,14 +1170,24 @@ class SRL_Real_HRI_Base(VecTask):
         return
 
     def pre_physics_step(self, actions):
-        self.actions = actions.to(self.device).clone()
+        self.raw_actions = actions.to(self.device).clone()
+        self.actions = self.raw_actions.clone()
         # [humanoid_joint, free_joint, srl_joint]
         total_action_num = self.humanoid_actions_num+self.srl_free_actions_num+self.srl_actions_num
         _action = torch.zeros([self.num_envs, total_action_num ], device=self.device)
-        _action[:, :self.humanoid_actions_num] = self.actions[:, :self.humanoid_actions_num]
-        _action[:, -self.srl_actions_num:] = self.actions[:, -self.srl_actions_num:]
+        _action[:, :self.humanoid_actions_num] = self.raw_actions[:, :self.humanoid_actions_num]
+        _action[:, -self.srl_actions_num:] = self.raw_actions[:, -self.srl_actions_num:]
+
+        pd_tar = self._action_to_pd_targets(_action)
+        raw_srl_pd_target = pd_tar[:, -self.srl_actions_num:].clone()
+        if self.srl_action_filter_enable:
+            filtered_srl_pd_target = self._apply_srl_pd_target_filter(raw_srl_pd_target)
+            pd_tar[:, -self.srl_actions_num:] = filtered_srl_pd_target
+            # Keep humanoid actions raw while exposing the executed SRL command to obs/reward history.
+            self.actions[:, -self.srl_actions_num:] = self._srl_pd_targets_to_action(filtered_srl_pd_target)
+        self.srl_pd_targets[:] = pd_tar[:, -self.srl_actions_num:]
+
         if self._force_control:
-            pd_tar = self._action_to_pd_targets(_action)
             torques = self.p_gains*(pd_tar - self._dof_pos) - self.d_gains*self._dof_vel
             self.torques = torch.clip(torques, -self.torque_limits, self.torque_limits).view(self.torques.shape)
             self.humanoid_torques = self.torques[:,:self.get_humanoid_action_size()].clone()
@@ -1057,7 +1200,6 @@ class SRL_Real_HRI_Base(VecTask):
             # self.torques[:, self.srl_virtual_damping_ids] = Fv
             self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(self.torques))
         if self._pd_control:
-            pd_tar = self._action_to_pd_targets(_action) # pd_tar.shape: [num_actors, num_dofs]
             if self._force_control:
                 pd_tar[:,self.get_humanoid_action_size():] = 0.00
             pd_tar_tensor = gymtorch.unwrap_tensor(pd_tar)
@@ -1081,7 +1223,11 @@ class SRL_Real_HRI_Base(VecTask):
 
         # SRL reward & Obs
         self.extras["srl_rewards"] = self.srl_rew_buf.to(self.rl_device)
-        self.extras["x_velocity"] = self.obs_buf[:,7]                            
+        self.extras["x_velocity"] = self.obs_buf[:,7]
+        self.extras["srl_debug_actions"] = self.actions[0, -self.srl_actions_num:].to(self.rl_device)
+        self.extras["srl_debug_pd_targets"] = self.srl_pd_targets[0].to(self.rl_device)
+        self.extras["srl_debug_torques"] = self.torques[0, -self.srl_actions_num:].to(self.rl_device)
+        self.extras["srl_debug_joint_pos"] = self._dof_pos[0, -self.srl_actions_num:].to(self.rl_device)
 
         # plotting
         if self.viewer != None:
@@ -1598,6 +1744,14 @@ def compute_srl_observations_mirrored(
     srl_rel_rot = quat_mul(humanoid_root_rot_inv, root_rot)
     humanoid_euler_err = quat_to_euler_ypr(srl_rel_rot)
 
+    if HMI_obs_enable == False:
+        right_thigh_rel_pitch = right_thigh_rel_pitch * 0
+        right_shin_rel_pitch  = right_shin_rel_pitch * 0
+        left_thigh_rel_pitch  = left_thigh_rel_pitch * 0    
+        left_shin_rel_pitch   = left_shin_rel_pitch * 0
+        humanoid_euler_err    = humanoid_euler_err * 0
+        load_cell_force       = load_cell_force * 0
+
     # Mirrored
     local_root_vel[:,1] = -local_root_vel[:,1] # y方向速度
     local_root_ang_vel[:,0] = -local_root_ang_vel[:,0] # x轴角速度
@@ -1614,14 +1768,10 @@ def compute_srl_observations_mirrored(
     humanoid_euler_err[:,0] = -humanoid_euler_err[:,0]
     humanoid_euler_err[:,2] = -humanoid_euler_err[:,2]
 
-    # right_thigh_rel_euler[:,0] = -right_thigh_rel_euler[:,0]
-    # right_thigh_rel_euler[:,2] = -right_thigh_rel_euler[:,2]
-    # right_shin_rel_euler[:,0]  = -right_shin_rel_euler[:,0]
-    # right_shin_rel_euler[:,2]  = -right_shin_rel_euler[:,2]
-    # left_thigh_rel_euler[:,0]  = -left_thigh_rel_euler[:,0]
-    # left_thigh_rel_euler[:,2]  = -left_thigh_rel_euler[:,2]
-    # left_shin_rel_euler[:,0]  = -left_shin_rel_euler[:,0]
-    # left_shin_rel_euler[:,2]  = -left_shin_rel_euler[:,2]
+    right_thigh_rel_pitch_mirrored = left_thigh_rel_pitch.clone()
+    right_shin_rel_pitch_mirrored = left_shin_rel_pitch.clone()
+    left_thigh_rel_pitch_mirrored = right_thigh_rel_pitch.clone()
+    left_shin_rel_pitch_mirrored = right_shin_rel_pitch.clone()
 
     # heading_proj[:,1] = -heading_proj[:,1]
 
@@ -1639,13 +1789,7 @@ def compute_srl_observations_mirrored(
     sin_phase = - sin_phase
     cos_phase = - cos_phase
 
-    if HMI_obs_enable == False:
-        right_thigh_rel_pitch = right_thigh_rel_pitch * 0
-        right_shin_rel_pitch  = right_shin_rel_pitch * 0
-        left_thigh_rel_pitch  = left_thigh_rel_pitch * 0    
-        left_shin_rel_pitch   = left_shin_rel_pitch * 0
-        humanoid_euler_err    = humanoid_euler_err * 0
-        load_cell_force       = load_cell_force * 0
+
 
     obs = torch.cat((root_h,                         # 1
                      local_root_vel  ,               # 3
@@ -1658,10 +1802,10 @@ def compute_srl_observations_mirrored(
                      cos_phase,     
                      humanoid_euler_err,                  
                      load_cell_force * obs_scales[4],       # 6   
-                     right_thigh_rel_pitch,              
-                     right_shin_rel_pitch,      
-                     left_thigh_rel_pitch,               
-                     left_shin_rel_pitch,                      
+                     right_thigh_rel_pitch_mirrored,              
+                     right_shin_rel_pitch_mirrored,      
+                     left_thigh_rel_pitch_mirrored,               
+                     left_shin_rel_pitch_mirrored,                      
                     ), dim=-1)
     return obs  
 
@@ -1726,6 +1870,7 @@ def compute_priv_extra_observations_mirrored(root_states, dof_pos, dof_vel, key_
     flat_local_key_pos_mirrored[:,3:6] = flat_local_key_pos[:,0:3]
     flat_local_key_pos_mirrored[:,6:9] = flat_local_key_pos[:,9:12]
     flat_local_key_pos_mirrored[:,9:12] = flat_local_key_pos[:,6:9]
+    flat_local_key_pos_mirrored[:, 1::3] = -flat_local_key_pos_mirrored[:, 1::3]
 
     # root_h 1; root_rot_obs 6; local_root_vel 3 ; local_root_ang_vel 3 ; dof_obs 58; dof_vel 36 ; load_cell_force 6, flat_local_key_pos 12
     obs = torch.cat((flat_local_key_pos_mirrored,  # 12
@@ -2003,16 +2148,9 @@ def compute_srl_reward(
     contact_threshold = 0.040  
     left_foot_height = srl_end_body_pos[:, 0, 2]  # 获取左脚的位置 
     right_foot_height = srl_end_body_pos[:, 1, 2]  # 获取右脚的位置 
-    # walking
+    # Keep the same dynamic-balance contact rule for walking and standing.
     no_feet_on_ground = (left_foot_height > contact_threshold) & (right_foot_height > contact_threshold)
-    # standing
-    no_both_feet_on_ground = (left_foot_height > contact_threshold) | (right_foot_height > contact_threshold)
-    both_feet_on_ground = (left_foot_height < contact_threshold) & (right_foot_height < contact_threshold)
-    fly_idx = torch.where(target_vel_x < 0.1, no_both_feet_on_ground, no_feet_on_ground)
-    standing_idx = torch.where(target_vel_x < 0.1, both_feet_on_ground, torch.zeros_like(no_feet_on_ground))
-    no_fly_penalty = torch.where(fly_idx, torch.ones_like(no_feet_on_ground) * no_fly_penalty_scale, torch.zeros_like(no_feet_on_ground))
-    standing_reward = torch.where(standing_idx, -0.5*torch.ones_like(no_feet_on_ground) * no_fly_penalty_scale, torch.zeros_like(no_feet_on_ground))
-    no_fly_penalty = no_fly_penalty + standing_reward
+    no_fly_penalty = torch.where(no_feet_on_ground, torch.ones_like(no_feet_on_ground) * no_fly_penalty_scale, torch.zeros_like(no_feet_on_ground))
     no_fly_penalty *= warmup
 
     # --- Feet Lateral Distance ---
@@ -2042,9 +2180,6 @@ def compute_srl_reward(
     flying_miss_left  = expect_flying_left  * is_contact_left
     flying_miss_right = expect_flying_right * is_contact_right
     gait_phase_penalty = gait_similarity_penalty_scale * (stance_miss_left + stance_miss_right + flying_miss_left + flying_miss_right)
-    # standing
-    gait_phase_penalty_coef = torch.where(target_vel_x < 0.1, torch.zeros_like(target_vel_x), torch.ones_like(target_vel_x))
-    gait_phase_penalty =  gait_phase_penalty*gait_phase_penalty_coef
     gait_phase_penalty *= warmup
 
     # --- foot clearance penalty ---
@@ -2205,6 +2340,3 @@ def set_task_target(
     # target_yaw = target_yaw + delta_yaw
 
     return target_vel_x, target_pelvis_height, target_ang_vel_z, target_yaw
-
-
-

@@ -24,9 +24,10 @@ params:
         learn_sigma: False
 
     mlp:
-      units: [512, 256]
+      # Minimal omni-walk migration: match the pretrained humanoid actor/critic MLP exactly.
+      units: [512, 512, 256]
       srl_units: [1024, 512]
-      activation: relu
+      activation: elu
       d2rl: False
 
       initializer:
