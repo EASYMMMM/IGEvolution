@@ -461,10 +461,11 @@ class SRL_Real_HRI_Base(VecTask):
         # reset SRL motor running stats (peak/thermal)
         self.srl_tau2_ema[env_ids] = 0.0
         self.srl_peak_ratio_window[env_ids] = 0.0
+        # Sync reset states before rebuilding the episode trajectory.
+        self._refresh_sim_tensors()
         root_pos = self._root_states[env_ids, 0:3]
         root_rot = self._root_states[env_ids, 3:7]
         self._traj_gen.reset(env_ids, root_pos, init_rot=root_rot)
-        self._refresh_sim_tensors()
         # 重置 foot clearance 的历史
         srl_end_body_pos = self._rigid_body_pos[env_ids][:, self._srl_end_ids, :]
         self.prev_srl_end_body_pos[env_ids] = srl_end_body_pos.clone()
