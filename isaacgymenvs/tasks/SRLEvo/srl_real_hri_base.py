@@ -1229,6 +1229,28 @@ class SRL_Real_HRI_Base(VecTask):
         self.extras["srl_debug_torques"] = self.torques[0, -self.srl_actions_num:].to(self.rl_device)
         self.extras["srl_debug_joint_pos"] = self._dof_pos[0, -self.srl_actions_num:].to(self.rl_device)
 
+        '''
+        self.extras["srl_torques"] = self.torques[0, -self.srl_actions_num:].to(self.rl_device)
+        self.extras["root_pos"] = self._root_states[0, 0:3].to(self.rl_device)
+        srl_end_body_pos = self._rigid_body_pos[0, self._srl_end_ids, :]
+        srl_end_body_vel = self._rigid_body_vel[0, self._srl_end_ids, :]
+        self.extras['srl_end_pos'] = srl_end_body_pos
+        self.extras['srl_end_vel'] = srl_end_body_vel
+        key_body_pos = self._rigid_body_pos[0, self._key_body_ids, :]
+        self.extras['key_body_pos'] = key_body_pos
+        self.extras['dof_pos'] = self._dof_pos[0].to(self.rl_device)
+        self.extras['load_cell'] = self.vec_sensor_tensor[0,self.load_cell_ssidx,:].to(self.rl_device)
+        self.extras['load_cell_fd'] = self.vec_sensor_tensor[0,self.load_cell_ssidx_fd,:].to(self.rl_device)
+        self.extras['right_srl_end_sensor'] = self.vec_sensor_tensor[0,self.right_srl_end_ssidx,:].to(self.rl_device)
+        self.extras["target_yaw"] = self.target_yaw
+        vpos0 = self._dof_pos[0, self.srl_virtual_damping_ids]
+        self.extras["srl_virtual_passive_pos"] = vpos0.to(self.rl_device)
+        virtual_load_cell = self._virtual_load_cell_from_dof(self._dof_pos, self._dof_vel)
+        self.extras["srl_virtual_load_cell"] = virtual_load_cell[0].to(self.rl_device)
+        self.extras["dof_force"] = self.dof_force_tensor[0].to(self.rl_device)
+        self.extras["humanoid_torques"] = self.humanoid_torques[0].to(self.rl_device)
+        '''
+
         # plotting
         if self.viewer != None:
             self.extras["srl_torques"] = self.torques[0, -self.srl_actions_num:].to(self.rl_device)

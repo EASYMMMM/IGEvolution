@@ -96,7 +96,7 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
             self.envs[0], self.humanoid_handles[0], "right_foot"
         )
 
-        self._diag_compare_3dof = self.cfg["env"].get("diagCompare3Dof", False)
+        self._diag_compare_3dof = self.cfg["env"].get("diagCompare3Dof", True)
         self._diag_compare_interval = self.cfg["env"].get("diagCompare3DofInterval", 30)
         self._diag_compare_env = self.cfg["env"].get("diagCompare3DofEnv", 0)
         self._diag_compare_base_obs = self.cfg["env"].get("diagCompareBaseObs", False)
