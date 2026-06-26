@@ -253,6 +253,9 @@ class SRL_Real_HRI_Base(VecTask):
         self.prev_srl_end_body_pos = torch.zeros((self.num_envs,2,3), device=self.device)
 
         self._contact_forces = gymtorch.wrap_tensor(contact_force_tensor).view(self.num_envs, self.num_bodies, 3)
+        self.virtual_load_cell_raw_buf = torch.zeros((self.num_envs, 6), device=self.device, dtype=torch.float)
+        self.virtual_load_cell_buf = torch.zeros((self.num_envs, 6), device=self.device, dtype=torch.float)
+        self._load_cell_lpf_initialized = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
         
         self._terminate_buf = torch.ones(self.num_envs, device=self.device, dtype=torch.long)
         self.srl_policy_obs_ids = to_torch(self.srl_policy_obs_ids_list, device=self.device, dtype=torch.long)
@@ -463,6 +466,7 @@ class SRL_Real_HRI_Base(VecTask):
         self.srl_peak_ratio_window[env_ids] = 0.0
         # Sync reset states before rebuilding the episode trajectory.
         self._refresh_sim_tensors()
+        self._reset_virtual_load_cell_filter(env_ids)
         root_pos = self._root_states[env_ids, 0:3]
         root_rot = self._root_states[env_ids, 3:7]
         self._traj_gen.reset(env_ids, root_pos, init_rot=root_rot)
@@ -781,7 +785,7 @@ class SRL_Real_HRI_Base(VecTask):
     
     def _compute_reward(self, actions):
         # srl_root_body_pos = self._rigid_body_pos[:, self._srl_root_body_ids, :]
-        load_cell_sensor = self._virtual_load_cell_from_dof(self._dof_pos, self._dof_vel)
+        load_cell_sensor = self.virtual_load_cell_buf
         srl_end_body_pos = self._rigid_body_pos[:, self._srl_end_ids, :]
         # srl_end_body_vel = self._rigid_body_vel[:, self._srl_end_ids, :]
         to_target = self.targets - self._initial_root_states[:, 0:3]
@@ -888,18 +892,20 @@ class SRL_Real_HRI_Base(VecTask):
         self.gym.refresh_net_contact_force_tensor(self.sim)
         return
 
-    def _virtual_load_cell_from_dof(self, dof_pos: torch.Tensor, dof_vel: torch.Tensor) -> torch.Tensor:
+    def _compute_virtual_load_cell_raw(self, dof_pos: torch.Tensor, dof_vel: torch.Tensor) -> torch.Tensor:
         """
-        用 3 个虚拟 slide DOF 的 PD(刚度/阻尼)计算交互力:
+        用 3 个虚拟 slide DOF 的 PD(刚度/阻尼)计算原始交互力:
             F = k*(q_tar - q) - c*qdot, 这里 q_tar=0 -> F = -k*q - c*qdot
         返回 shape [N, 6]，前3维是力(N)，后3维力矩置0。
         """
 
         q  = dof_pos.index_select(1, self.srl_virtual_damping_ids)   # [N,3] (m)
         qd = dof_vel.index_select(1, self.srl_virtual_damping_ids)   # [N,3] (m/s)
-        # stiffness/damping 
-        k = self.p_gains.index_select(0, self.srl_virtual_damping_ids)  # [3] (N/m)
-        c = self.d_gains.index_select(0, self.srl_virtual_damping_ids)  # [3] (N*s/m)
+        # Use the same impedance parameters that are applied to the actor DOFs.
+        # self.p_gains/self.d_gains are read from the asset and can still reflect
+        # the XML defaults instead of cfg env.hri_virtual_* overrides.
+        k = self.hri_virtual_stiffness
+        c = self.hri_virtual_damping
         # PD force: q_tar = 0
         F = -k * q - c * qd     # [N,3] (N)
         # effort 上限（你设为 50000）
@@ -909,16 +915,42 @@ class SRL_Real_HRI_Base(VecTask):
         wrench[:, 0:3] = - F
         return wrench
 
+    def _update_virtual_load_cell_filter(self):
+        raw_wrench = self._compute_virtual_load_cell_raw(self._dof_pos, self._dof_vel)
+        self.virtual_load_cell_raw_buf[:] = raw_wrench
+
+        # First-order IIR low-pass filter. Update exactly once per physics step;
+        # observations, rewards, and debug output must only read virtual_load_cell_buf.
+        alpha = 0.95
+        init_mask = torch.logical_not(self._load_cell_lpf_initialized)
+        if torch.any(init_mask):
+            self.virtual_load_cell_buf[init_mask] = raw_wrench[init_mask]
+            self._load_cell_lpf_initialized[init_mask] = True
+
+        run_mask = torch.logical_not(init_mask)
+        if torch.any(run_mask):
+            self.virtual_load_cell_buf[run_mask] = (
+                alpha * self.virtual_load_cell_buf[run_mask]
+                + (1.0 - alpha) * raw_wrench[run_mask]
+            )
+        return self.virtual_load_cell_buf
+
+    def _reset_virtual_load_cell_filter(self, env_ids):
+        raw_wrench = self._compute_virtual_load_cell_raw(self._dof_pos[env_ids], self._dof_vel[env_ids])
+        self.virtual_load_cell_raw_buf[env_ids] = raw_wrench
+        self.virtual_load_cell_buf[env_ids] = raw_wrench
+        self._load_cell_lpf_initialized[env_ids] = True
+        return
+
     def _compute_humanoid_obs(self, env_ids=None):
         # Minimal omni-walk migration: keep the base implementation as the old 6D-traj version,
         # and let SRL_Real_HRI override this hook with stacked omni-directional commands.
-        virtual_load_cell = self._virtual_load_cell_from_dof(self._dof_pos, self._dof_vel)
         if (env_ids is None):
             root_states = self._root_states
             dof_pos = self._dof_pos
             dof_vel = self._dof_vel
             key_body_pos = self._rigid_body_pos[:, self._key_body_ids, :]
-            load_cell_sensor = virtual_load_cell
+            load_cell_sensor = self.virtual_load_cell_buf
             current_time = self.progress_buf * self.control_dt
             env_ids_flat = torch.arange(self.num_envs, device=self.device)
             traj_points_world = self._traj_gen.get_observation_points(env_ids_flat, current_time, self._traj_sample_times)
@@ -927,7 +959,7 @@ class SRL_Real_HRI_Base(VecTask):
             dof_pos = self._dof_pos[env_ids]
             dof_vel = self._dof_vel[env_ids]
             key_body_pos = self._rigid_body_pos[env_ids][:, self._key_body_ids, :]
-            load_cell_sensor = virtual_load_cell[env_ids]
+            load_cell_sensor = self.virtual_load_cell_buf[env_ids]
             current_time = self.progress_buf[env_ids] * self.control_dt
             traj_points_world = self._traj_gen.get_observation_points(env_ids, current_time, self._traj_sample_times)
 
@@ -1083,13 +1115,12 @@ class SRL_Real_HRI_Base(VecTask):
         return
 
     def _compute_env_obs(self, env_ids=None):
-        virtual_load_cell = self._virtual_load_cell_from_dof(self._dof_pos, self._dof_vel)
         if (env_ids is None):
             root_states = self._root_states
             dof_pos = self._dof_pos
             dof_vel = self._dof_vel
             key_body_pos = self._rigid_body_pos[:, self._key_body_ids, :]
-            load_cell_sensor = virtual_load_cell
+            load_cell_sensor = self.virtual_load_cell_buf
             dof_force_tensor = self.dof_force_tensor
             srl_root_states = self.srl_root_states.clone()
             progress_buf = self.progress_buf
@@ -1110,7 +1141,7 @@ class SRL_Real_HRI_Base(VecTask):
             dof_pos = self._dof_pos[env_ids]
             dof_vel = self._dof_vel[env_ids]
             key_body_pos = self._rigid_body_pos[env_ids][:, self._key_body_ids, :]
-            load_cell_sensor = virtual_load_cell[env_ids]
+            load_cell_sensor = self.virtual_load_cell_buf[env_ids]
             dof_force_tensor = self.dof_force_tensor[env_ids]
             srl_root_states = self.srl_root_states[env_ids,:].clone()
             progress_buf = self.progress_buf[env_ids]
@@ -1212,6 +1243,7 @@ class SRL_Real_HRI_Base(VecTask):
         self.phase_buf += 1
 
         self._refresh_sim_tensors()
+        self._update_virtual_load_cell_filter()
         self._compute_observations()
         self._compute_reward(self.actions)
         self._compute_reset()
@@ -1247,8 +1279,8 @@ class SRL_Real_HRI_Base(VecTask):
             self.extras["target_yaw"] = self.target_yaw
             vpos0 = self._dof_pos[0, self.srl_virtual_damping_ids]
             self.extras["srl_virtual_passive_pos"] = vpos0.to(self.rl_device)
-            virtual_load_cell = self._virtual_load_cell_from_dof(self._dof_pos, self._dof_vel)
-            self.extras["srl_virtual_load_cell"] = virtual_load_cell[0].to(self.rl_device)
+            self.extras["srl_virtual_load_cell_raw"] = self.virtual_load_cell_raw_buf[0].to(self.rl_device)
+            self.extras["srl_virtual_load_cell"] = self.virtual_load_cell_buf[0].to(self.rl_device)
             self.extras["dof_force"] = self.dof_force_tensor[0].to(self.rl_device)
             self.extras["humanoid_torques"] = self.humanoid_torques[0].to(self.rl_device)
         # debug viz

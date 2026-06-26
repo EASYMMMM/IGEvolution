@@ -471,7 +471,6 @@ class SRL_Real_HRI(SRL_Real_HRI_Base):
         return
 
     def _compute_reward(self, actions):
-        load_cell_sensor = self._virtual_load_cell_from_dof(self._dof_pos, self._dof_vel)
         srl_end_body_pos = self._rigid_body_pos[:, self._srl_end_ids, :]
         to_target = self.targets - self._initial_root_states[:, 0:3]
         srl_root_pos = self.srl_root_states[:, 0:3]
