@@ -103,7 +103,7 @@ class SRL_Real_Bot(VecTask):
 
         self.cfg["env"]["numObservations"] = 30 * self.obs_frame_stack + 3
         self.cfg["env"]["numActions"] = 6
-        self.default_joint_angles = [0*np.pi, -0.1, 0.2, 0*np.pi, -0.1, 0.2,]
+        self.default_joint_angles = self.cfg["env"]["default_joint_angles"]
 
         # ==========================================================
         # 电机优化参数 (针对 RI80 设计)
@@ -301,7 +301,7 @@ class SRL_Real_Bot(VecTask):
 
         start_pose = gymapi.Transform()
         # TODO: V3 MODEL Z
-        start_pose.p = gymapi.Vec3(*get_axis_params(1.20, self.up_axis_idx))
+        start_pose.p = gymapi.Vec3(*get_axis_params(1.1, self.up_axis_idx))
         start_pose.r = gymapi.Quat(0.0, 0.0, 0.0, 1.0)
 
         self.start_rotation = torch.tensor([start_pose.r.x, start_pose.r.y, start_pose.r.z, start_pose.r.w], device=self.device)
@@ -362,11 +362,12 @@ class SRL_Real_Bot(VecTask):
             else:
                 self.dof_limits_lower.append(dof_prop['lower'][j])
                 self.dof_limits_upper.append(dof_prop['upper'][j])
-        if self._force_control:
-            indices_to_limit = [1, 2, 4, 5] 
-            for i in indices_to_limit:
-                self.dof_limits_lower[i] = self.default_joint_angles[i] - 45/180*np.pi
-                self.dof_limits_upper[i] = self.default_joint_angles[i] + 45/180*np.pi
+        # TODO: JOINT RANGE
+        # if self._force_control:
+        #     indices_to_limit = [1, 2, 4, 5] 
+        #     for i in indices_to_limit:
+        #         self.dof_limits_lower[i] = self.default_joint_angles[i] - 45/180*np.pi
+        #         self.dof_limits_upper[i] = self.default_joint_angles[i] + 45/180*np.pi
 
         feet_names = ['left_foot','right_foot']
         self.feet_indices = torch.zeros(len(feet_names), dtype=torch.long, device=self.device, requires_grad=False)
@@ -757,39 +758,25 @@ class SRL_Real_Bot(VecTask):
         return
     
     def _action_to_pd_targets(self, action):
-        action = action * self.action_scale
-        pd_tar = self._pd_action_offset + self._pd_action_scale * action
-        margin = 0.0 * math.pi / 180.0 
-        low  = (self.dof_limits_lower + margin).unsqueeze(0)
-        high = (self.dof_limits_upper - margin).unsqueeze(0)
-        return torch.max(torch.min(pd_tar, high), low)
+        action = torch.clamp(action * self.action_scale, -1.0, 1.0)
+        neg_scale = self._pd_action_offset - self._pd_action_low
+        pos_scale = self._pd_action_high - self._pd_action_offset
+        pd_tar = torch.where(
+            action >= 0.0,
+            self._pd_action_offset + action * pos_scale,
+            self._pd_action_offset + action * neg_scale,
+        )
+        return torch.max(torch.min(pd_tar, self._pd_action_high), self._pd_action_low)
 
     
     def _build_pd_action_offset_scale(self):
-        # Read joint limits
-        lim_low = self.dof_limits_lower.cpu().numpy()
-        lim_high = self.dof_limits_upper.cpu().numpy()
-
-        # For each joint (assume all 1 DoF), expand the action range to 70% of joint range
-        for j in range(self.num_dof):
-            curr_low = lim_low[j]
-            curr_high = lim_high[j]
-            curr_mid = 0.5 * (curr_high + curr_low)
-            
-            # 70% of joint range → to leave some margin
-            curr_scale = 0.45 * (curr_high - curr_low)
-            curr_low = curr_mid - curr_scale
-            curr_high = curr_mid + curr_scale
-
-            lim_low[j] = curr_low
-            lim_high[j] = curr_high
-
-        # Compute offset and scale
-        self._pd_action_scale  = 0.5 * (lim_high - lim_low)
-        self._pd_action_scale  = to_torch(self._pd_action_scale, device=self.device)
-
         self._pd_action_offset = torch.tensor(self.default_joint_angles, device=self.device)
         self._pd_action_offset = self._pd_action_offset.unsqueeze(0).repeat(self.num_envs, 1)
+        margin = float(self.cfg["env"].get("soft_joint_limit_margin", 0.0))
+        action_low = (self.dof_limits_lower + margin).unsqueeze(0)
+        action_high = (self.dof_limits_upper - margin).unsqueeze(0)
+        self._pd_action_low = torch.min(action_low, self._pd_action_offset)
+        self._pd_action_high = torch.max(action_high, self._pd_action_offset)
 
     def render(self):
         if self.viewer and self.camera_follow:

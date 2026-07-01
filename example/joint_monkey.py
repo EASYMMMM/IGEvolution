@@ -34,6 +34,7 @@ class AssetDesc:
 
 
 asset_descriptors = [
+    AssetDesc("mjcf/srl_real/srl_real_bot_v2.xml", False),
     AssetDesc("mjcf/srl_real_hri/srl_real_hri_v1_HXYK_175_mesh.xml", False),
     AssetDesc("mjcf/srl_real/srl_real_bot.xml", False),
     AssetDesc("mjcf/srl_hri/srl_hri_basic_2free.xml", False),
@@ -191,10 +192,10 @@ actor_handles = []
 
 
 # =============== user define ===================
-dof_positions[6] = -0.38
-dof_positions[10] = 0.38
-dof_positions[-1] = 0.30
-dof_positions[-4] = 0.30
+# dof_positions[6] = -0.38
+# dof_positions[10] = 0.38
+# dof_positions[-1] = 0.30
+# dof_positions[-4] = 0.30
 # srl_joint_r1 = gym.find_asset_dof_index(asset,'SRL_joint_right_hipjoint_y')
 # srl_joint_r3 = gym.find_asset_dof_index(asset,'SRL_joint_right_kneejoint')
 # dof_positions[srl_joint_r1] = 0.15*np.pi
@@ -267,7 +268,7 @@ gym.refresh_dof_force_tensor(sim)
 while not gym.query_viewer_has_closed(viewer):
     
     # 检查某个特定关节
-    current_dof = 29
+    # current_dof = 29
 
     # step the physics
     gym.simulate(sim)
