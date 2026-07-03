@@ -11,30 +11,6 @@ python SRL_Evo_train.py task=SRLBot wandb_project=TRO_SRL_Evo experiment=SRL_bot
 python SRL_Evo_train.py task=SRLBot test=True  num_envs=4 checkpoint=runs/SRL_bot_v6_s2_18-18-17-47/nn/SRL_bot_v6_s2.pth  sim_device=cuda:0 rl_device=cuda:0  task.env.asset.assetFileName="mjcf/srl_bot/srl_bot_inversed_v6.xml"
 
 
-# ========= SRL REAL BOT 1.20 ===========
-# 放开髋旋自由度 使用峰值160的电机
-# --- stage 1 --- vel
-python SRL_Evo_train.py task=SRL_Real_Bot wandb_project=SRL_Real experiment=SRL_Real_s1  task.env.task_training_stage=1 headless=True wandb_activate=True max_iterations=1000   task.env.vel_tracking_reward_scale=8  task.env.progress_reward_scale=1.0 task.env.alive_reward_scale=1.0 task.env.asset.assetFileName="mjcf/srl_real/srl_real_bot_full_rotate.xml"  task.env.srl_max_effort=180;  
-# --- check ---
-python SRL_Evo_train.py task=SRL_Real_Bot test=True force_render=True task.env.cameraFollow=True num_envs=4 task.env.task_training_stage=1 checkpoint=runs/SRL_Real_s1_29-15-09-59/nn/SRL_Real_s1.pth  sim_device=cuda:1 rl_device=cuda:1  task.env.asset.assetFileName="mjcf/srl_real/srl_real_bot_full_rotate.xml" task.env.srl_max_effort=180
-# --- stage 1.5 --- motor
-python SRL_Evo_train.py task=SRL_Real_Bot wandb_project=SRL_Real experiment=SRL_Real_s1.5  task.env.task_training_stage=1 headless=True wandb_activate=True max_iterations=1500   task.env.vel_tracking_reward_scale=8  task.env.progress_reward_scale=1.0 task.env.alive_reward_scale=1.0 task.env.asset.assetFileName="mjcf/srl_real/srl_real_bot_full_rotate.xml"  checkpoint=runs/SRL_Real_s1_21-17-52-23/nn/SRL_Real_s1.pth task.env.srl_motor_cost_scale=1.0  task.env.srl_max_effort=180 ;  
-# --- check ---
-python SRL_Evo_train.py task=SRL_Real_Bot test=True force_render=True task.env.cameraFollow=True num_envs=4 task.env.task_training_stage=1 checkpoint=runs/SRL_Real_s1.5_22-15-39-19/nn/SRL_Real_s1.5.pth  sim_device=cuda:1 rl_device=cuda:1  task.env.asset.assetFileName="mjcf/srl_real/srl_real_bot_full_rotate.xml" task.env.srl_max_effort=180
-# --- stage 2 --- vel+hei
-python SRL_Evo_train.py task=SRL_Real_Bot wandb_project=SRL_Real experiment=SRL_Real_s2  task.env.task_training_stage=2 headless=True wandb_activate=True max_iterations=1500    checkpoint=runs/SRL_Real_s1_21-17-52-23/nn/SRL_Real_s1.pth  task.env.pelvis_height_reward_scale=8.0 task.env.vel_tracking_reward_scale=8.0  task.env.progress_reward_scale=0.0 task.env.asset.assetFileName="mjcf/srl_real/srl_real_bot_full_rotate.xml" task.env.srl_max_effort=160;  
-# --- check ---
-python SRL_Evo_train.py task=SRL_Real_Bot test=True force_render=True task.env.cameraFollow=True num_envs=4 task.env.task_training_stage=2 checkpoint=runs/SRL_Real_s2_22-13-05-11/nn/SRL_Real_s2.pth   sim_device=cuda:1 rl_device=cuda:1  task.env.srl_max_effort=160;
-# --- stage 3 --- vel+hei+ori
-python SRL_Evo_train.py task=SRL_Real_Bot wandb_project=SRL_Real experiment=SRL_Real_s3  task.env.task_training_stage=3 headless=True wandb_activate=True max_iterations=2500    checkpoint=runs/SRL_Real_s2_04-17-54-32/nn/SRL_Real_s2.pth  task.env.orientation_reward_scale=7 task.env.pelvis_height_reward_scale=5.0 task.env.progress_reward_scale=0.0 task.env.alive_reward_scale=0.0;  
-# --- check ---
-python SRL_Evo_train.py task=SRL_Real_Bot test=True force_render=True task.env.cameraFollow=True num_envs=4 task.env.task_training_stage=3 checkpoint=runs/SRL_Real_s3_04-19-18-22/nn/SRL_Real_s3.pth sim_device=cuda:1 rl_device=cuda:1  
-# --- stage 4 --- Domain Randomization 
-python SRL_Evo_train.py task=SRL_Real_Bot wandb_project=SRL_Real experiment=SRL_Real_s4  task.env.task_training_stage=3 task.task.randomize=True task.task.vel_pertubation=True headless=True wandb_activate=True max_iterations=3500    checkpoint=runs/SRL_Real_s3_04-19-18-22/nn/SRL_Real_s3.pth  task.env.progress_reward_scale=0.0 task.env.alive_reward_scale=0.0;  
-# --- check ---
-python SRL_Evo_train.py task=SRL_Real_Bot test=True force_render=True task.env.cameraFollow=True num_envs=4 task.env.task_training_stage=3 task.task.randomize=True  task.task.vel_pertubation=True checkpoint=runs/SRL_Real_s4_04-21-00-44/nn/SRL_Real_s4.pth   sim_device=cuda:1 rl_device=cuda:1  
-
-
 # ========= SRL REAL BOT v1 (1.28) ===========
 # srl real bot: stage1 vel+motor
 python SRL_Evo_train.py task=SRL_Real_Bot test=True force_render=True task.env.cameraFollow=True num_envs=4 task.env.task_training_stage=1 checkpoint=runs/SRL_Real_s1_26-14-27-17/nn/SRL_Real_s1.pth  sim_device=cuda:1 rl_device=cuda:1  task.env.asset.assetFileName="mjcf/srl_real/srl_real_bot_full_rotate.xml" task.env.srl_max_effort=180
@@ -83,3 +59,16 @@ python SRL_Evo_train.py task=SRL_Real_Bot wandb_project=SRL_Real experiment=SRL_
        task.env.progress_reward_scale=0.0 task.env.alive_reward_scale=0.0  task.env.srl_max_effort=150;  
 # --- check ---
 python SRL_Evo_train.py task=SRL_Real_Bot test=True force_render=True task.env.cameraFollow=True num_envs=4 task.env.task_training_stage=3 task.env.asset.assetFileName="mjcf/srl_real/srl_real_bot_v2.xml"  checkpoint=runs/SRL_Real_Bot_v2_s3_01-13-21-37/nn/SRL_Real_Bot_v2_s3.pth  sim_device=cuda:1 rl_device=cuda:1  'task.env.default_joint_angles=[0 , -0.55,  -0.3, 0 , -0.55,  -0.3]'  task.env.srl_max_effort=150; 
+
+
+# ========= SRL REAL BOT v2 (7.2) ===========
+# ========= 使用PD控制 ============
+# --- stage 1 --- vel+motor
+python SRL_Evo_train.py task=SRL_Real_Bot wandb_project=SRL_Real experiment=SRL_Real_Bot_v2_s1  task.env.task_training_stage=1 headless=True wandb_activate=True max_iterations=1000   task.env.vel_tracking_reward_scale=8  task.env.progress_reward_scale=1.0 \
+        task.env.alive_reward_scale=1.0 task.env.srl_motor_cost_scale=0.0   task.env.asset.assetFileName="mjcf/srl_real/srl_real_bot_v2.xml"  \
+        task.env.forceControl=False  task.env.pdControl=True \
+        task.env.srl_action_filter_enable=True \
+        'task.env.default_joint_angles=[0 , -0.55,  -0.3, 0 , -0.55,  -0.3]' \
+        'task.env.srl_effort_limits=[120, 120, 400, 120, 120, 400]'
+# --- check ---
+python SRL_Evo_train.py task=SRL_Real_Bot test=True force_render=True task.env.cameraFollow=True num_envs=4 task.env.task_training_stage=1 checkpoint=runs/SRL_Real_Bot_v2_s1_02-17-10-57/nn/SRL_Real_Bot_v2_s1.pth  sim_device=cuda:1 rl_device=cuda:1  task.env.asset.assetFileName="mjcf/srl_real/srl_real_bot_v2.xml"  'task.env.default_joint_angles=[0 , -0.55,  -0.3, 0 , -0.55,  -0.3]'  'task.env.srl_effort_limits=[120, 120, 400, 120, 120, 400]' task.env.forceControl=False  task.env.pdControl=True
