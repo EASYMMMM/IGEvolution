@@ -1,0 +1,11 @@
+{
+    "mode": "amp_to_amp_hinge_chain",
+    "source_motion": "../../../../../../assets/amp/motions/amp_humanoid_walk_175.npy",
+    "target_motion_path": "../../../../../../assets/amp/motions/amp_humanoid_walk_175_v2.npy",
+    "source_tpose": "../amp_humanoid_tpose.npy",
+    "target_tpose": "../amp_humanoid_175_v2_tpose.npy",
+    "center_neck_reference": true,
+    "root_height_offset": 0.0,
+    "trim_frame_beg": 0,
+    "trim_frame_end": -1
+}

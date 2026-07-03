@@ -10,7 +10,7 @@ import torch
 from isaacgym import gymtorch
 from isaacgym import gymapi
 from isaacgymenvs.utils.torch_jit_utils import quat_mul, to_torch, get_axis_params, calc_heading_quat_inv, \
-     exp_map_to_quat, quat_to_tan_norm, my_quat_rotate, calc_heading_quat_inv
+     quat_to_tan_norm, my_quat_rotate, calc_heading_quat_inv
 
 from ..base.vec_task import VecTask
 
@@ -40,10 +40,10 @@ KEY_BODY_NAMES = ["R_Hand", "L_Hand", "R_Ankle", "L_Ankle"]
 """
 DOF_BODY_IDS = [1, 2, 3, 4, 6, 7, 9, 10, 11, 12, 13, 14]
 DOF_OFFSETS = [0, 3, 6, 9, 10, 13, 14, 17, 18, 21, 24, 25, 28]
-NUM_OBS = 13 + 52 + 28 + 12 + 6 # [root_h, root_rot, root_vel, root_ang_vel, dof_pos, dof_vel, key_body_pos]
+NUM_OBS = 13 + 52 + 28 + 12 + 6 # [root_h, root_rot, root_vel, root_ang_vel, conceptual_joint_6d_obs, raw_hinge_dof_vel, key_body_pos]
 NUM_ACTIONS = 28
 KEY_BODY_NAMES = ["right_hand", "left_hand", "right_foot", "left_foot"]
-class HumanoidAMP_s1_Smpl_Base(VecTask):
+class HumanoidAMP_s1_Smpl_Base_v2(VecTask):
 
     def __init__(self, config, rl_device, sim_device, graphics_device_id, headless, virtual_screen_capture, force_render):
         self.cfg = config
@@ -62,9 +62,19 @@ class HumanoidAMP_s1_Smpl_Base(VecTask):
         self._local_root_obs = self.cfg["env"]["localRootObs"]
         self._amp_local_root_obs = self.cfg["env"].get("AMPlocalRootObs", True)
         self._contact_bodies = self.cfg["env"]["contactBodies"]
+        self._termination_ignore_bodies = self.cfg["env"].get("terminationIgnoreBodies", [])
+        self._self_collision_filter = self.cfg["env"].get("selfCollisionFilter", 1)
         self._termination_height = self.cfg["env"]["terminationHeight"]
         self._enable_early_termination = self.cfg["env"]["enableEarlyTermination"]
         self._diag_print_asset_props = self.cfg["env"].get("diagPrintAssetProps", False)
+        self._diag_print_runtime = self.cfg["env"].get("diagPrintRuntime", False)
+        self._diag_runtime_interval = max(1, self.cfg["env"].get("diagRuntimeInterval", 20))
+        self._diag_zero_action = self.cfg["env"].get("diagZeroAction", False)
+        self._diag_print_pre_physics_reset = self.cfg["env"].get("diagPrintPrePhysicsReset", False)
+        self._diag_disable_dof_drives = self.cfg["env"].get("diagDisableDofDrives", False)
+        self._diag_fix_base_link = self.cfg["env"].get("diagFixBaseLink", False)
+        self._diag_runtime_counter = 0
+        self._last_pd_targets = None
 
         self._humanoid_load_cell_obs = self.cfg["env"]["humanoid_load_cell_obs"]
         self.train_stage = self.cfg["env"].get("train_stage", 2)  # 1: 原地站立，2: 直线行走，3: 曲线行走
@@ -188,10 +198,13 @@ class HumanoidAMP_s1_Smpl_Base(VecTask):
         asset_options.angular_damping = 0.01
         asset_options.max_angular_velocity = 100.0
         asset_options.default_dof_drive_mode = gymapi.DOF_MODE_NONE
+        asset_options.fix_base_link = self._diag_fix_base_link
         humanoid_asset = self.gym.load_asset(self.sim, asset_root, asset_file, asset_options)
 
         dof_names = self.gym.get_asset_dof_names(humanoid_asset)
+        body_names = self.gym.get_asset_rigid_body_names(humanoid_asset)
         asset_dof_prop = self.gym.get_asset_dof_properties(humanoid_asset)
+        asset_shape_props = self.gym.get_asset_rigid_shape_properties(humanoid_asset)
         actuator_props = self.gym.get_asset_actuator_properties(humanoid_asset)
         motor_efforts = [prop.motor_effort for prop in actuator_props]
         
@@ -218,6 +231,8 @@ class HumanoidAMP_s1_Smpl_Base(VecTask):
         self.num_bodies = self.gym.get_asset_rigid_body_count(humanoid_asset)
         self.num_dof = self.gym.get_asset_dof_count(humanoid_asset)
         self.num_joints = self.gym.get_asset_joint_count(humanoid_asset)
+        self._dof_names = list(dof_names)
+        self._body_names = list(body_names)
 
         start_pose = gymapi.Transform()
         start_pose.p = gymapi.Vec3(*get_axis_params(1.1, self.up_axis_idx))
@@ -229,17 +244,21 @@ class HumanoidAMP_s1_Smpl_Base(VecTask):
         self.envs = []
         self.dof_limits_lower = []
         self.dof_limits_upper = []
-        self._pd_stiffness = None
-        self._pd_damping = None
         
         for i in range(self.num_envs):
             # create env instance
             env_ptr = self.gym.create_env(
                 self.sim, lower, upper, num_per_row
             )
-            contact_filter = 0
-            
-            handle = self.gym.create_actor(env_ptr, humanoid_asset, start_pose, "humanoid", i, contact_filter, 0)
+            handle = self.gym.create_actor(
+                env_ptr,
+                humanoid_asset,
+                start_pose,
+                "humanoid",
+                i,
+                self._self_collision_filter,
+                0,
+            )
 
             self.gym.enable_actor_dof_force_sensors(env_ptr, handle)
 
@@ -250,14 +269,29 @@ class HumanoidAMP_s1_Smpl_Base(VecTask):
             self.envs.append(env_ptr)
             self.humanoid_handles.append(handle)
 
-            if (self._pd_control):
+            if self._pd_control or self._diag_disable_dof_drives:
                 dof_prop = self.gym.get_asset_dof_properties(humanoid_asset)
+
+            if self._diag_disable_dof_drives:
+                dof_prop["driveMode"] = gymapi.DOF_MODE_NONE
+                dof_prop["stiffness"] = 0.0
+                dof_prop["damping"] = 0.0
+                self.gym.set_actor_dof_properties(env_ptr, handle, dof_prop)
+            elif self._pd_control:
                 dof_prop["driveMode"] = gymapi.DOF_MODE_POS
                 self.gym.set_actor_dof_properties(env_ptr, handle, dof_prop)
 
         dof_prop = self.gym.get_actor_dof_properties(env_ptr, handle)
-        if self._diag_print_asset_props:
-            self._print_imported_asset_props(asset_file, dof_names, asset_dof_prop, actuator_props, motor_efforts, dof_prop)
+        actor_body_props = self.gym.get_actor_rigid_body_properties(env_ptr, handle)
+        actor_shape_props = self.gym.get_actor_rigid_shape_properties(env_ptr, handle)
+        self._body_masses = to_torch(
+            [float(prop.mass) for prop in actor_body_props],
+            device=self.device,
+        )
+        self._body_local_com = to_torch(
+            [[float(prop.com.x), float(prop.com.y), float(prop.com.z)] for prop in actor_body_props],
+            device=self.device,
+        )
         for j in range(self.num_dof):
             if dof_prop['lower'][j] > dof_prop['upper'][j]:
                 self.dof_limits_lower.append(dof_prop['upper'][j])
@@ -268,108 +302,178 @@ class HumanoidAMP_s1_Smpl_Base(VecTask):
 
         self.dof_limits_lower = to_torch(self.dof_limits_lower, device=self.device)
         self.dof_limits_upper = to_torch(self.dof_limits_upper, device=self.device)
-        self._pd_stiffness = to_torch(dof_prop['stiffness'], device=self.device, dtype=torch.float)
-        self._pd_damping = to_torch(dof_prop['damping'], device=self.device, dtype=torch.float)
 
         self._key_body_ids = self._build_key_body_ids_tensor(env_ptr, handle)
         self._contact_body_ids = self._build_contact_body_ids_tensor(env_ptr, handle)
+        self._termination_ignore_body_ids = self._build_termination_ignore_body_ids_tensor(env_ptr, handle)
         
         if (self._pd_control):
             self._build_pd_action_offset_scale()
 
+        if self._diag_print_asset_props:
+            self._print_v2_import_diagnostics(
+                asset_file=asset_file,
+                asset_dof_prop=asset_dof_prop,
+                actor_dof_prop=dof_prop,
+                actuator_props=actuator_props,
+                motor_efforts=motor_efforts,
+                actor_body_props=actor_body_props,
+                asset_shape_props=asset_shape_props,
+                actor_shape_props=actor_shape_props,
+                fix_base_link=asset_options.fix_base_link,
+            )
+
         return
-    
-    def _print_imported_asset_props(self, asset_file, dof_names, asset_dof_prop, actuator_props, motor_efforts, actor_dof_prop):
-        print("=" * 96)
-        print("[Imported Asset Props]")
-        print("=" * 96)
+
+    @staticmethod
+    def _format_vec3(value):
+        return f"({float(value.x):.6g}, {float(value.y):.6g}, {float(value.z):.6g})"
+
+    @classmethod
+    def _format_inertia(cls, inertia):
+        return f"[x={cls._format_vec3(inertia.x)}, y={cls._format_vec3(inertia.y)}, z={cls._format_vec3(inertia.z)}]"
+
+    def _compute_system_com_state(self, env_id):
+        body_rot = self._rigid_body_rot[env_id]
+        com_offset_world = my_quat_rotate(body_rot, self._body_local_com)
+        body_com_pos = self._rigid_body_pos[env_id] + com_offset_world
+        body_com_vel = self._rigid_body_vel[env_id] + torch.cross(
+            self._rigid_body_ang_vel[env_id],
+            com_offset_world,
+            dim=-1,
+        )
+
+        total_mass = torch.sum(self._body_masses)
+        mass_column = self._body_masses.unsqueeze(-1)
+        system_com_pos = torch.sum(mass_column * body_com_pos, dim=0) / total_mass
+        system_com_vel = torch.sum(mass_column * body_com_vel, dim=0) / total_mass
+        return system_com_pos, system_com_vel, total_mass
+
+    def _print_v2_import_diagnostics(self, asset_file, asset_dof_prop, actor_dof_prop,
+                                     actuator_props, motor_efforts, actor_body_props,
+                                     asset_shape_props, actor_shape_props,
+                                     fix_base_link):
+        print("=" * 120)
+        print("[V2 Import Diagnostics]")
+        print("=" * 120)
         print(f"asset_file={asset_file}")
-        print(f"pd_control={self._pd_control}")
-        print(f"num_dof={len(dof_names)} num_actuator_props={len(actuator_props)}")
-        print("-" * 96)
-        print("asset-level dof props (imported from XML into Isaac Gym asset):")
-        for i, name in enumerate(dof_names):
-            stiffness = float(asset_dof_prop["stiffness"][i])
-            damping = float(asset_dof_prop["damping"][i])
-            lower = float(asset_dof_prop["lower"][i])
-            upper = float(asset_dof_prop["upper"][i])
-            effort = float(asset_dof_prop["effort"][i]) if "effort" in asset_dof_prop.dtype.names else float("nan")
-            drive_mode = int(asset_dof_prop["driveMode"][i]) if "driveMode" in asset_dof_prop.dtype.names else -1
-            velocity = float(asset_dof_prop["velocity"][i]) if "velocity" in asset_dof_prop.dtype.names else float("nan")
-            friction = float(asset_dof_prop["friction"][i]) if "friction" in asset_dof_prop.dtype.names else float("nan")
-            armature = float(asset_dof_prop["armature"][i]) if "armature" in asset_dof_prop.dtype.names else float("nan")
+        print(
+            f"pd_control={self._pd_control} num_bodies={self.num_bodies} "
+            f"num_dof={self.num_dof} num_actuators={len(actuator_props)}"
+        )
+        print(
+            f"sim_dt={self.cfg['sim']['dt']:.6f} controlFrequencyInv={self.control_freq_inv} "
+            f"control_dt={self.cfg['sim']['dt'] * self.control_freq_inv:.6f}"
+        )
+        print(
+            f"ground: static_friction={self.plane_static_friction:.4f} "
+            f"dynamic_friction={self.plane_dynamic_friction:.4f} "
+            f"restitution={self.plane_restitution:.4f}"
+        )
+        print(
+            f"termination: enabled={self._enable_early_termination} "
+            f"height={self._termination_height:.4f} allowed_contact_bodies={self._contact_bodies}"
+        )
+        print(f"termination_ignore_bodies={self._termination_ignore_body_names}")
+        print(f"self_collision_filter={self._self_collision_filter}")
+        print(f"diag_zero_action={self._diag_zero_action}")
+        print(f"diag_disable_dof_drives={self._diag_disable_dof_drives}")
+        print(f"diag_fix_base_link={self._diag_fix_base_link} asset_options.fix_base_link={fix_base_link}")
+
+        print("-" * 120)
+        print("DOF properties: asset import -> actor used by training")
+        fields = actor_dof_prop.dtype.names
+        for i, name in enumerate(self._dof_names):
+            asset_effort = float(asset_dof_prop["effort"][i]) if "effort" in fields else float("nan")
+            actor_effort = float(actor_dof_prop["effort"][i]) if "effort" in fields else float("nan")
+            asset_mode = int(asset_dof_prop["driveMode"][i]) if "driveMode" in fields else -1
+            actor_mode = int(actor_dof_prop["driveMode"][i]) if "driveMode" in fields else -1
             print(
-                f"{i:02d} {name}: lower={lower:.4f} upper={upper:.4f} "
-                f"stiffness={stiffness:.4f} damping={damping:.4f} effort={effort:.4f} "
-                f"velocity={velocity:.4f} friction={friction:.4f} armature={armature:.4f} "
-                f"driveMode={drive_mode}"
+                f"{i:02d} {name}: "
+                f"limit=[{float(actor_dof_prop['lower'][i]): .6f}, {float(actor_dof_prop['upper'][i]): .6f}] "
+                f"kp={float(actor_dof_prop['stiffness'][i]):.6g} "
+                f"kd={float(actor_dof_prop['damping'][i]):.6g} "
+                f"effort(asset/actor)={asset_effort:.6g}/{actor_effort:.6g} "
+                f"driveMode(asset/actor)={asset_mode}/{actor_mode}"
             )
 
-        print("-" * 96)
-        print("actor-level dof props (after training code sets properties on the actor):")
-        for i, name in enumerate(dof_names):
-            stiffness = float(actor_dof_prop["stiffness"][i])
-            damping = float(actor_dof_prop["damping"][i])
-            lower = float(actor_dof_prop["lower"][i])
-            upper = float(actor_dof_prop["upper"][i])
-            effort = float(actor_dof_prop["effort"][i]) if "effort" in actor_dof_prop.dtype.names else float("nan")
-            drive_mode = int(actor_dof_prop["driveMode"][i]) if "driveMode" in actor_dof_prop.dtype.names else -1
-            velocity = float(actor_dof_prop["velocity"][i]) if "velocity" in actor_dof_prop.dtype.names else float("nan")
-            friction = float(actor_dof_prop["friction"][i]) if "friction" in actor_dof_prop.dtype.names else float("nan")
-            armature = float(actor_dof_prop["armature"][i]) if "armature" in actor_dof_prop.dtype.names else float("nan")
-            print(
-                f"{i:02d} {name}: lower={lower:.4f} upper={upper:.4f} "
-                f"stiffness={stiffness:.4f} damping={damping:.4f} effort={effort:.4f} "
-                f"velocity={velocity:.4f} friction={friction:.4f} armature={armature:.4f} "
-                f"driveMode={drive_mode}"
-            )
+        print("-" * 120)
+        print("Policy action mapping: target = offset + scale * action, action in [-1, 1]")
+        if self._pd_control:
+            offsets = self._pd_action_offset.detach().cpu().numpy()
+            scales = self._pd_action_scale.detach().cpu().numpy()
+            for i, name in enumerate(self._dof_names):
+                print(
+                    f"{i:02d} {name}: offset={offsets[i]: .6f} scale={scales[i]: .6f} "
+                    f"target_range=[{offsets[i] - scales[i]: .6f}, {offsets[i] + scales[i]: .6f}]"
+                )
+        else:
+            for i, name in enumerate(self._dof_names):
+                effort = float(self.motor_efforts[i].item())
+                print(f"{i:02d} {name}: torque_range=[{-effort:.6g}, {effort:.6g}]")
 
-        print("-" * 96)
-        print("actuator props (as returned by Isaac Gym importer):")
+        print("-" * 120)
+        print("Actuator properties returned by the Isaac Gym importer")
         for i, prop in enumerate(actuator_props):
-            print(f"{i:02d}: motor_effort={float(motor_efforts[i]):.4f}")
-        print("=" * 96)
+            print(f"{i:02d}: motor_effort={float(motor_efforts[i]):.6g}")
+
+        print("-" * 120)
+        print("Actor rigid body mass / center of mass / inertia used by training")
+        total_mass = 0.0
+        for i, name in enumerate(self._body_names):
+            actor_prop = actor_body_props[i]
+            total_mass += float(actor_prop.mass)
+            print(
+                f"{i:02d} {name}: mass={float(actor_prop.mass):.6g} "
+                f"com={self._format_vec3(actor_prop.com)} "
+                f"inertia={self._format_inertia(actor_prop.inertia)}"
+            )
+        print(f"actor_total_mass={total_mass:.6g}")
+
+        print("-" * 120)
+        print("Rigid shape contact properties: asset import -> actor")
+        shape_fields = (
+            "friction", "rolling_friction", "torsion_friction",
+            "restitution", "contact_offset", "rest_offset"
+        )
+        for i, (asset_prop, actor_prop) in enumerate(zip(asset_shape_props, actor_shape_props)):
+            values = []
+            for field in shape_fields:
+                if hasattr(actor_prop, field):
+                    values.append(
+                        f"{field}={float(getattr(asset_prop, field)):.6g}"
+                        f"->{float(getattr(actor_prop, field)):.6g}"
+                    )
+            print(f"{i:02d}: " + " ".join(values))
+        print("=" * 120)
 
     def _build_pd_action_offset_scale(self):
-        num_joints = len(DOF_OFFSETS) - 1
-        
         lim_low = self.dof_limits_lower.cpu().numpy()
         lim_high = self.dof_limits_upper.cpu().numpy()
 
-        for j in range(num_joints):
+        for j in range(len(DOF_OFFSETS) - 1):
             dof_offset = DOF_OFFSETS[j]
-            dof_size = DOF_OFFSETS[j + 1] - DOF_OFFSETS[j]
+            dof_size = DOF_OFFSETS[j + 1] - dof_offset
 
-            if (dof_size == 3):
+            if dof_size == 3:
+                # Preserve the legacy policy interface: zero action means zero
+                # overall joint rotation, and each component spans [-pi, pi].
                 lim_low[dof_offset:(dof_offset + dof_size)] = -np.pi
                 lim_high[dof_offset:(dof_offset + dof_size)] = np.pi
-
-            elif (dof_size == 1):
+            else:
                 curr_low = lim_low[dof_offset]
                 curr_high = lim_high[dof_offset]
-                curr_mid = 0.5 * (curr_high + curr_low)
-                
-                # extend the action range to be a bit beyond the joint limits so that the motors
-                # don't lose their strength as they approach the joint limits
-                curr_scale = 0.7 * (curr_high - curr_low)
-                curr_low = curr_mid - curr_scale
-                curr_high = curr_mid + curr_scale
 
-                lim_low[dof_offset] = curr_low
-                lim_high[dof_offset] =  curr_high
+                # Diagnostic mapping: keep the original scale, but remove the
+                # joint-limit midpoint bias so zero action targets zero angle.
+                curr_scale = 0.7 * (curr_high - curr_low)
+                lim_low[dof_offset] = -curr_scale
+                lim_high[dof_offset] = curr_scale
 
         self._pd_action_offset = 0.5 * (lim_high + lim_low)
         self._pd_action_scale = 0.5 * (lim_high - lim_low)
         self._pd_action_offset = to_torch(self._pd_action_offset, device=self.device)
         self._pd_action_scale = to_torch(self._pd_action_scale, device=self.device)
-
-        out_path = "pd_action_mapping.npz"
-        np.savez(
-            out_path,
-            offset=self._pd_action_offset.detach().cpu().numpy(),
-            scale=self._pd_action_scale.detach().cpu().numpy(),
-        )
-        print(f"[pd mapping] saved to {out_path}")
 
         return
 
@@ -379,7 +483,7 @@ class HumanoidAMP_s1_Smpl_Base(VecTask):
 
     def _compute_reset(self):
         self.reset_buf[:], self._terminate_buf[:] = compute_humanoid_reset(self.reset_buf, self.progress_buf,
-                                                   self._contact_forces, self._contact_body_ids,
+                                                   self._contact_forces, self._termination_ignore_body_ids,
                                                    self._rigid_body_pos, self.max_episode_length,
                                                    self._enable_early_termination, self._termination_height)
         return
@@ -442,12 +546,16 @@ class HumanoidAMP_s1_Smpl_Base(VecTask):
 
     def pre_physics_step(self, actions):
         self.actions = actions.to(self.device).clone()
+        if self._diag_zero_action:
+            self.actions.zero_()
 
         if (self._pd_control):
             pd_tar = self._action_to_pd_targets(self.actions)
+            self._last_pd_targets = pd_tar
             pd_tar_tensor = gymtorch.unwrap_tensor(pd_tar)
             self.gym.set_dof_position_target_tensor(self.sim, pd_tar_tensor)
         else:
+            self._last_pd_targets = None
             forces = self.actions * self.motor_efforts.unsqueeze(0) * self.power_scale
             force_tensor = gymtorch.unwrap_tensor(forces)
             self.gym.set_dof_actuation_force_tensor(self.sim, force_tensor)
@@ -461,6 +569,9 @@ class HumanoidAMP_s1_Smpl_Base(VecTask):
         self._compute_observations()
         self._compute_reward(self.actions)
         self._compute_reset()
+
+        if self._diag_print_runtime:
+            self._print_runtime_diagnostics()
         
         self.extras["terminate"] = self._terminate_buf
 
@@ -469,6 +580,73 @@ class HumanoidAMP_s1_Smpl_Base(VecTask):
             self._update_debug_viz()
 
         return
+
+    def _print_runtime_diagnostics(self):
+        if self._diag_runtime_counter % self._diag_runtime_interval != 0:
+            self._diag_runtime_counter += 1
+            return
+        self._diag_runtime_counter += 1
+
+        env_id = 0
+        action = self.actions[env_id].detach().cpu().numpy()
+        dof_pos = self._dof_pos[env_id].detach().cpu().numpy()
+        dof_vel = self._dof_vel[env_id].detach().cpu().numpy()
+        dof_force = self.dof_force_tensor[env_id].detach().cpu().numpy()
+        contact = self._contact_forces[env_id].detach()
+        contact_norm = torch.norm(contact, dim=-1)
+        body_height = self._rigid_body_pos[env_id, :, 2].detach()
+
+        termination_ignored = torch.zeros(self.num_bodies, device=self.device, dtype=torch.bool)
+        termination_ignored[self._termination_ignore_body_ids] = True
+        actual_fall_contact = torch.any(contact > 0.1, dim=-1) & (~termination_ignored)
+        actual_fall_height = (body_height < self._termination_height) & (~termination_ignored)
+
+        print("=" * 120)
+        print(
+            f"[V2 Runtime Diagnostics] sample={self._diag_runtime_counter - 1} "
+            f"env={env_id} episode_step={int(self.progress_buf[env_id].item())} "
+            f"reset={int(self.reset_buf[env_id].item())} terminate={int(self._terminate_buf[env_id].item())}"
+        )
+        print(f"action={np.array2string(action, precision=4, suppress_small=True, max_line_width=240)}")
+        if self._last_pd_targets is not None:
+            pd_target = self._last_pd_targets[env_id].detach().cpu().numpy()
+            print(f"pd_target={np.array2string(pd_target, precision=4, suppress_small=True, max_line_width=240)}")
+        print(f"dof_pos={np.array2string(dof_pos, precision=4, suppress_small=True, max_line_width=240)}")
+        print(f"dof_vel={np.array2string(dof_vel, precision=4, suppress_small=True, max_line_width=240)}")
+        print(f"dof_force={np.array2string(dof_force, precision=4, suppress_small=True, max_line_width=240)}")
+        print(
+            f"root_pos={np.array2string(self._root_states[env_id, 0:3].detach().cpu().numpy(), precision=4)} "
+            f"root_lin_vel={np.array2string(self._root_states[env_id, 7:10].detach().cpu().numpy(), precision=4)} "
+            f"root_ang_vel={np.array2string(self._root_states[env_id, 10:13].detach().cpu().numpy(), precision=4)}"
+        )
+        system_com_pos, system_com_vel, total_mass = self._compute_system_com_state(env_id)
+        print(
+            f"system_com_pos={np.array2string(system_com_pos.detach().cpu().numpy(), precision=4)} "
+            f"system_com_vel={np.array2string(system_com_vel.detach().cpu().numpy(), precision=4)} "
+            f"total_mass={float(total_mass):.6f}"
+        )
+
+        print("contacts with force norm > 0.1:")
+        active_ids = torch.nonzero(contact_norm > 0.1, as_tuple=False).flatten().cpu().tolist()
+        if len(active_ids) == 0:
+            print("  none")
+        else:
+            for body_id in active_ids:
+                force = contact[body_id].cpu().numpy()
+                print(
+                    f"  {body_id:02d} {self._body_names[body_id]}: "
+                    f"force={np.array2string(force, precision=4)} norm={float(contact_norm[body_id]):.4f} "
+                    f"height={float(body_height[body_id]):.4f} "
+                    f"termination_ignored={bool(termination_ignored[body_id].item())}"
+                )
+
+        fall_contact_ids = torch.nonzero(actual_fall_contact, as_tuple=False).flatten().cpu().tolist()
+        fall_height_ids = torch.nonzero(actual_fall_height, as_tuple=False).flatten().cpu().tolist()
+        print("fall_contact_bodies=" + str([self._body_names[i] for i in fall_contact_ids]))
+        print("below_termination_height=" + str([
+            f"{self._body_names[i]}({float(body_height[i]):.4f})" for i in fall_height_ids
+        ]))
+        print("=" * 120)
 
     def render(self):
         if self.viewer and self.camera_follow:
@@ -493,6 +671,36 @@ class HumanoidAMP_s1_Smpl_Base(VecTask):
             body_id = self.gym.find_actor_rigid_body_handle(env_ptr, actor_handle, body_name)
             assert(body_id != -1)
             body_ids.append(body_id)
+
+        body_ids = to_torch(body_ids, device=self.device, dtype=torch.long)
+        return body_ids
+
+    @staticmethod
+    def _is_auto_termination_ignore_body(body_name):
+        return (
+            body_name.endswith("_x_link")
+            or body_name.endswith("_y_link")
+            or body_name.endswith("_z_link")
+        )
+
+    def _build_termination_ignore_body_ids_tensor(self, env_ptr, actor_handle):
+        ignore_body_names = set(self._contact_bodies)
+        ignore_body_names.update(self._termination_ignore_bodies)
+
+        for body_name in self._body_names:
+            if self._is_auto_termination_ignore_body(body_name):
+                ignore_body_names.add(body_name)
+
+        body_ids = []
+        self._termination_ignore_body_names = []
+        for body_name in self._body_names:
+            if body_name not in ignore_body_names:
+                continue
+
+            body_id = self.gym.find_actor_rigid_body_handle(env_ptr, actor_handle, body_name)
+            assert(body_id != -1)
+            body_ids.append(body_id)
+            self._termination_ignore_body_names.append(body_name)
 
         body_ids = to_torch(body_ids, device=self.device, dtype=torch.long)
         return body_ids
@@ -541,8 +749,34 @@ class HumanoidAMP_s1_Smpl_Base(VecTask):
 #####################################################################
 
 @torch.jit.script
+def hinge_xyz_chain_to_quat(joint_angles):
+    # type: (Tensor) -> Tensor
+    """Compose nested local X -> Y -> Z hinge rotations."""
+    half_x = 0.5 * joint_angles[:, 0]
+    half_y = 0.5 * joint_angles[:, 1]
+    half_z = 0.5 * joint_angles[:, 2]
+    zero = torch.zeros_like(half_x)
+
+    quat_x = torch.stack(
+        [torch.sin(half_x), zero, zero, torch.cos(half_x)], dim=-1
+    )
+    quat_y = torch.stack(
+        [zero, torch.sin(half_y), zero, torch.cos(half_y)], dim=-1
+    )
+    quat_z = torch.stack(
+        [zero, zero, torch.sin(half_z), torch.cos(half_z)], dim=-1
+    )
+
+    return quat_mul(quat_mul(quat_x, quat_y), quat_z)
+
+
+@torch.jit.script
 def dof_to_obs(pose):
     # type: (Tensor) -> Tensor
+    # v2 chain-XML route:
+    # control/state tensors stay in raw hinge coordinates, while observations
+    # reconstruct each conceptual 3DoF joint back into the original 6D
+    # tan-norm rotation feature.
     #dof_obs_size = 64
     #dof_offsets = [0, 3, 6, 9, 12, 13, 16, 19, 20, 23, 24, 27, 30, 31, 34]
     # 更新 DoF Obs 尺寸 (19*6=114)
@@ -553,7 +787,7 @@ def dof_to_obs(pose):
     num_joints = len(dof_offsets) - 1
 
     dof_obs_shape = pose.shape[:-1] + (dof_obs_size,)
-    dof_obs = torch.zeros(dof_obs_shape, device=pose.device)
+    dof_obs = torch.zeros(dof_obs_shape, device=pose.device, dtype=pose.dtype)
     dof_obs_offset = 0
 
     for j in range(num_joints):
@@ -561,17 +795,16 @@ def dof_to_obs(pose):
         dof_size = dof_offsets[j + 1] - dof_offsets[j]
         joint_pose = pose[:, dof_offset:(dof_offset + dof_size)]
 
-        # assume this is a spherical joint
         if (dof_size == 3):
-            joint_pose_q = exp_map_to_quat(joint_pose)
+            joint_pose_q = hinge_xyz_chain_to_quat(joint_pose)
             joint_dof_obs = quat_to_tan_norm(joint_pose_q)
-            dof_obs_size = 6
+            joint_obs_size = 6
         else:
             joint_dof_obs = joint_pose
-            dof_obs_size = 1
+            joint_obs_size = 1
 
-        dof_obs[:, dof_obs_offset:(dof_obs_offset + dof_obs_size)] = joint_dof_obs
-        dof_obs_offset += dof_obs_size
+        dof_obs[:, dof_obs_offset:(dof_obs_offset + joint_obs_size)] = joint_dof_obs
+        dof_obs_offset += joint_obs_size
 
     return dof_obs
 
@@ -680,20 +913,20 @@ def compute_humanoid_reward(obs_buf):
     return reward
 
 @torch.jit.script
-def compute_humanoid_reset(reset_buf, progress_buf, contact_buf, contact_body_ids, rigid_body_pos,
+def compute_humanoid_reset(reset_buf, progress_buf, contact_buf, termination_ignore_body_ids, rigid_body_pos,
                            max_episode_length, enable_early_termination, termination_height):
     # type: (Tensor, Tensor, Tensor, Tensor, Tensor, float, bool, float) -> Tuple[Tensor, Tensor]
     terminated = torch.zeros_like(reset_buf)
 
     if (enable_early_termination):
         masked_contact_buf = contact_buf.clone()
-        masked_contact_buf[:, contact_body_ids, :] = 0
+        masked_contact_buf[:, termination_ignore_body_ids, :] = 0
         fall_contact = torch.any(masked_contact_buf > 0.1, dim=-1)
         fall_contact = torch.any(fall_contact, dim=-1)
 
         body_height = rigid_body_pos[..., 2]
         fall_height = body_height < termination_height
-        fall_height[:, contact_body_ids] = False
+        fall_height[:, termination_ignore_body_ids] = False
         fall_height = torch.any(fall_height, dim=-1)
 
         has_fallen = torch.logical_and(fall_contact, fall_height)

@@ -19,12 +19,12 @@ from isaacgymenvs.tasks.amp.utils_amp import gym_util
 from isaacgymenvs.tasks.amp.utils_amp.motion_lib import MotionLib
 
 from isaacgymenvs.tasks.SRLEvo.traj_generator import SimpleCurveGenerator as TrajGenerator
-#from isaacgymenvs.utils.torch_jit_utils import quat_mul, to_torch, calc_heading_quat_inv, quat_to_tan_norm, my_quat_rotate
 from isaacgymenvs.utils.torch_jit_utils import quat_mul, quat_conjugate, quat_to_exp_map, to_torch, calc_heading_quat_inv, quat_to_tan_norm, my_quat_rotate
 
-print("[IMPORT CHECK] humanoid_amp_s1_smpl loaded from:", __file__)
+
 
 NUM_AMP_OBS_PER_STEP = 13 + 52 + 28 + 12 # [root_h, root_rot, root_vel, root_ang_vel, dof_pos, dof_vel, key_body_pos]
+
 LOWER_BODY_DOF_GROUPS = {
     "r_hip": [14, 15, 16],
     "r_knee": [17],
@@ -96,17 +96,25 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
             self.envs[0], self.humanoid_handles[0], "right_foot"
         )
 
-        self._diag_compare_3dof = self.cfg["env"].get("diagCompare3Dof", True)
+        self._diag_compare_3dof = self.cfg["env"].get("diagCompare3Dof", False)
         self._diag_compare_interval = self.cfg["env"].get("diagCompare3DofInterval", 30)
         self._diag_compare_env = self.cfg["env"].get("diagCompare3DofEnv", 0)
         self._diag_compare_base_obs = self.cfg["env"].get("diagCompareBaseObs", False)
         self._diag_compare_cmd_obs = self.cfg["env"].get("diagCompareCmdObs", False)
         self._diag_print_dof_torque = self.cfg["env"].get("diagPrintDofTorque", False)
-        self._diag_torque_interval = self.cfg["env"].get("diagDofTorqueInterval", 10)
+        self._diag_torque_interval = self.cfg["env"].get("diagDofTorqueInterval", 30)
         self._diag_print_action_target = self.cfg["env"].get("diagPrintActionTarget", False)
-        self._diag_action_target_interval = self.cfg["env"].get("diagActionTargetInterval", 10)
+        self._diag_action_target_interval = self.cfg["env"].get("diagActionTargetInterval", 30)
         self._diag_print_native_pd_compare = self.cfg["env"].get("diagPrintNativePdCompare", False)
         self._diag_native_pd_interval = self.cfg["env"].get("diagNativePdInterval", 30)
+        self._diag_export_mujoco_roundtrip_frame = self.cfg["env"].get("diagExportMujocoRoundtripFrame", True)
+        self._diag_export_mujoco_roundtrip_path = self.cfg["env"].get(
+            "diagExportMujocoRoundtripPath",
+            "mujoco_roundtrip_frame.npz",
+        )
+        self._diag_export_mujoco_roundtrip_env = int(self.cfg["env"].get("diagExportMujocoRoundtripEnv", 0))
+        self._diag_export_mujoco_roundtrip_step = int(self.cfg["env"].get("diagExportMujocoRoundtripStep", 30))
+        self._diag_export_mujoco_roundtrip_done = False
 
         self._export_reset_state_db = self.cfg["env"].get("exportResetStateDb", False)
         self._export_reset_state_db_path = self.cfg["env"].get("exportResetStateDbPath", "humanoid_reset_states.npz")
@@ -124,7 +132,6 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
             "source_mode": [],
         }
 
-
         self._diag_body_ids = {
             "pelvis": self.gym.find_actor_rigid_body_handle(self.envs[0], self.humanoid_handles[0], "pelvis"),
             "torso": self.gym.find_actor_rigid_body_handle(self.envs[0], self.humanoid_handles[0], "torso"),
@@ -138,6 +145,7 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
             "right_foot": self.gym.find_actor_rigid_body_handle(self.envs[0], self.humanoid_handles[0], "right_foot"),
             "left_foot": self.gym.find_actor_rigid_body_handle(self.envs[0], self.humanoid_handles[0], "left_foot"),
         }
+
 
         # standing phase 朝向缓存
         # 保存“进入 standing phase 时”的世界系 XY 朝向单位向量
@@ -219,7 +227,9 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
             self._print_action_target_diag()
         if self._diag_print_native_pd_compare:
             self._print_native_pd_compare_diag()
-        return    
+        if self._diag_export_mujoco_roundtrip_frame:
+            self._maybe_export_mujoco_roundtrip_frame()
+        return
 
     def _relative_quat(self, env_id, parent_name, child_name):
         parent_id = self._diag_body_ids[parent_name]
@@ -263,7 +273,6 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
             quat_conjugate(q_rel).unsqueeze(0),
             w_rel_world.unsqueeze(0)
         )[0]
-
 
     def _print_3dof_alignment_diag(self):
         env_id = int(self._diag_compare_env)
@@ -338,6 +347,7 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
                 f"|force|/effort={np.array2string(group_ratio, precision=4, suppress_small=True)} | "
                 f"max_ratio={group_ratio.max():.4f} mean_ratio={group_ratio.mean():.4f}"
             )
+
     def _print_action_target_diag(self):
         env_id = int(self._diag_compare_env)
         if env_id < 0 or env_id >= self.num_envs:
@@ -374,6 +384,7 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
             f"min={target_pos.min():.4f} max={target_pos.max():.4f} "
             f"mean={target_pos.mean():.4f} norm={np.linalg.norm(target_pos):.4f}"
         )
+
     def _print_native_pd_compare_diag(self):
         if not self._pd_control:
             return
@@ -437,6 +448,111 @@ class HumanoidAMP_s1_Smpl(HumanoidAMP_s1_Smpl_Base):
                 f"delta={np.linalg.norm(tau_delta_np):.4f}"
             )
 
+    def _maybe_export_mujoco_roundtrip_frame(self):
+        if self._diag_export_mujoco_roundtrip_done:
+            return
+
+        env_id = self._diag_export_mujoco_roundtrip_env
+        if env_id < 0 or env_id >= self.num_envs:
+            return
+
+        step = int(self.progress_buf[env_id].item())
+        if step < self._diag_export_mujoco_roundtrip_step:
+            return
+
+        env_ids = torch.tensor([env_id], device=self.device, dtype=torch.long)
+        root_state = self._root_states[env_id].detach().cpu().numpy().astype(np.float32)
+        dof_pos = self._dof_pos[env_id].detach().cpu().numpy().astype(np.float32)
+        dof_vel = self._dof_vel[env_id].detach().cpu().numpy().astype(np.float32)
+        key_body_pos = self._rigid_body_pos[env_id, self._key_body_ids, :].detach().cpu().numpy().astype(np.float32)
+        rigid_body_pos = self._rigid_body_pos[env_id].detach().cpu().numpy().astype(np.float32)
+        rigid_body_rot = self._rigid_body_rot[env_id].detach().cpu().numpy().astype(np.float32)
+        rigid_body_vel = self._rigid_body_vel[env_id].detach().cpu().numpy().astype(np.float32)
+        rigid_body_ang_vel = self._rigid_body_ang_vel[env_id].detach().cpu().numpy().astype(np.float32)
+        base_obs = super()._compute_humanoid_obs(env_ids)[0].detach().cpu().numpy().astype(np.float32)
+        full_obs = self.obs_buf[env_id].detach().cpu().numpy().astype(np.float32)
+        amp_obs = self._curr_amp_obs_buf[env_id].detach().cpu().numpy().astype(np.float32)
+
+        raw_action = self.actions[env_id].detach().cpu().numpy().astype(np.float32)
+        if self._pd_control:
+            target_pos_t = self._action_to_pd_targets(self.actions[env_id:env_id + 1])[0]
+            target_pos = target_pos_t.detach().cpu().numpy().astype(np.float32)
+        else:
+            target_pos_t = self.actions[env_id]
+            target_pos = raw_action.copy()
+
+        dof_force = self.dof_force_tensor[env_id].detach().cpu().numpy().astype(np.float32)
+        pd_stiffness = self._pd_stiffness.detach().cpu().numpy().astype(np.float32)
+        pd_damping = self._pd_damping.detach().cpu().numpy().astype(np.float32)
+        pd_action_offset = self._pd_action_offset.detach().cpu().numpy().astype(np.float32)
+        pd_action_scale = self._pd_action_scale.detach().cpu().numpy().astype(np.float32)
+        motor_efforts = self.motor_efforts.detach().cpu().numpy().astype(np.float32)
+        tau_pd_pred = (
+            self._pd_stiffness * (target_pos_t - self._dof_pos[env_id])
+            - self._pd_damping * self._dof_vel[env_id]
+        ).detach().cpu().numpy().astype(np.float32)
+
+        dof_names = np.asarray([
+            "abdomen_x", "abdomen_y", "abdomen_z",
+            "neck_x", "neck_y", "neck_z",
+            "right_shoulder_x", "right_shoulder_y", "right_shoulder_z",
+            "right_elbow",
+            "left_shoulder_x", "left_shoulder_y", "left_shoulder_z",
+            "left_elbow",
+            "right_hip_x", "right_hip_y", "right_hip_z",
+            "right_knee",
+            "right_ankle_x", "right_ankle_y", "right_ankle_z",
+            "left_hip_x", "left_hip_y", "left_hip_z",
+            "left_knee",
+            "left_ankle_x", "left_ankle_y", "left_ankle_z",
+        ])
+
+        save_dir = os.path.dirname(self._diag_export_mujoco_roundtrip_path)
+        if save_dir != "":
+            os.makedirs(save_dir, exist_ok=True)
+
+        np.savez(
+            self._diag_export_mujoco_roundtrip_path,
+            root_state=root_state,
+            root_pos=root_state[0:3],
+            root_rot=root_state[3:7],
+            root_vel=root_state[7:10],
+            root_ang_vel=root_state[10:13],
+            dof_pos=dof_pos,
+            dof_vel=dof_vel,
+            dof_names=dof_names,
+            dof_force=dof_force,
+            pd_stiffness=pd_stiffness,
+            pd_damping=pd_damping,
+            pd_action_offset=pd_action_offset,
+            pd_action_scale=pd_action_scale,
+            motor_efforts=motor_efforts,
+            tau_pd_pred=tau_pd_pred,
+            raw_action=raw_action,
+            target_pos=target_pos,
+            full_obs=full_obs,
+            amp_obs=amp_obs,
+            key_body_pos=key_body_pos,
+            key_body_names=np.asarray(["right_hand", "left_hand", "right_foot", "left_foot"]),
+            rigid_body_pos=rigid_body_pos,
+            rigid_body_rot=rigid_body_rot,
+            rigid_body_vel=rigid_body_vel,
+            rigid_body_ang_vel=rigid_body_ang_vel,
+            base_obs=base_obs,
+            progress_step=np.asarray([step], dtype=np.int32),
+            local_root_obs=np.asarray([int(self._local_root_obs)], dtype=np.int32),
+            humanoid_load_cell_obs=np.asarray([int(self._humanoid_load_cell_obs)], dtype=np.int32),
+            train_stage=np.asarray([int(self.train_stage)], dtype=np.int32),
+        )
+        self._diag_export_mujoco_roundtrip_done = True
+        print(
+            "[MuJoCoRoundtripExport] saved env={} step={} to {}".format(
+                env_id,
+                step,
+                self._diag_export_mujoco_roundtrip_path,
+            )
+        )
+        return
 
     def _build_reconstructed_base_obs(self, env_id):
         root_states = self._root_states[env_id:env_id + 1]
