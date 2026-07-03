@@ -18,6 +18,9 @@ env:
   pdControl: False
   forceControl: True
   powerScale: 1.0
+  srl_action_filter_enable: False
+  srl_action_filter_cutoff_hz: 10.0
+  srl_action_filter_order: 2
 
   task_training_stage: 0
 
@@ -35,6 +38,7 @@ env:
   deathCost: -1.0
   terminationHeight: 0.70
   srl_max_effort: 400
+  srl_effort_limits: [120, 120, 400, 120, 120, 400]
 
   # gait parameters
   gait_period: 54.0

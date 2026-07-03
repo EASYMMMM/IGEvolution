@@ -54,7 +54,7 @@
                   mass="1.4819"
                   fullinertia="0.001608 0.002743 0.001846 -0.000085 0.000001 -0.000001"/>
         <joint name="left_hip_x_joint" axis="1 0 0" range="-25 25"
-               damping="20" stiffness="120" armature="0.1"/>
+               damping="18" stiffness="250" armature="0.1"/>
 
         <geom mesh="left_hip_x_link" class="visual"/>
         <geom type="capsule" size="0.025" fromto="-0.14 0 0 0 0 0" class="collision"/>
@@ -64,7 +64,7 @@
                     mass="4.0982"
                     fullinertia="0.18128 0.1781 0.011168 -0.001291 -0.006815 -0.019831"/>
           <joint name="left_hip_y_joint" axis="0 -1 0" range="-60 20"
-                 damping="25" stiffness="210" armature="0.1"/>
+                 damping="22" stiffness="300" armature="0.1"/>
 
           <geom mesh="left_hip_y_link" class="visual"/>
           <geom type="capsule" size="0.025" fromto="0 0 0 0 0.029 -0.671" class="collision"/>
@@ -74,7 +74,7 @@
                       mass="0.59515"
                       fullinertia="0.000187 0.031175 0.031161 0 -0.000077 0"/>
             <joint name="left_knee_joint" axis="0 -1 0" range="-45 45"
-                   damping="40" stiffness="280" armature="0.1"/>
+                   damping="14" stiffness="300" armature="0.1"/>
 
             <geom mesh="left_knee_link" class="visual"/>
             <geom type="capsule" size="0.035" fromto="0 0 0 0.640 0 0" class="collision"/>
@@ -96,7 +96,7 @@
                   mass="1.4819"
                   fullinertia="0.001608 0.002743 0.001846 0.000085 -0.000001 -0.000001"/>
         <joint name="right_hip_x_joint" axis="-1 0 0" range="-25 25"
-               damping="20" stiffness="120" armature="0.1"/>
+               damping="18" stiffness="250" armature="0.1"/>
 
         <geom mesh="right_hip_x_link" material="white_mat" class="visual"/>
         <geom type="capsule" size="0.025" fromto="-0.14 0 0 0 0 0" class="collision"/>
@@ -106,7 +106,7 @@
                     mass="4.0982"
                     fullinertia="0.18134 0.1781 0.011233 0.001305 -0.00681 0.020127"/>
           <joint name="right_hip_y_joint" axis="0 -1 0" range="-60 20"
-                 damping="25" stiffness="210" armature="0.1"/>
+                 damping="22" stiffness="300" armature="0.1"/>
 
           <geom mesh="right_hip_y_link" class="visual"/>
           <geom type="capsule" size="0.025" fromto="0 0 0 0 -0.029 -0.671" class="collision"/>
@@ -116,7 +116,7 @@
                       mass="0.59515"
                       fullinertia="0.000187 0.031161 0.031175 -0.000077 0 0"/>
             <joint name="right_knee_joint" axis="0 0 1" range="-45 45"
-                   damping="40" stiffness="280" armature="0.1"/>
+                   damping="14" stiffness="300" armature="0.1" effort="300"/>
 
             <geom mesh="right_knee_link" class="visual"/>
             <geom type="capsule" size="0.035" fromto="0 0 0 0.640 0 0" class="collision"/>

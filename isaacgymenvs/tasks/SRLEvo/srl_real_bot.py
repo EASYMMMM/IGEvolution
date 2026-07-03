@@ -94,12 +94,18 @@ class SRL_Real_Bot(VecTask):
         self.task_training_stage = self.cfg["env"].get("task_training_stage", 0)
         self.srl_motor_cost_scale = self.cfg["env"].get("srl_motor_cost_scale", 0)
         self.action_scale = self.cfg["env"].get("action_scale", 1.0)
+        self.srl_action_filter_enable = self.cfg["env"].get("srl_action_filter_enable", True)
+        self.srl_action_filter_cutoff_hz = self.cfg["env"].get("srl_action_filter_cutoff_hz", 4.0)
+        self.srl_action_filter_order = self.cfg["env"].get("srl_action_filter_order", 2)
         self.obs_frame_stack = self.cfg["env"]["obs_frame_stack"]  
         
         self.vel_pertubation = self.cfg["task"].get("vel_pertubation", False)
         self.vel_pertubation_range = self.cfg["task"].get("vel_pertubation_range", [0.2, 0.8])
 
         self._srl_max_effort = self.cfg["env"].get("srl_max_effort", 400.0)
+        self._srl_effort_limits = self.cfg["env"].get(
+            "srl_effort_limits", [self._srl_max_effort] * 6
+        )
 
         self.cfg["env"]["numObservations"] = 30 * self.obs_frame_stack + 3
         self.cfg["env"]["numActions"] = 6
@@ -128,6 +134,7 @@ class SRL_Real_Bot(VecTask):
         # EMA 衰减系数计算
         dt = self.cfg["sim"]["dt"]
         self.control_dt = self.control_freq_inv * dt
+        self._init_srl_action_filter()
         self._srl_thermal_gamma = float(np.exp(-self.control_dt / self.srl_thermal_tau_s))
         self._srl_peak_decay = float(np.exp(-self.control_dt / self.srl_peak_window_tau_s))
 
@@ -170,6 +177,15 @@ class SRL_Real_Bot(VecTask):
         self.dof_vel = self.dof_state.view(self.num_envs, self.num_dof, 2)[..., 1]
 
         self.actions = torch.zeros((self.num_envs, self.num_actions), device=self.device, dtype=torch.float)
+        self.raw_actions = torch.zeros_like(self.actions)
+        self.filtered_actions = torch.zeros_like(self.actions)
+        q0 = self.dof_pos.clone()
+        self.raw_pd_targets = q0.clone()
+        self.filtered_pd_targets = q0.clone()
+        self.srl_lpf_x1 = q0.clone()
+        self.srl_lpf_x2 = q0.clone()
+        self.srl_lpf_y1 = q0.clone()
+        self.srl_lpf_y2 = q0.clone()
         self.initial_dof_pos = torch.tensor(self.default_joint_angles, device=self.device).unsqueeze(0).repeat(self.num_envs, 1)
         self.initial_dof_vel = torch.zeros_like(self.dof_vel, device=self.device, dtype=torch.float)
 
@@ -343,6 +359,12 @@ class SRL_Real_Bot(VecTask):
                 self.gym.set_actor_dof_properties(env_ptr, handle, dof_prop)
             elif (self._pd_control):
                 dof_prop = self.gym.get_asset_dof_properties(humanoid_asset)
+                if len(self._srl_effort_limits) != self.num_dof:
+                    raise ValueError(
+                        f"srl_effort_limits has {len(self._srl_effort_limits)} values, "
+                        f"but the asset has {self.num_dof} DOFs."
+                    )
+                dof_prop["effort"][:] = self._srl_effort_limits
                 dof_prop["driveMode"] = gymapi.DOF_MODE_POS
                 self.gym.set_actor_dof_properties(env_ptr, handle, dof_prop)
         
@@ -617,6 +639,12 @@ class SRL_Real_Bot(VecTask):
         velocities = torch_rand_float(-0.1, 0.1, (len(env_ids), self.num_dof), device=self.device)
         self.dof_pos[env_ids] = tensor_clamp(self.initial_dof_pos[env_ids] , self.dof_limits_lower, self.dof_limits_upper)
         self.dof_vel[env_ids] = velocities
+        self._reset_srl_action_filter(env_ids)
+        self.raw_actions[env_ids] = 0.0
+        self.actions[env_ids] = 0.0
+        self.filtered_actions[env_ids] = 0.0
+        self.raw_pd_targets[env_ids] = self.dof_pos[env_ids]
+        self.filtered_pd_targets[env_ids] = self.dof_pos[env_ids]
 
         env_ids_int32 = env_ids.to(dtype=torch.int32)
         self.gym.set_actor_root_state_tensor_indexed(self.sim,
@@ -682,19 +710,28 @@ class SRL_Real_Bot(VecTask):
             self.gym.set_actor_root_state_tensor(self.sim, gymtorch.unwrap_tensor(self.root_states))
 
     def pre_physics_step(self, actions):
-        self.actions = actions.to(self.device).clone()
-        
+        self.raw_actions = actions.to(self.device).clone()
+        self.actions = self.raw_actions
+        self.raw_pd_targets = self._action_to_pd_targets(self.raw_actions)
+        self.filtered_pd_targets = self.raw_pd_targets.clone()
+        if self.srl_action_filter_enable:
+            self.filtered_pd_targets = self._apply_srl_pd_target_filter(self.raw_pd_targets)
+            self.filtered_pd_targets = torch.max(
+                torch.min(self.filtered_pd_targets, self._pd_action_high),
+                self._pd_action_low,
+            )
+            self.srl_lpf_y1[:] = self.filtered_pd_targets
+        self.filtered_actions = self._srl_pd_targets_to_action(self.filtered_pd_targets)
+
         if self._force_control:
-            pd_tar = self._action_to_pd_targets(self.actions)
-            torques = self.p_gains*(pd_tar - self.dof_pos) - self.d_gains*self.dof_vel
+            torques = self.p_gains*(self.filtered_pd_targets - self.dof_pos) - self.d_gains*self.dof_vel
             self.torques = torch.clip(torques, -self.torque_limits, self.torque_limits).view(self.torques.shape)
             self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(self.torques))
         elif (self._pd_control):
-            pd_tar = self._action_to_pd_targets(self.actions)
             # 即使是位置控制，我们也可以近似计算输出力矩用于惩罚项
-            self.torques = self.p_gains*(pd_tar - self.dof_pos) - self.d_gains*self.dof_vel
+            self.torques = self.p_gains*(self.filtered_pd_targets - self.dof_pos) - self.d_gains*self.dof_vel
             self.torques = torch.clip(self.torques, -self.torque_limits, self.torque_limits)
-            pd_tar_tensor = gymtorch.unwrap_tensor(pd_tar)
+            pd_tar_tensor = gymtorch.unwrap_tensor(self.filtered_pd_targets)
             self.gym.set_dof_position_target_tensor(self.sim, pd_tar_tensor)
 
     def post_physics_step(self):
@@ -756,6 +793,50 @@ class SRL_Real_Bot(VecTask):
         self.gym.refresh_dof_force_tensor(self.sim)
         self.gym.refresh_net_contact_force_tensor(self.sim)
         return
+
+    def _init_srl_action_filter(self):
+        if self.srl_action_filter_order != 2:
+            raise ValueError(
+                f"Only second-order Butterworth filter is supported, got order={self.srl_action_filter_order}."
+            )
+
+        sample_freq = 1.0 / self.control_dt
+        cutoff_hz = min(self.srl_action_filter_cutoff_hz, 0.499 * sample_freq)
+        k = math.tan(math.pi * cutoff_hz / sample_freq)
+        norm = 1.0 / (1.0 + math.sqrt(2.0) * k + k * k)
+        self.srl_lpf_b0 = float(k * k * norm)
+        self.srl_lpf_b1 = float(2.0 * self.srl_lpf_b0)
+        self.srl_lpf_b2 = float(self.srl_lpf_b0)
+        self.srl_lpf_a1 = float(2.0 * (k * k - 1.0) * norm)
+        self.srl_lpf_a2 = float((1.0 - math.sqrt(2.0) * k + k * k) * norm)
+
+    def _reset_srl_action_filter(self, env_ids):
+        q0 = self.dof_pos[env_ids].clone()
+        self.srl_lpf_x1[env_ids] = q0
+        self.srl_lpf_x2[env_ids] = q0
+        self.srl_lpf_y1[env_ids] = q0
+        self.srl_lpf_y2[env_ids] = q0
+
+    def _apply_srl_pd_target_filter(self, raw_srl_pd_target):
+        y = (
+            self.srl_lpf_b0 * raw_srl_pd_target
+            + self.srl_lpf_b1 * self.srl_lpf_x1
+            + self.srl_lpf_b2 * self.srl_lpf_x2
+            - self.srl_lpf_a1 * self.srl_lpf_y1
+            - self.srl_lpf_a2 * self.srl_lpf_y2
+        )
+        self.srl_lpf_x2[:] = self.srl_lpf_x1
+        self.srl_lpf_x1[:] = raw_srl_pd_target
+        self.srl_lpf_y2[:] = self.srl_lpf_y1
+        self.srl_lpf_y1[:] = y
+        return y
+
+    def _srl_pd_targets_to_action(self, pd_target):
+        delta = pd_target - self._pd_action_offset
+        neg_scale = self._pd_action_offset - self._pd_action_low
+        pos_scale = self._pd_action_high - self._pd_action_offset
+        scale = torch.where(delta >= 0.0, pos_scale, neg_scale)
+        return torch.clamp(delta / (scale * self.action_scale + 1e-8), -1.0, 1.0)
     
     def _action_to_pd_targets(self, action):
         action = torch.clamp(action * self.action_scale, -1.0, 1.0)
