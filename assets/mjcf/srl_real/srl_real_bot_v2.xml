@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mujoco model="srl_real_bot_260629">
+  <!-- Converted from zhan_shen_xi_v2.urdf using the V1 simulation conventions. -->
+  <statistic center="0 0 1" extent="2"/>
+
+  <compiler angle="degree" meshdir="meshes_v2/"/>
+  <option timestep="0.005" integrator="RK4"/>
+
+  <asset>
+    <mesh name="base_link" file="base_link.STL"/>
+    <mesh name="left_hip_x_link" file="left_hip_x_link.STL"/>
+    <mesh name="left_hip_y_link" file="left_hip_y_link.STL"/>
+    <mesh name="left_knee_link" file="left_knee_link.STL"/>
+    <mesh name="right_hip_x_link" file="right_hip_x_link.STL"/>
+    <mesh name="right_hip_y_link" file="right_hip_y_link.STL"/>
+    <mesh name="right_knee_link" file="right_knee_link.STL"/>
+
+    <material name="blue_mat" rgba="0.86 0.91 1 1"/>
+    <material name="white_mat" rgba="1 1 1 1"/>
+    <material name="gray_mat" rgba="0.75294 0.75294 0.75294 1"/>
+    <material name="collision_mat" rgba="0.8 0.5 0.3 0.5"/>
+  </asset>
+
+  <default>
+    <joint damping="2.0" armature="0.01" limited="true" stiffness="5" type="hinge"/>
+    <geom solref="0.005 1" solimp="0.9 0.95 0.001" friction="1.0 0.005 0.0001" condim="3"/>
+
+    <default class="visual">
+      <geom type="mesh" contype="0" conaffinity="0" group="2" material="blue_mat"/>
+    </default>
+
+    <default class="collision">
+      <geom contype="1" conaffinity="1" group="3" material="collision_mat"/>
+    </default>
+
+    <motor ctrllimited="true" ctrlrange="-1 1"/>
+  </default>
+
+  <worldbody>
+    <light pos="0 0 3" dir="0 0 -1" directional="true"/>
+    <geom pos="0 0 0" name="floor" type="plane" size="0 0 0.1" material="white_mat" rgba="0.5 0.5 0.5 1"/>
+
+    <body name="base_link" pos="0 0 1.0" euler="0 0 0">
+      <freejoint/>
+      <inertial pos="-0.0098935 0.000000018459 0.07129"
+                mass="11.86"
+                fullinertia="0.16916 0.12656 0.26136 0 0.001819 0"/>
+
+      <geom mesh="base_link" material="gray_mat" class="visual"/>
+      <geom type="box" size="0.20 0.16 0.08" pos="-0.013 0 0.076" class="collision"/>
+
+      <body name="left_hip_x_link" pos="-0.0135474328 0.1945 0.0745" euler="0 0 0">
+        <inertial pos="-0.069266 -0.020918 0.000046759"
+                  mass="1.4819"
+                  fullinertia="0.001608 0.002743 0.001846 -0.000085 0.000001 -0.000001"/>
+        <joint name="left_hip_x_joint" axis="1 0 0" range="-25 25"
+               damping="20" stiffness="120" armature="0.1"/>
+
+        <geom mesh="left_hip_x_link" class="visual"/>
+        <geom type="capsule" size="0.025" fromto="-0.14 0 0 0 0 0" class="collision"/>
+
+        <body name="left_hip_y_link" pos="-0.0750000104 -0.0007499924 0" euler="0 0 0">
+          <inertial pos="-0.011585 0.058033 -0.17808"
+                    mass="4.0982"
+                    fullinertia="0.18128 0.1781 0.011168 -0.001291 -0.006815 -0.019831"/>
+          <joint name="left_hip_y_joint" axis="0 -1 0" range="-60 20"
+                 damping="25" stiffness="210" armature="0.1"/>
+
+          <geom mesh="left_hip_y_link" class="visual"/>
+          <geom type="capsule" size="0.025" fromto="0 0 0 0 0.029 -0.671" class="collision"/>
+
+          <body name="left_knee_link" pos="0 0.0289999924 -0.6710000028" euler="0 0 0">
+            <inertial pos="0.36934 -0.00000061734 0.0015106"
+                      mass="0.59515"
+                      fullinertia="0.000187 0.031175 0.031161 0 -0.000077 0"/>
+            <joint name="left_knee_joint" axis="0 -1 0" range="-45 45"
+                   damping="40" stiffness="280" armature="0.1"/>
+
+            <geom mesh="left_knee_link" class="visual"/>
+            <geom type="capsule" size="0.035" fromto="0 0 0 0.640 0 0" class="collision"/>
+
+            <body name="left_foot" pos="0.650 0 0">
+              <inertial pos="0 0 0" mass="0.06" diaginertia="0.0001 0.0001 0.0001"/>
+              <geom name="left_foot_contact" type="sphere" size="0.038"
+                    friction="0.9 0.01 0.005"
+                    contype="1" conaffinity="1"
+                    rgba="0.9 0.1 0.1 1"/>
+              <site name="left_foot_touch" size="0.05" rgba="0 1 0 0.2"/>
+            </body>
+          </body>
+        </body>
+      </body>
+
+      <body name="right_hip_x_link" pos="-0.0135474328 -0.1945 0.0745" euler="0 0 0">
+        <inertial pos="-0.069266 0.020918 -0.000046759"
+                  mass="1.4819"
+                  fullinertia="0.001608 0.002743 0.001846 0.000085 -0.000001 -0.000001"/>
+        <joint name="right_hip_x_joint" axis="-1 0 0" range="-25 25"
+               damping="20" stiffness="120" armature="0.1"/>
+
+        <geom mesh="right_hip_x_link" material="white_mat" class="visual"/>
+        <geom type="capsule" size="0.025" fromto="-0.14 0 0 0 0 0" class="collision"/>
+
+        <body name="right_hip_y_link" pos="-0.075 0.00075 0" euler="0 0 0">
+          <inertial pos="-0.011585 -0.057741 -0.17808"
+                    mass="4.0982"
+                    fullinertia="0.18134 0.1781 0.011233 0.001305 -0.00681 0.020127"/>
+          <joint name="right_hip_y_joint" axis="0 -1 0" range="-60 20"
+                 damping="25" stiffness="210" armature="0.1"/>
+
+          <geom mesh="right_hip_y_link" class="visual"/>
+          <geom type="capsule" size="0.025" fromto="0 0 0 0 -0.029 -0.671" class="collision"/>
+
+          <body name="right_knee_link" pos="0 -0.029 -0.671" euler="90 0 0">
+            <inertial pos="0.36934 0.0015106 0.00000061737"
+                      mass="0.59515"
+                      fullinertia="0.000187 0.031161 0.031175 -0.000077 0 0"/>
+            <joint name="right_knee_joint" axis="0 0 1" range="-45 45"
+                   damping="40" stiffness="280" armature="0.1"/>
+
+            <geom mesh="right_knee_link" class="visual"/>
+            <geom type="capsule" size="0.035" fromto="0 0 0 0.640 0 0" class="collision"/>
+
+            <body name="right_foot" pos="0.650 0 0">
+              <inertial pos="0 0 0" mass="0.06" diaginertia="0.0001 0.0001 0.0001"/>
+              <geom name="right_foot_contact" type="sphere" size="0.038"
+                    friction="0.9 0.01 0.005"
+                    contype="1" conaffinity="1"
+                    rgba="0.9 0.1 0.1 1"/>
+              <site name="right_foot_touch" size="0.05" rgba="0 1 0 0.2"/>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <motor name="left_hip_x_torque" joint="left_hip_x_joint" gear="450"/>
+    <motor name="left_hip_y_torque" joint="left_hip_y_joint" gear="450"/>
+    <motor name="left_knee_torque" joint="left_knee_joint" gear="450"/>
+
+    <motor name="right_hip_x_torque" joint="right_hip_x_joint" gear="450"/>
+    <motor name="right_hip_y_torque" joint="right_hip_y_joint" gear="450"/>
+    <motor name="right_knee_torque" joint="right_knee_joint" gear="450"/>
+  </actuator>
+</mujoco>
