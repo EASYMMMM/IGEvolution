@@ -43,6 +43,16 @@ DOF_OFFSETS = [0, 3, 6, 9, 10, 13, 14, 17, 18, 21, 24, 25, 28]
 NUM_OBS = 13 + 52 + 28 + 12 + 6 # [root_h, root_rot, root_vel, root_ang_vel, dof_pos, dof_vel, key_body_pos]
 NUM_ACTIONS = 28
 KEY_BODY_NAMES = ["right_hand", "left_hand", "right_foot", "left_foot"]
+SINGLE_3DOF_GROUPS = {
+    "abdomen": (0, 3),
+    "neck": (3, 6),
+    "right_shoulder": (6, 9),
+    "left_shoulder": (10, 13),
+    "right_hip": (14, 17),
+    "right_ankle": (18, 21),
+    "left_hip": (21, 24),
+    "left_ankle": (25, 28),
+}
 class HumanoidAMP_s1_Smpl_Base(VecTask):
 
     def __init__(self, config, rl_device, sim_device, graphics_device_id, headless, virtual_screen_capture, force_render):
@@ -65,6 +75,14 @@ class HumanoidAMP_s1_Smpl_Base(VecTask):
         self._termination_height = self.cfg["env"]["terminationHeight"]
         self._enable_early_termination = self.cfg["env"]["enableEarlyTermination"]
         self._diag_print_asset_props = self.cfg["env"].get("diagPrintAssetProps", False)
+        self._diag_single_3dof_response = self.cfg["env"].get("diagSingle3DofResponse", False)
+        self._diag_single_3dof_joint = self.cfg["env"].get("diagSingle3DofJoint", "right_ankle")
+        self._diag_single_3dof_target = self.cfg["env"].get("diagSingle3DofTarget", [0.2, 0.0, 0.0])
+        self._diag_single_3dof_env = int(self.cfg["env"].get("diagSingle3DofEnv", 0))
+        self._diag_single_3dof_interval = int(self.cfg["env"].get("diagSingle3DofInterval", 5))
+        self._diag_single_3dof_zero_other_targets = self.cfg["env"].get("diagSingle3DofZeroOtherTargets", True)
+        self._diag_single_3dof_last_pd_tar = None
+        self._diag_single_3dof_prev_vel = None
 
         self._humanoid_load_cell_obs = self.cfg["env"]["humanoid_load_cell_obs"]
         self.train_stage = self.cfg["env"].get("train_stage", 2)  # 1: 原地站立，2: 直线行走，3: 曲线行走
@@ -278,7 +296,7 @@ class HumanoidAMP_s1_Smpl_Base(VecTask):
             self._build_pd_action_offset_scale()
 
         return
-    
+
     def _print_imported_asset_props(self, asset_file, dof_names, asset_dof_prop, actuator_props, motor_efforts, actor_dof_prop):
         print("=" * 96)
         print("[Imported Asset Props]")
@@ -363,14 +381,6 @@ class HumanoidAMP_s1_Smpl_Base(VecTask):
         self._pd_action_offset = to_torch(self._pd_action_offset, device=self.device)
         self._pd_action_scale = to_torch(self._pd_action_scale, device=self.device)
 
-        out_path = "pd_action_mapping.npz"
-        np.savez(
-            out_path,
-            offset=self._pd_action_offset.detach().cpu().numpy(),
-            scale=self._pd_action_scale.detach().cpu().numpy(),
-        )
-        print(f"[pd mapping] saved to {out_path}")
-
         return
 
     def _compute_reward(self, actions):
@@ -444,7 +454,10 @@ class HumanoidAMP_s1_Smpl_Base(VecTask):
         self.actions = actions.to(self.device).clone()
 
         if (self._pd_control):
+            if self._diag_single_3dof_response:
+                self.actions = self._build_single_3dof_response_actions(self.actions)
             pd_tar = self._action_to_pd_targets(self.actions)
+            self._diag_single_3dof_last_pd_tar = pd_tar
             pd_tar_tensor = gymtorch.unwrap_tensor(pd_tar)
             self.gym.set_dof_position_target_tensor(self.sim, pd_tar_tensor)
         else:
@@ -458,6 +471,8 @@ class HumanoidAMP_s1_Smpl_Base(VecTask):
         self.progress_buf += 1
 
         self._refresh_sim_tensors()
+        if self._diag_single_3dof_response:
+            self._print_single_3dof_response_diag()
         self._compute_observations()
         self._compute_reward(self.actions)
         self._compute_reset()
@@ -500,6 +515,91 @@ class HumanoidAMP_s1_Smpl_Base(VecTask):
     def _action_to_pd_targets(self, action):
         pd_tar = self._pd_action_offset + self._pd_action_scale * action
         return pd_tar
+
+    def _build_single_3dof_response_actions(self, actions):
+        if not self._pd_control:
+            raise RuntimeError("diagSingle3DofResponse requires pdControl=True")
+        if self._diag_single_3dof_joint not in SINGLE_3DOF_GROUPS:
+            raise ValueError(
+                "Unknown diagSingle3DofJoint '{}'. Available: {}".format(
+                    self._diag_single_3dof_joint,
+                    sorted(SINGLE_3DOF_GROUPS.keys()),
+                )
+            )
+
+        start, end = SINGLE_3DOF_GROUPS[self._diag_single_3dof_joint]
+        if self._diag_single_3dof_zero_other_targets:
+            pd_target = torch.zeros_like(actions)
+        else:
+            pd_target = self._action_to_pd_targets(actions).clone()
+
+        target = torch.tensor(
+            self._diag_single_3dof_target,
+            device=self.device,
+            dtype=actions.dtype,
+        )
+        if target.numel() != 3:
+            raise ValueError("diagSingle3DofTarget must contain exactly 3 values")
+        pd_target[:, start:end] = target.view(1, 3)
+
+        action = (pd_target - self._pd_action_offset) / torch.clamp(self._pd_action_scale, min=1e-8)
+        return torch.clamp(action, -1.0, 1.0)
+
+    def _print_single_3dof_response_diag(self):
+        if not self._pd_control or self._diag_single_3dof_last_pd_tar is None:
+            return
+        if self._diag_single_3dof_joint not in SINGLE_3DOF_GROUPS:
+            return
+
+        env_id = min(max(int(self._diag_single_3dof_env), 0), self.num_envs - 1)
+        step = int(self.progress_buf[env_id].item())
+        interval = max(int(self._diag_single_3dof_interval), 1)
+        if step % interval != 0:
+            return
+
+        start, end = SINGLE_3DOF_GROUPS[self._diag_single_3dof_joint]
+        pos = self._dof_pos[env_id, start:end].detach()
+        vel = self._dof_vel[env_id, start:end].detach()
+        target = self._diag_single_3dof_last_pd_tar[env_id, start:end].detach()
+        stiffness = self._pd_stiffness[start:end].detach()
+        damping = self._pd_damping[start:end].detach()
+        tau_pred = stiffness * (target - pos) - damping * vel
+        dof_force = self.dof_force_tensor[env_id, start:end].detach()
+
+        if self._diag_single_3dof_prev_vel is None:
+            acc = torch.zeros_like(vel)
+        else:
+            acc = (vel - self._diag_single_3dof_prev_vel.to(self.device)) / max(float(self.control_dt), 1e-8)
+        self._diag_single_3dof_prev_vel = vel.clone().detach().cpu()
+
+        def fmt(tensor):
+            return np.array2string(
+                tensor.detach().cpu().numpy(),
+                precision=5,
+                suppress_small=True,
+            )
+
+        effort = self.motor_efforts[start:end].detach()
+        ratio = torch.abs(dof_force) / torch.clamp(effort, min=1e-8)
+
+        print("=" * 100)
+        print(
+            "[IsaacGym Single 3DoF Response] env={} step={} joint={} target={}".format(
+                env_id,
+                step,
+                self._diag_single_3dof_joint,
+                fmt(target),
+            )
+        )
+        print("=" * 100)
+        print("pos       = {}".format(fmt(pos)))
+        print("vel       = {}".format(fmt(vel)))
+        print("acc~      = {}".format(fmt(acc)))
+        print("stiffness = {}".format(fmt(stiffness)))
+        print("damping   = {}".format(fmt(damping)))
+        print("pd_pred   = {}".format(fmt(tau_pred)))
+        print("dof_force = {}".format(fmt(dof_force)))
+        print("|force|/effort = {}".format(fmt(ratio)))
 
     def _init_camera(self):
         self.gym.refresh_actor_root_state_tensor(self.sim)

@@ -63,10 +63,6 @@ class SRL_Real_Bot(VecTask):
         self.joints_at_limit_cost_scale = self.cfg["env"]["jointsAtLimitCost"]
         self.camera_follow = self.cfg["env"].get("cameraFollow", False)
 
-        self.print_wobble_metrics = self.cfg["env"].get("printWobbleMetrics", False)
-        self.wobble_print_interval = self.cfg["env"].get("wobblePrintInterval", 200)
-        self.wobble_warmup_steps = self.cfg["env"].get("wobbleWarmupSteps", 200)
-
         self.debug_viz = self.cfg["env"]["enableDebugVis"]
         self.plane_static_friction = self.cfg["env"]["plane"]["staticFriction"]
         self.plane_dynamic_friction = self.cfg["env"]["plane"]["dynamicFriction"]
@@ -135,21 +131,6 @@ class SRL_Real_Bot(VecTask):
 
         super().__init__(config=self.cfg, rl_device=rl_device, sim_device=sim_device, graphics_device_id=graphics_device_id, headless=headless, virtual_screen_capture=virtual_screen_capture, force_render=force_render)
 
-        # 初始化动作延迟与噪声的配置
-        # 使用 .get() 提供默认值，防止 yaml 里没写报错
-        self.enable_action_delay = self.cfg["task"].get("action_delay", False)
-        self.action_delay_range = self.cfg["task"].get("action_delay_range", 0.0)
-        
-        self.enable_action_noise = self.cfg["task"].get("action_noise", False)
-        self.action_noise_scale = self.cfg["task"].get("action_noise_scale", 0.0)
-
-        # 初始化 last_actions Buffer
-        self.last_actions = torch.zeros(
-            (self.num_envs, self.num_actions), 
-            dtype=torch.float, 
-            device=self.device
-        )
-        
         # EMA 衰减系数计算
         dt = self.cfg["sim"]["dt"]
         self.control_dt = self.control_freq_inv * dt
@@ -228,17 +209,6 @@ class SRL_Real_Bot(VecTask):
         self.target_vel_x = torch.full((self.num_envs,), 1.0, device=self.device)  
 
         self._terminate_buf = torch.ones(self.num_envs, device=self.device, dtype=torch.long)
-
-        self._wobble_history = {
-            "yaw": deque(),
-            "pitch": deque(),
-            "roll": deque(),
-            "wx": deque(),
-            "wy": deque(),
-            "wz": deque(),
-            "root_h": deque(),
-            "vel_x": deque(),
-        }
 
         self._rigid_body_state = gymtorch.wrap_tensor(rigid_body_state)
         self._rigid_body_pos = self._rigid_body_state.view(self.num_envs, self.num_bodies, 13)[..., 0:3]
@@ -434,37 +404,6 @@ class SRL_Real_Bot(VecTask):
         self.extremities = to_torch([5, 8], device=self.device, dtype=torch.long)
 
         self._build_pd_action_offset_scale()
-        print("\n========== DEBUG CONTROL PARAMS ==========")
-        print("forceControl:", self._force_control)
-        print("pdControl:", self._pd_control)
-        print("randomize:", self.randomize)
-        print("action_scale:", self.action_scale)
-
-        asset_dof_prop = self.gym.get_asset_dof_properties(humanoid_asset)
-        actor_dof_prop = self.gym.get_actor_dof_properties(env_ptr, handle)
-
-        print("\n[ASSET dof props]")
-        print("stiffness:", [float(x) for x in asset_dof_prop["stiffness"]])
-        print("damping  :", [float(x) for x in asset_dof_prop["damping"]])
-        print("effort   :", [float(x) for x in asset_dof_prop["effort"]])
-
-        print("\n[ACTOR dof props]")
-        print("stiffness:", [float(x) for x in actor_dof_prop["stiffness"]])
-        print("damping  :", [float(x) for x in actor_dof_prop["damping"]])
-        print("effort   :", [float(x) for x in actor_dof_prop["effort"]])
-        print("driveMode:", [int(x) for x in actor_dof_prop["driveMode"]])
-
-        print("\n[self.p_gains / self.d_gains / torque_limits]")
-        print("p_gains      :", self.p_gains.cpu().numpy())
-        print("d_gains      :", self.d_gains.cpu().numpy())
-        print("torque_limits:", self.torque_limits.cpu().numpy())
-
-        print("\n[_pd_action_scale / dof limits / default_joint_angles]")
-        print("_pd_action_scale :", self._pd_action_scale.cpu().numpy())
-        print("dof_limits_lower :", self.dof_limits_lower.cpu().numpy())
-        print("dof_limits_upper :", self.dof_limits_upper.cpu().numpy())
-        print("default_joint_angles:", np.array(self.default_joint_angles))
-        print("==========================================\n")
 
     def _build_srl_end_body_ids_tensor(self, env_ptr, actor_handle):
         body_ids = []
@@ -771,34 +710,6 @@ class SRL_Real_Bot(VecTask):
             self.gym.set_actor_root_state_tensor(self.sim, gymtorch.unwrap_tensor(self.root_states))
 
     def pre_physics_step(self, actions):
-
-        # 动作插值延迟 (Action Delay / Smoothing)
-        # 模拟电机的惯性：当前动作不能瞬间突变，而是由上一帧动作和目标动作插值得到
-        if self.randomize and self.enable_action_delay:
-            # 在每一步随机生成延迟系数 alpha (0~1)
-            # alpha 越大，动作越滞后，电机越"肉"
-            # size=(self.num_envs, 1) 保证每个环境有独立的延迟系数，但对该环境的所有关节一致
-            delay_alpha = torch.rand((self.num_envs, 1), device=self.device) * self.action_delay_range
-            
-            # 低通滤波公式: y_t = (1-alpha) * x_t + alpha * y_{t-1}
-            actions = (1.0 - delay_alpha) * actions + delay_alpha * self.last_actions
-
-        # 动作噪声 (Action Noise)
-        # 模拟信号干扰或电机抖动
-        if self.randomize and self.enable_action_noise:
-            # 乘性噪声：动作越大，噪声越大 (比加性噪声更符合电机特性)
-            noise = self.action_noise_scale * torch.randn_like(actions) * actions
-            actions = actions + noise
-
-        # 裁剪动作范围 (Clip)
-        # 假设 self.clip_actions 是你在 config 中定义的 (例如 1.0)
-        # 如果没有定义，可以直接写具体的数值，或者用 self.torque_limits 等逻辑
-        if hasattr(self, "clip_actions"):
-             actions = torch.clamp(actions, -self.clip_actions, self.clip_actions)
-
-        # 更新 last_actions (用于下一帧计算)
-        self.last_actions = actions.clone()
-        # 赋值给 self.actions 用于后续观察 (obs)
         self.raw_actions = actions.to(self.device).clone()
         self.actions = self.raw_actions
         self.raw_pd_targets = self._action_to_pd_targets(self.raw_actions)
@@ -812,23 +723,10 @@ class SRL_Real_Bot(VecTask):
             self.srl_lpf_y1[:] = self.filtered_pd_targets
         self.filtered_actions = self._srl_pd_targets_to_action(self.filtered_pd_targets)
 
-        # 新增代码检查一些关键数据对齐
-        if not hasattr(self, "_debug_printed_once"):
-            self._debug_printed_once = False
-           
-        if self._force_control:    
+        if self._force_control:
             torques = self.p_gains*(self.filtered_pd_targets - self.dof_pos) - self.d_gains*self.dof_vel
             self.torques = torch.clip(torques, -self.torque_limits, self.torque_limits).view(self.torques.shape)
             self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(self.torques))
-            if not self._debug_printed_once:
-                print("\n========== DEBUG FIRST TORQUE STEP ==========")
-                print("actions[0]:", self.actions[0].detach().cpu().numpy())
-                print("pd_tar[0] :", pd_tar[0].detach().cpu().numpy())
-                print("dof_pos[0]:", self.dof_pos[0].detach().cpu().numpy())
-                print("dof_vel[0]:", self.dof_vel[0].detach().cpu().numpy())
-                print("torques[0]:", torques[0].detach().cpu().numpy())
-                print("============================================\n")
-                self._debug_printed_once = True
         elif (self._pd_control):
             # 即使是位置控制，我们也可以近似计算输出力矩用于惩罚项
             self.torques = self.p_gains*(self.filtered_pd_targets - self.dof_pos) - self.d_gains*self.dof_vel
@@ -857,8 +755,6 @@ class SRL_Real_Bot(VecTask):
         self._refresh_sim_tensors()
         self.compute_observations()
         self.compute_reward(self.actions)
-
-        self._update_wobble_metrics()
 
         # TODO: Task Randomization
         self.set_task_target()
