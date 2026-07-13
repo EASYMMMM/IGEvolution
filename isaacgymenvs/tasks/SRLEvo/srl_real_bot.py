@@ -107,26 +107,39 @@ class SRL_Real_Bot(VecTask):
             "srl_effort_limits", [self._srl_max_effort] * 6
         )
 
-        self.cfg["env"]["numObservations"] = 30 * self.obs_frame_stack + 3
+        self.srl_full_obs_num = 30
+        self.srl_command_num = 3
+        self.srl_policy_obs_remove_ids = self.cfg["env"].get("srl_policy_obs_remove_ids", [0, 1, 2, 3])
+        self.srl_policy_obs_ids_list = [
+            i for i in range(self.srl_full_obs_num) if i not in set(self.srl_policy_obs_remove_ids)
+        ]
+        self.srl_policy_obs_num = len(self.srl_policy_obs_ids_list)
+        self.srl_full_obs_size = self.srl_full_obs_num * self.obs_frame_stack + self.srl_command_num
+
+        self.cfg["env"]["numObservations"] = self.srl_policy_obs_num * self.obs_frame_stack + self.srl_command_num
         self.cfg["env"]["numActions"] = 6
         self.default_joint_angles = self.cfg["env"]["default_joint_angles"]
 
         # ==========================================================
-        # 电机优化参数 (针对 RI80 设计)
+        # 电机优化参数
+        # 顺序: left_hip_x, left_hip_y, left_knee, right_hip_x, right_hip_y, right_knee
+        # 髋关节: DM-J10010L, 额定/峰值 40/120 Nm
+        # 膝关节: DM-J10422P, 额定/峰值 100/400 Nm
         # ==========================================================
-        self.srl_rated_nm = 60    # RI80 额定扭矩
-        self.srl_peak_nm = 180    # RI80 峰值扭矩
-        self.srl_peak_start_ratio = 0.7  # 超过 70% 峰值扭矩开始惩罚
-        self.srl_thermal_start = 0.7     # 热量 EMA 超过 0.7 开始惩罚
+        self.srl_rated_nm = [40.0, 40.0, 100.0, 40.0, 40.0, 100.0]
+        self.srl_peak_nm = [120.0, 120.0, 400.0, 120.0, 120.0, 400.0]
+        self.srl_peak_start_ratio = 0.85  # 只惩罚接近峰值的危险输出
+        self.srl_thermal_start = 0.8      # 热量 EMA 超过额定负载 80% 后开始惩罚
         
-        self.srl_peak_cost_scale = 0.5    # 峰值惩罚权重
-        self.srl_thermal_cost_scale = 0.8 # 热量惩罚权重 (这对选型至关重要)
-        self.srl_power_cost_scale = 0.3   # 功率惩罚权重
-        self.srl_rated_w = 1100.0           # RI80 额定功率(W)
-        self.srl_power_start_ratio = 0.6    # 超过60%额定功率开始惩罚（可调：0.6~0.9）
+        self.srl_peak_cost_scale = 0.3     # 峰值惩罚权重
+        self.srl_thermal_cost_scale = 1.0  # 热负载惩罚权重
+        self.srl_power_cost_scale = 0.1    # 功率惩罚权重
+        # 由额定扭矩 * 100 rpm 估算额定机械功率: 40Nm≈420W, 100Nm≈1050W
+        self.srl_rated_w = [420.0, 420.0, 1050.0, 420.0, 420.0, 1050.0]
+        self.srl_power_start_ratio = 0.8   # 超过额定功率 80% 后开始弱惩罚
         
         # EMA 时间常数
-        self.srl_thermal_tau_s = 2.0      # 热量累积 EMA 周期 (秒)
+        self.srl_thermal_tau_s = 4.0      # 热量累积 EMA 周期 (秒)
         self.srl_peak_window_tau_s = 0.3  # 峰值窗口 EMA 周期 (秒)
 
         super().__init__(config=self.cfg, rl_device=rl_device, sim_device=sim_device, graphics_device_id=graphics_device_id, headless=headless, virtual_screen_capture=virtual_screen_capture, force_render=force_render)
@@ -137,13 +150,18 @@ class SRL_Real_Bot(VecTask):
         self._init_srl_action_filter()
         self._srl_thermal_gamma = float(np.exp(-self.control_dt / self.srl_thermal_tau_s))
         self._srl_peak_decay = float(np.exp(-self.control_dt / self.srl_peak_window_tau_s))
+        self.srl_rated_nm = to_torch(self.srl_rated_nm, device=self.device, dtype=torch.float)
+        self.srl_peak_nm = to_torch(self.srl_peak_nm, device=self.device, dtype=torch.float)
+        self.srl_rated_w = to_torch(self.srl_rated_w, device=self.device, dtype=torch.float)
 
         # 初始化运行统计数据
-        self.srl_tau2_ema = torch.zeros(self.num_envs, device=self.device)
+        self.srl_tau2_ema = torch.zeros((self.num_envs, self.num_dof), device=self.device)
         self.srl_peak_ratio_window = torch.zeros(self.num_envs, device=self.device)
 
-        self.obs_buffer = torch.zeros((self.num_envs, self.obs_frame_stack, np.int32(self.num_obs/self.obs_frame_stack)), device=self.device)
-        self.obs_mirrored_buffer = torch.zeros((self.num_envs, self.obs_frame_stack, np.int32(self.num_obs/self.obs_frame_stack)), device=self.device)
+        self.srl_policy_obs_ids = to_torch(self.srl_policy_obs_ids_list, device=self.device, dtype=torch.long)
+        self.obs_buffer = torch.zeros((self.num_envs, self.obs_frame_stack, self.srl_policy_obs_num), device=self.device)
+        self.obs_mirrored_buffer = torch.zeros((self.num_envs, self.obs_frame_stack, self.srl_policy_obs_num), device=self.device)
+        self.full_obs_buffer = torch.zeros((self.num_envs, self.obs_frame_stack, self.srl_full_obs_num), device=self.device)
         self.phase_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
 
         if self.viewer != None:
@@ -261,7 +279,9 @@ class SRL_Real_Bot(VecTask):
     def allocate_buffers(self):
         super().allocate_buffers()
         self.obs_mirrored_buf = torch.zeros(
-            (self.num_envs, self.num_obs), device=self.device, dtype=torch.float)\
+            (self.num_envs, self.num_obs), device=self.device, dtype=torch.float)
+        self.full_obs_buf = torch.zeros(
+            (self.num_envs, self.srl_full_obs_size), device=self.device, dtype=torch.float)
             
     def _create_ground_plane(self):
         plane_params = gymapi.PlaneParams()
@@ -419,35 +439,40 @@ class SRL_Real_Bot(VecTask):
         return body_ids
     
     def _compute_srl_motor_costs(self):
-        tau = self.torques  # (N, 6)
+        if self._pd_control:
+            tau = self.dof_force_tensor[:, :self.num_dof]
+        else:
+            tau = self.torques
         tau_abs = torch.abs(tau)
 
-        # (1) 峰值惩罚 - 限制瞬时大电流
+        # (1) 峰值惩罚 - 只限制接近峰值扭矩的危险输出
         tau_ratio_peak = tau_abs / self.srl_peak_nm
         peak_ratio_inst = torch.max(tau_ratio_peak, dim=1).values
         self.srl_peak_ratio_window = torch.maximum(peak_ratio_inst, self.srl_peak_ratio_window * self._srl_peak_decay)
         
         peak_cost = torch.clamp((self.srl_peak_ratio_window - self.srl_peak_start_ratio) / (1.0 - self.srl_peak_start_ratio), min=0.0) ** 2
 
-        # (2) 热量惩罚 - 限制长期超额定功率运行（≈ I^2 / 铜耗代理）
+        # (2) 热量惩罚 - 按逐关节额定扭矩限制长期热负载（≈ I^2 / 铜耗代理）
         tau_ratio_rated = tau_abs / self.srl_rated_nm
-        tau2_mean = torch.mean(tau_ratio_rated ** 2, dim=1) # 均方力矩比值，代表热耗散
         g = self._srl_thermal_gamma
-        self.srl_tau2_ema = g * self.srl_tau2_ema + (1.0 - g) * tau2_mean
+        self.srl_tau2_ema = g * self.srl_tau2_ema + (1.0 - g) * (tau_ratio_rated ** 2)
         
-        thermal_cost = torch.clamp((self.srl_tau2_ema - self.srl_thermal_start) / (1.0 - self.srl_thermal_start), min=0.0) ** 2
+        thermal_cost_per_dof = torch.clamp(
+            (self.srl_tau2_ema - self.srl_thermal_start) / (1.0 - self.srl_thermal_start),
+            min=0.0,
+        ) ** 2
+        thermal_cost = torch.mean(thermal_cost_per_dof, dim=1)
 
         # (3) 功率惩罚 - 限制高速+大扭矩导致的高机械功率
         # P = tau * qd, 单位 W
         qd = self.dof_vel[:, :tau.shape[1]]         # (N, 6) rad/s
         p_abs = torch.abs(tau * qd)                 # (N, 6) W
-        # 选择聚合方式：max更保守，mean更宽松
-        p_inst = torch.max(p_abs, dim=1).values     # (N,)
-        p_ratio = p_inst / self.srl_rated_w         # 归一化到额定功率
-        power_cost = torch.clamp(
+        p_ratio = p_abs / self.srl_rated_w          # 逐关节归一化到额定功率
+        power_cost_per_dof = torch.clamp(
             (p_ratio - self.srl_power_start_ratio) / (1.0 - self.srl_power_start_ratio),
             min=0.0
         ) ** 2
+        power_cost = torch.mean(power_cost_per_dof, dim=1)
 
         return peak_cost, thermal_cost, power_cost
 
@@ -467,7 +492,7 @@ class SRL_Real_Bot(VecTask):
         )
 
         self.rew_buf[:], self.reset_buf, self._terminate_buf[:] = compute_srl_reward(
-            self.obs_buf,
+            self.full_obs_buf,
             self.reset_buf,
             clearance_reward,
             to_target,
@@ -504,31 +529,42 @@ class SRL_Real_Bot(VecTask):
 
     def compute_observations(self, env_ids=None):
         obs, obs_mirrored, potentials, prev_potentials = self._compute_srl_obs(env_ids)
+        full_obs = obs
+        policy_obs = torch.index_select(full_obs, dim=1, index=self.srl_policy_obs_ids)
+        policy_obs_mirrored = torch.index_select(obs_mirrored, dim=1, index=self.srl_policy_obs_ids)
 
         if env_ids is None:
             # roll stack
             self.obs_buffer[:, 1:, :] = self.obs_buffer[:, :-1, :]
-            self.obs_buffer[:, 0, :] = obs
+            self.obs_buffer[:, 0, :] = policy_obs
+            self.full_obs_buffer[:, 1:, :] = self.full_obs_buffer[:, :-1, :]
+            self.full_obs_buffer[:, 0, :] = full_obs
 
             # fill zero-frames with current obs (reset-safe)
             zero_frames = (self.obs_buffer.abs().sum(dim=-1) == 0)  # [N, S]
             if zero_frames.any():
-                self.obs_buffer[zero_frames] = obs.unsqueeze(1).expand_as(self.obs_buffer)[zero_frames]
+                self.obs_buffer[zero_frames] = policy_obs.unsqueeze(1).expand_as(self.obs_buffer)[zero_frames]
+
+            zero_frames_full = (self.full_obs_buffer.abs().sum(dim=-1) == 0)
+            if zero_frames_full.any():
+                self.full_obs_buffer[zero_frames_full] = full_obs.unsqueeze(1).expand_as(self.full_obs_buffer)[zero_frames_full]
 
             # mirrored
             self.obs_mirrored_buffer[:, 1:, :] = self.obs_mirrored_buffer[:, :-1, :]
-            self.obs_mirrored_buffer[:, 0, :] = obs_mirrored
+            self.obs_mirrored_buffer[:, 0, :] = policy_obs_mirrored
 
             zero_frames_m = (self.obs_mirrored_buffer.abs().sum(dim=-1) == 0)
             if zero_frames_m.any():
-                self.obs_mirrored_buffer[zero_frames_m] = obs_mirrored.unsqueeze(1).expand_as(self.obs_mirrored_buffer)[zero_frames_m]
+                self.obs_mirrored_buffer[zero_frames_m] = policy_obs_mirrored.unsqueeze(1).expand_as(self.obs_mirrored_buffer)[zero_frames_m]
 
             # cat task command
             base_obs = self.obs_buffer.reshape(self.num_envs, -1)
+            full_base_obs = self.full_obs_buffer.reshape(self.num_envs, -1)
             task_params = torch.stack((self.target_vel_x, self.target_ang_vel_z, self.target_pelvis_height), dim=-1)
             mirrored_task_params = torch.stack((self.target_vel_x, -self.target_ang_vel_z, self.target_pelvis_height), dim=-1)
 
             self.obs_buf[:] = torch.cat([base_obs, task_params], dim=-1)
+            self.full_obs_buf[:] = torch.cat([full_base_obs, task_params], dim=-1)
             base_obs_mirrored = self.obs_mirrored_buffer.reshape(self.num_envs, -1)
             self.obs_mirrored_buf[:] = torch.cat([base_obs_mirrored, mirrored_task_params], dim=-1)
 
@@ -538,31 +574,41 @@ class SRL_Real_Bot(VecTask):
         else:
             # roll stack (selected envs)
             self.obs_buffer[env_ids, 1:, :] = self.obs_buffer[env_ids, :-1, :]
-            self.obs_buffer[env_ids, 0, :] = obs
+            self.obs_buffer[env_ids, 0, :] = policy_obs
+            self.full_obs_buffer[env_ids, 1:, :] = self.full_obs_buffer[env_ids, :-1, :]
+            self.full_obs_buffer[env_ids, 0, :] = full_obs
 
             # fill zero-frames with current obs (reset-safe)  -- avoid chained indexing
             ob = self.obs_buffer[env_ids]
             zero_frames = (ob.abs().sum(dim=-1) == 0)  # [M, S]
             if zero_frames.any():
-                ob[zero_frames] = obs.unsqueeze(1).expand_as(ob)[zero_frames]
+                ob[zero_frames] = policy_obs.unsqueeze(1).expand_as(ob)[zero_frames]
                 self.obs_buffer[env_ids] = ob
+
+            fob = self.full_obs_buffer[env_ids]
+            zero_frames_full = (fob.abs().sum(dim=-1) == 0)
+            if zero_frames_full.any():
+                fob[zero_frames_full] = full_obs.unsqueeze(1).expand_as(fob)[zero_frames_full]
+                self.full_obs_buffer[env_ids] = fob
 
             # mirrored
             self.obs_mirrored_buffer[env_ids, 1:, :] = self.obs_mirrored_buffer[env_ids, :-1, :]
-            self.obs_mirrored_buffer[env_ids, 0, :] = obs_mirrored
+            self.obs_mirrored_buffer[env_ids, 0, :] = policy_obs_mirrored
 
             mob = self.obs_mirrored_buffer[env_ids]
             zero_frames_m = (mob.abs().sum(dim=-1) == 0)
             if zero_frames_m.any():
-                mob[zero_frames_m] = obs_mirrored.unsqueeze(1).expand_as(mob)[zero_frames_m]
+                mob[zero_frames_m] = policy_obs_mirrored.unsqueeze(1).expand_as(mob)[zero_frames_m]
                 self.obs_mirrored_buffer[env_ids] = mob
 
             # cat task command
             base_obs = self.obs_buffer[env_ids].reshape(len(env_ids), -1)
+            full_base_obs = self.full_obs_buffer[env_ids].reshape(len(env_ids), -1)
             task_params = torch.stack((self.target_vel_x[env_ids], self.target_ang_vel_z[env_ids], self.target_pelvis_height[env_ids]), dim=-1)
             mirrored_task_params = torch.stack((self.target_vel_x[env_ids], -self.target_ang_vel_z[env_ids], self.target_pelvis_height[env_ids]), dim=-1)
 
             self.obs_buf[env_ids] = torch.cat([base_obs, task_params], dim=-1)
+            self.full_obs_buf[env_ids] = torch.cat([full_base_obs, task_params], dim=-1)
             base_obs_mirrored = self.obs_mirrored_buffer[env_ids].reshape(len(env_ids), -1)
             self.obs_mirrored_buf[env_ids] = torch.cat([base_obs_mirrored, mirrored_task_params], dim=-1)
 
@@ -586,6 +632,7 @@ class SRL_Real_Bot(VecTask):
             targets = self.targets
             potentials = self.potentials
             target_vel_x = self.target_vel_x
+            target_yaw = self.target_yaw
         else:
             root_states = self.srl_root_states[env_ids]
             root_states[:,3:7] = self.root_states[env_ids,3:7]
@@ -601,13 +648,14 @@ class SRL_Real_Bot(VecTask):
             targets = self.targets[env_ids]
             potentials = self.potentials[env_ids]
             target_vel_x = self.target_vel_x[env_ids]
+            target_yaw = self.target_yaw[env_ids]
            
         obs, potentials, prev_potentials, = compute_srl_bot_observations(progress_buf, phase_buf, initial_dof_pos, root_states, dof_pos, dof_vel,
-                                                       self.target_yaw, dof_force_tensor, gravity_vec, actions,
+                                                       target_yaw, dof_force_tensor, gravity_vec, actions,
                                                        self.obs_scales_tensor, targets, potentials, self.control_dt, target_vel_x, self.gait_period)
 
         obs_mirrored  =  compute_srl_bot_observations_mirrored(progress_buf, phase_buf, self.mirror_mat_srl_dof, initial_dof_pos, root_states, dof_pos, dof_vel,
-                                                       self.target_yaw, dof_force_tensor, gravity_vec, actions,
+                                                       target_yaw, dof_force_tensor, gravity_vec, actions,
                                                        self.obs_scales_tensor, targets, potentials, self.control_dt, target_vel_x, self.gait_period)          
  
         return obs, obs_mirrored, potentials, prev_potentials
@@ -671,6 +719,7 @@ class SRL_Real_Bot(VecTask):
         for env_id in env_ids:
             self.obs_buffer[env_id] = 0
             self.obs_mirrored_buffer[env_id] = 0
+            self.full_obs_buffer[env_id] = 0
 
         self._refresh_sim_tensors()
 
