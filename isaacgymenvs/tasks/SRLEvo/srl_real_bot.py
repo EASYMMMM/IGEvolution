@@ -403,6 +403,41 @@ class SRL_Real_Bot(VecTask):
 
         self.extremities = to_torch([5, 8], device=self.device, dtype=torch.long)
 
+        self.extremities = to_torch(
+            [5, 8], device=self.device, dtype=torch.long
+        )
+
+        print_dof_properties = self.cfg["env"].get(
+            "printDofProperties", True
+        )
+
+        if print_dof_properties:
+            asset_props = self.gym.get_asset_dof_properties(humanoid_asset)
+            actor_props = self.gym.get_actor_dof_properties(
+                self.envs[0], self.humanoid_handles[0]
+            )
+
+            print("\n========== DOF IMPORT CHECK ==========")
+            print("DOF fields:", asset_props.dtype.names)
+
+            if "armature" not in asset_props.dtype.names:
+                print("WARNING: armature is not exposed by Isaac Gym")
+            else:
+                for i, name in enumerate(self._dof_names):
+                    print(
+                        f"{i}: {name:24s} "
+                        f"asset_armature="
+                        f"{float(asset_props['armature'][i]):.6f} "
+                        f"actor_armature="
+                        f"{float(actor_props['armature'][i]):.6f}"
+                    )
+
+            print("stiffness:", actor_props["stiffness"].tolist())
+            print("damping  :", actor_props["damping"].tolist())
+            print("effort   :", actor_props["effort"].tolist())
+            print("driveMode:", actor_props["driveMode"].tolist())
+            print("======================================\n")
+
         self._build_pd_action_offset_scale()
 
     def _build_srl_end_body_ids_tensor(self, env_ptr, actor_handle):
