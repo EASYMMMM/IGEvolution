@@ -13,6 +13,7 @@ env:
   controlFrequencyInv: 3  
   clipActions: 1.0
   obs_frame_stack: 5
+  srl_policy_obs_remove_ids: [0, 1, 2, 3]  # root_h and local_root_vel
   
   action_scale: 1.0
   pdControl: False

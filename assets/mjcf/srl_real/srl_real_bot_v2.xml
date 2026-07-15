@@ -53,6 +53,7 @@
         <inertial pos="-0.069266 -0.020918 0.000046759"
                   mass="1.4819"
                   fullinertia="0.001608 0.002743 0.001846 -0.000085 0.000001 -0.000001"/>
+        <!-- previous high damping PD: stiffness="250", damping="18"; low damping test: damping="5" -->
         <joint name="left_hip_x_joint" axis="1 0 0" range="-25 25"
                damping="18" stiffness="250" armature="0.0556"/>
 
@@ -63,6 +64,7 @@
           <inertial pos="-0.011585 0.058033 -0.17808"
                     mass="4.0982"
                     fullinertia="0.18128 0.1781 0.011168 -0.001291 -0.006815 -0.019831"/>
+          <!-- previous high damping PD: stiffness="300", damping="22"; low damping test: damping="5" -->
           <joint name="left_hip_y_joint" axis="0 -1 0" range="-60 20"
                  damping="22" stiffness="300" armature="0.0556"/>
 
@@ -73,6 +75,7 @@
             <inertial pos="0.36934 -0.00000061734 0.0015106"
                       mass="0.59515"
                       fullinertia="0.000187 0.031175 0.031161 0 -0.000077 0"/>
+            <!-- previous high damping PD: stiffness="300", damping="14"; low damping test: damping="5" -->
             <joint name="left_knee_joint" axis="0 -1 0" range="-45 45"
                    damping="14" stiffness="300" armature="0.2730"/>
 
@@ -99,6 +102,7 @@
         <inertial pos="-0.069266 0.020918 -0.000046759"
                   mass="1.4819"
                   fullinertia="0.001608 0.002743 0.001846 0.000085 -0.000001 -0.000001"/>
+        <!-- previous high damping PD: stiffness="250", damping="18"; low damping test: damping="5" -->
         <joint name="right_hip_x_joint" axis="-1 0 0" range="-25 25"
                damping="18" stiffness="250" armature="0.0556"/>
 
@@ -109,6 +113,7 @@
           <inertial pos="-0.011585 -0.057741 -0.17808"
                     mass="4.0982"
                     fullinertia="0.18134 0.1781 0.011233 0.001305 -0.00681 0.020127"/>
+          <!-- previous high damping PD: stiffness="300", damping="22"; low damping test: damping="5" -->
           <joint name="right_hip_y_joint" axis="0 -1 0" range="-60 20"
                  damping="22" stiffness="300" armature="0.0556"/>
 
@@ -119,6 +124,7 @@
             <inertial pos="0.36934 0.0015106 0.00000061737"
                       mass="0.59515"
                       fullinertia="0.000187 0.031161 0.031175 -0.000077 0 0"/>
+            <!-- previous high damping PD: stiffness="300", damping="14"; low damping test: damping="5" -->
             <joint name="right_knee_joint" axis="0 0 1" range="-45 45"
                    damping="14" stiffness="300" armature="0.2730"/>
 

@@ -73,3 +73,26 @@ params:
     # sym_loss_coef
     a_sym_loss_coef: 1.0
     c_sym_loss_coef: 0.0
+
+    central_value_config:
+      minibatch_size: ${..minibatch_size}
+      mini_epochs: ${..mini_epochs}
+      learning_rate: ${..learning_rate}
+      lr_schedule: ${..lr_schedule}
+      schedule_type: standard
+      kl_threshold: ${..kl_threshold}
+      clip_value: True
+      normalize_input: True
+      truncate_grads: True
+
+      network:
+        name: actor_critic
+        central_value: True
+        mlp:
+          units: [512, 256, 128]
+          activation: elu
+          d2rl: False
+          initializer:
+            name: default
+          regularizer:
+            name: None
