@@ -27,7 +27,11 @@ class SRL_Bot_Agent(a2c_continuous.A2CAgent):
     def __init__(self, base_name, params):
         a2c_continuous.A2CAgent.__init__(self, base_name, params)
         config = params['config']
-        self.a_sym_loss_coef = config.get('a_sym_loss_coef',None)\
+        self.a_sym_loss_coef = config.get('a_sym_loss_coef', None)
+        if self.has_central_value:
+            # The actor sees hardware-realistic observations, while the value
+            # baseline is trained from privileged simulator states.
+            self.critic_coef = 0.0
 
     def init_tensors(self):
         super().init_tensors()
@@ -46,6 +50,9 @@ class SRL_Bot_Agent(a2c_continuous.A2CAgent):
                 res_dict = self.get_masked_action_values(self.obs, masks)
             else:
                 res_dict = self.get_action_values(self.obs)
+            if self.has_central_value:
+                res_dict['values'] = self.get_central_value({'states': self.obs['states']})
+
             self.experience_buffer.update_data('obses', n, self.obs['obs'])
             self.experience_buffer.update_data('dones', n, self.dones)
             # mirrored_obs
@@ -88,7 +95,10 @@ class SRL_Bot_Agent(a2c_continuous.A2CAgent):
             self.current_shaped_rewards = self.current_shaped_rewards * not_dones.unsqueeze(1)
             self.current_lengths = self.current_lengths * not_dones
 
-        last_values = self.get_values(self.obs)
+        if self.has_central_value:
+            last_values = self.get_central_value({'states': self.obs['states']})
+        else:
+            last_values = self.get_values(self.obs)
 
         fdones = self.dones.float()
         mb_fdones = self.experience_buffer.tensor_dict['dones'].float()
@@ -489,5 +499,3 @@ class SRL_Bot_Agent(a2c_continuous.A2CAgent):
             dataset_dict['dones'] = dones
             dataset_dict['rnn_masks'] = rnn_masks
             self.central_value_net.update_dataset(dataset_dict)
-
- 

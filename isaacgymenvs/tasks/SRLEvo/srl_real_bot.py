@@ -117,6 +117,7 @@ class SRL_Real_Bot(VecTask):
         self.srl_full_obs_size = self.srl_full_obs_num * self.obs_frame_stack + self.srl_command_num
 
         self.cfg["env"]["numObservations"] = self.srl_policy_obs_num * self.obs_frame_stack + self.srl_command_num
+        self.cfg["env"]["numStates"] = self.srl_full_obs_size
         self.cfg["env"]["numActions"] = 6
         self.default_joint_angles = self.cfg["env"]["default_joint_angles"]
 
@@ -565,6 +566,7 @@ class SRL_Real_Bot(VecTask):
 
             self.obs_buf[:] = torch.cat([base_obs, task_params], dim=-1)
             self.full_obs_buf[:] = torch.cat([full_base_obs, task_params], dim=-1)
+            self.states_buf[:] = self.full_obs_buf
             base_obs_mirrored = self.obs_mirrored_buffer.reshape(self.num_envs, -1)
             self.obs_mirrored_buf[:] = torch.cat([base_obs_mirrored, mirrored_task_params], dim=-1)
 
@@ -609,6 +611,7 @@ class SRL_Real_Bot(VecTask):
 
             self.obs_buf[env_ids] = torch.cat([base_obs, task_params], dim=-1)
             self.full_obs_buf[env_ids] = torch.cat([full_base_obs, task_params], dim=-1)
+            self.states_buf[env_ids] = self.full_obs_buf[env_ids]
             base_obs_mirrored = self.obs_mirrored_buffer[env_ids].reshape(len(env_ids), -1)
             self.obs_mirrored_buf[env_ids] = torch.cat([base_obs_mirrored, mirrored_task_params], dim=-1)
 
@@ -672,6 +675,11 @@ class SRL_Real_Bot(VecTask):
 
     def reset_done(self):
         _, done_env_ids = super().reset_done()
+        if len(done_env_ids) > 0:
+            self._refresh_sim_tensors()
+            self.compute_observations(done_env_ids)
+            self.obs_dict["obs"] = torch.clamp(self.obs_buf, -self.clip_obs, self.clip_obs).to(self.rl_device)
+            self.obs_dict["states"] = self.get_state()
         # 添加镜像OBS
         self.obs_dict["obs_mirrored"] = torch.clamp(self.obs_mirrored_buf, -self.clip_obs, self.clip_obs).to(self.rl_device)
         return self.obs_dict, done_env_ids
@@ -802,11 +810,11 @@ class SRL_Real_Bot(VecTask):
             self.reset_idx(env_ids)
 
         self._refresh_sim_tensors()
+        # TODO: Task Randomization
+        self.set_task_target()
         self.compute_observations()
         self.compute_reward(self.actions)
 
-        # TODO: Task Randomization
-        self.set_task_target()
         
         # mirrored info
         self.extras["obs_mirrored"] = self.obs_mirrored_buf.to(self.rl_device)  # 镜像观测
