@@ -105,11 +105,6 @@ task:
   randomize: False
   vel_pertubation: False
   vel_pertubation_range: [0.2, 0.8]
-  #action_delay: False
-  #action_delay_range: 0.5  # 推荐 0.2~0.5
-
-  #action_noise: False
-  #action_noise_scale: 0.02 # 推荐 0.01~0.05
   randomization_params:
     # specify which attributes to randomize for each actor type and property
     frequency: 6000   # Define how many environment steps between generating new randomizations
