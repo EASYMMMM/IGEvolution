@@ -122,7 +122,7 @@
                       fullinertia="0.000187 0.031161 0.031175 -0.000077 0 0"/>
             <!-- previous high damping PD: stiffness="300", damping="14"; low damping test: damping="5" -->
             <joint name="right_knee_joint" axis="0 0 1" range="-45 45"
-                   damping="10" stiffness="300" armature="0.1" effort="300"/>
+                   damping="10" stiffness="300" armature="0.1"  />
 
             <geom mesh="right_knee_link" class="visual"/>
             <geom type="capsule" size="0.035" fromto="0 0 0 0.640 0 0" class="collision"/>
