@@ -35,3 +35,8 @@ outputs/
 /isaacgymenvs/wandb
 !isaacgymenvs/utils/wandb_utils.py
 /isaacgymenvs/saved_runs/
+/tensorboard/
+/assets/factory/
+/assets/amp/motions/15_03_cmu_amp.npy
+*.tfevents.*
+*.pth
