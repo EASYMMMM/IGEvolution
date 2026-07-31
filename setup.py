@@ -15,7 +15,7 @@ root_dir = os.path.dirname(os.path.realpath(__file__))
 INSTALL_REQUIRES = [
     # RL
     "gym==0.23.1",
-    "torch",
+    # "torch",
     "omegaconf",
     "termcolor",
     "jinja2",
