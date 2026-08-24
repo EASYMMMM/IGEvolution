@@ -67,7 +67,7 @@ python SRL_Evo_train.py task=SRL_Real_Bot test=True force_render=True task.env.c
 python SRL_Evo_train.py task=SRL_Real_Bot wandb_project=SRL_Real experiment=SRL_Real_Bot_v2_s1  task.env.task_training_stage=1 headless=True wandb_activate=True max_iterations=1000   task.env.vel_tracking_reward_scale=8  task.env.progress_reward_scale=1.0 \
         task.env.alive_reward_scale=1.0 task.env.srl_motor_cost_scale=0.05   task.env.asset.assetFileName="mjcf/srl_real/srl_real_bot_v2.xml"  \
         task.env.forceControl=False  task.env.pdControl=True \
-        task.env.srl_action_filter_enable=True \
+        task.env.srl_action_filter_enable=False \
         'task.env.default_joint_angles=[0 , -0.55,  -0.3, 0 , -0.55,  -0.3]' \
         'task.env.srl_effort_limits=[90, 90, 350, 90, 90, 350]'
 # --- check ---
