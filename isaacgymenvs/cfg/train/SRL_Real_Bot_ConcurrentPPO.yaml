@@ -2,7 +2,7 @@ params:
   seed: ${...seed}
 
   algo:
-    name: srl_bot_continuous
+    name: srl_bot_concurrent
 
   model:
     name: continuous_a2c_logstd
@@ -56,7 +56,7 @@ params:
     score_to_win: 9999999
     max_epochs: ${resolve_default:1000,${....max_iterations}}
     save_best_after: 200
-    save_frequency: 1000
+    save_frequency: 100
     print_stats: True
     grad_norm: 1.0
     entropy_coef: 0.01 #0.01
@@ -66,47 +66,52 @@ params:
     horizon_length: 128 #128
     minibatch_size: 65536 #65536
     mini_epochs: 5 #4
-    critic_coef: 4
+    critic_coef: 0
     clip_value: True
-    seq_len: 4
+    seq_length: 4
     bounds_loss_coef: 0.0001
     # sym_loss_coef
     a_sym_loss_coef: 1.0
     c_sym_loss_coef: 0.0
 
-    # Enable only with test=True and a 153-D full-observation actor checkpoint.
-    collect_privileged_estimator_data: False
-    estimator_data_dir: estimator_data
-    estimator_history_len: 64
-    estimator_collect_steps: 5000
-    estimator_chunk_steps: 512
-    estimator_collect_deterministic: True
-    estimator_collect_alpha: 0.0
-    estimator_collect_checkpoint: ''
+    # Concurrent policy/state-estimator training. The actor receives the
+    # deployable 133-D observation plus one current 4-D truth/estimate slot;
+    # the asymmetric critic always receives the simulator-truth 153-D state.
+    concurrent_estimator_history_len: 10
+    concurrent_estimator_hidden_dims: [256, 128, 64]
+    concurrent_estimator_learning_rate: 1e-3
+    concurrent_estimator_mini_epochs: 2
+    concurrent_estimator_minibatch_size: 8192
+    concurrent_estimator_samples_per_step: 256
+    concurrent_estimator_grad_norm: 1.0
+    concurrent_estimator_update_normalization: True
 
-    # Evaluate the 153-D actor after replacing five privileged frames with
-    # causal estimator outputs.
-    evaluate_privileged_estimator_closed_loop: False
-    estimator_closed_loop_use_ground_truth: False
-    estimator_closed_loop_alpha: 1.0
-    privileged_estimator_checkpoint: ''
-    estimator_closed_loop_steps: 6000
-    estimator_closed_loop_deterministic: True
-    estimator_closed_loop_output_dir: estimator_closed_loop
+    # An episode uses either all ground-truth or all estimated state inputs.
+    # Promotion is performance-gated instead of tied to a fixed epoch ramp.
+    concurrent_bootstrap_levels: [0.0, 0.1, 0.25, 0.5, 0.75, 1.0]
+    concurrent_bootstrap_initial_level: 0
+    concurrent_bootstrap_auto_advance: True
+    concurrent_bootstrap_warmup_epochs: 300
+    concurrent_bootstrap_min_epochs_per_level: 100
+    concurrent_bootstrap_min_completed_episodes: 50
+    concurrent_bootstrap_metric_window: 200
+    concurrent_bootstrap_ground_truth_min_length: 4000.0
+    concurrent_bootstrap_promote_length_ratio: 0.90
+    concurrent_bootstrap_promote_reward_ratio: 0.85
+    concurrent_bootstrap_demote_length_ratio: 0.70
+    concurrent_bootstrap_max_normalized_mse: 0.20
 
-    # PPO fine-tuning: actor receives estimated privileged history while the
-    # central critic keeps the simulator-truth 153-D states. Ramp epochs are
-    # global rl-games epochs, including the epoch restored from a checkpoint.
-    train_with_privileged_estimator: False
-    train_privileged_estimator_checkpoint: ''
-    # Opt-in compatibility path for a legacy full-observation checkpoint that
-    # has a value head but no separately saved asymmetric central critic.
-    train_privileged_estimator_init_central_from_legacy: False
-    train_privileged_estimator_reset_optimizer_on_legacy_init: False
-    estimator_train_alpha_start: 1.0
-    estimator_train_alpha_end: 1.0
-    estimator_train_alpha_ramp_start_epoch: -1
-    estimator_train_alpha_ramp_end_epoch: -1
+    # Preserve bootstrap state for ordinary same-stage resumes.  At a task-stage
+    # boundary, keep the learned networks but restart the trust curriculum and
+    # discard performance statistics measured under the previous task/reward.
+    concurrent_task_training_stage: ${....task.env.task_training_stage}
+    concurrent_bootstrap_reset_on_stage_change: True
+    concurrent_bootstrap_reset_on_restore: False
+    concurrent_bootstrap_reset_probability: 0.5
+    concurrent_bootstrap_clear_metrics_on_reset: True
+
+    # Dedicated concurrent-agent player evaluation.
+    concurrent_eval_use_estimator: True
 
     central_value_config:
       minibatch_size: ${..minibatch_size}

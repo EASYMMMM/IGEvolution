@@ -26,6 +26,24 @@ from mujoco_ppo.models import (
 from mujoco_ppo.srl_mujoco_hri import EnvConfig, SRLMujocoHRIEnv
 
 
+KP_PRESETS = {
+    "env_default": (
+        (114.0, 199.5, 266.0, 114.0, 199.5, 266.0),
+        (22.0, 27.5, 44.0, 22.0, 27.5, 44.0),
+    ),
+    "run_v1_current": (
+        (120.0, 210.0, 280.0, 120.0, 210.0, 280.0),
+        (20.0, 25.0, 40.0, 20.0, 25.0, 40.0),
+    ),
+}
+
+
+DEFAULT_DOF_PRESETS = {
+    "isaac_hri": (0.0, -0.1, 0.35, 0.0, -0.1, 0.35),
+    "mujoco153": (0.0, -0.1, 0.2, 0.0, -0.1, 0.2),
+}
+
+
 def safe_torch_load(path, map_location=None):
     try:
         return torch.load(path, map_location=map_location, weights_only=False)
@@ -65,6 +83,9 @@ class PPOConfig:
     init_log_std: Optional[float] = None
     resume_optimizer: bool = False
     torque_update_mode: str = "physics"
+    kp_preset: str = "env_default"
+    default_dof_preset: str = "isaac_hri"
+    max_torque_step: float = 0.0
     srl_action_filter: bool = False
     srl_action_filter_cutoff_hz: float = 4.0
     apply_isaac_load_cell_wrench: bool = True
@@ -190,6 +211,90 @@ def _copy_expanded_linear(dst: nn.Linear, src: nn.Linear):
         dst.weight[:rows, :cols].copy_(src.weight[:rows, :cols])
 
 
+def _copy_mapped_153_to_198_first_layer(dst: nn.Linear, src: nn.Linear):
+    """Map 153D standalone obs [5*30+3] into deployable HRI obs [5*39+3].
+
+    Old 30D frame:
+      [root_h(1), local_lin_vel(3), local_ang_vel(3), euler_err(3),
+       dof_pos(6), dof_vel(6), last_action(6), phase(2)]
+
+    New 39D frame:
+      [local_ang_vel(3), euler_err(3), dof_pos(6), dof_vel(6),
+       last_action(6), phase(2), hri_human_frame(13)]
+
+    root_h/local_lin_vel have no deployable slot and are intentionally dropped.
+    HRI human-frame weights are initialized to zero.
+    """
+    if src.weight.shape[1] != 153 or dst.weight.shape[1] != 198:
+        raise ValueError(f"Expected 153->198 first layer, got {src.weight.shape} -> {dst.weight.shape}")
+
+    mappings = [
+        (4, 0, 3),    # local_ang_vel
+        (7, 3, 3),    # euler_err
+        (10, 6, 6),   # dof_pos
+        (16, 12, 6),  # dof_vel
+        (22, 18, 6),  # last_action
+        (28, 24, 2),  # phase sin/cos
+    ]
+
+    with torch.no_grad():
+        dst.weight.zero_()
+        dst.bias.copy_(src.bias)
+
+        old_frame = 30
+        new_frame = 39
+        frame_stack = 5
+        for frame_idx in range(frame_stack):
+            old_start = frame_idx * old_frame
+            new_start = frame_idx * new_frame
+            for old_offset, new_offset, width in mappings:
+                dst.weight[:, new_start + new_offset:new_start + new_offset + width].copy_(
+                    src.weight[:, old_start + old_offset:old_start + old_offset + width]
+                )
+
+        old_task = frame_stack * old_frame
+        new_task = frame_stack * new_frame
+        dst.weight[:, new_task:new_task + 3].copy_(src.weight[:, old_task:old_task + 3])
+
+
+def _copy_mapped_153_to_198_obs_norm(dst_policy: ActorCritic, src_policy: ActorCritic):
+    mappings = [
+        (4, 0, 3),
+        (7, 3, 3),
+        (10, 6, 6),
+        (16, 12, 6),
+        (22, 18, 6),
+        (28, 24, 2),
+    ]
+
+    with torch.no_grad():
+        dst_policy.obs_norm.running_mean.zero_()
+        dst_policy.obs_norm.running_var.fill_(1.0)
+
+        old_frame = 30
+        new_frame = 39
+        frame_stack = 5
+        for frame_idx in range(frame_stack):
+            old_start = frame_idx * old_frame
+            new_start = frame_idx * new_frame
+            for old_offset, new_offset, width in mappings:
+                dst_policy.obs_norm.running_mean[new_start + new_offset:new_start + new_offset + width].copy_(
+                    src_policy.obs_norm.running_mean[old_start + old_offset:old_start + old_offset + width]
+                )
+                dst_policy.obs_norm.running_var[new_start + new_offset:new_start + new_offset + width].copy_(
+                    src_policy.obs_norm.running_var[old_start + old_offset:old_start + old_offset + width]
+                )
+
+        old_task = frame_stack * old_frame
+        new_task = frame_stack * new_frame
+        dst_policy.obs_norm.running_mean[new_task:new_task + 3].copy_(
+            src_policy.obs_norm.running_mean[old_task:old_task + 3]
+        )
+        dst_policy.obs_norm.running_var[new_task:new_task + 3].copy_(
+            src_policy.obs_norm.running_var[old_task:old_task + 3]
+        )
+
+
 def _copy_same_shape_linears(dst_modules, src_modules):
     for dst, src in zip(dst_modules, src_modules):
         if isinstance(dst, nn.Linear) and isinstance(src, nn.Linear):
@@ -309,8 +414,13 @@ def load_hri_checkpoint(checkpoint_path: str, model_cfg: ModelConfig, device: st
     src_critic_layers = [m for m in src_policy.critic_mlp if isinstance(m, nn.Linear)]
     dst_critic_layers = [m for m in dst_policy.critic_mlp if isinstance(m, nn.Linear)]
 
-    _copy_expanded_linear(dst_actor_layers[0], src_actor_layers[0])
-    _copy_expanded_linear(dst_critic_layers[0], src_critic_layers[0])
+    used_mapped_153_to_198 = src_obs_dim == 153 and model_cfg.obs_dim == 198
+    if used_mapped_153_to_198:
+        _copy_mapped_153_to_198_first_layer(dst_actor_layers[0], src_actor_layers[0])
+        _copy_mapped_153_to_198_first_layer(dst_critic_layers[0], src_critic_layers[0])
+    else:
+        _copy_expanded_linear(dst_actor_layers[0], src_actor_layers[0])
+        _copy_expanded_linear(dst_critic_layers[0], src_critic_layers[0])
     _copy_same_shape_linears(dst_actor_layers[1:], src_actor_layers[1:])
     _copy_same_shape_linears(dst_critic_layers[1:], src_critic_layers[1:])
 
@@ -320,12 +430,15 @@ def load_hri_checkpoint(checkpoint_path: str, model_cfg: ModelConfig, device: st
     dst_policy.value.bias.data.copy_(src_policy.value.bias.data)
     dst_policy.log_std.data.copy_(src_policy.log_std.data)
 
-    with torch.no_grad():
-        dst_policy.obs_norm.running_mean.zero_()
-        dst_policy.obs_norm.running_var.fill_(1.0)
-        copy_dim = min(src_obs_dim, model_cfg.obs_dim)
-        dst_policy.obs_norm.running_mean[:copy_dim].copy_(src_policy.obs_norm.running_mean[:copy_dim])
-        dst_policy.obs_norm.running_var[:copy_dim].copy_(src_policy.obs_norm.running_var[:copy_dim])
+    if used_mapped_153_to_198:
+        _copy_mapped_153_to_198_obs_norm(dst_policy, src_policy)
+    else:
+        with torch.no_grad():
+            dst_policy.obs_norm.running_mean.zero_()
+            dst_policy.obs_norm.running_var.fill_(1.0)
+            copy_dim = min(src_obs_dim, model_cfg.obs_dim)
+            dst_policy.obs_norm.running_mean[:copy_dim].copy_(src_policy.obs_norm.running_mean[:copy_dim])
+            dst_policy.obs_norm.running_var[:copy_dim].copy_(src_policy.obs_norm.running_var[:copy_dim])
 
     metadata = dict(metadata)
     metadata.update(
@@ -334,18 +447,36 @@ def load_hri_checkpoint(checkpoint_path: str, model_cfg: ModelConfig, device: st
             "selected_key": selected_key,
             "source_obs_dim": src_obs_dim,
             "target_obs_dim": model_cfg.obs_dim,
-            "new_obs_init": "first-layer weights zero, obs_norm mean=0 var=1",
+            "new_obs_init": (
+                "mapped 153D frames to 198D deployable frames; "
+                "root_h/local_lin_vel dropped; HRI weights zero"
+                if used_mapped_153_to_198
+                else "first-layer weights zero, obs_norm mean=0 var=1"
+            ),
         }
     )
     return dst_policy, metadata
 
 
 def make_env_and_model(cfg: PPOConfig):
+    if cfg.kp_preset not in KP_PRESETS:
+        raise ValueError(f"Unsupported kp_preset: {cfg.kp_preset}. Choices: {sorted(KP_PRESETS)}")
+    if cfg.default_dof_preset not in DEFAULT_DOF_PRESETS:
+        raise ValueError(
+            f"Unsupported default_dof_preset: {cfg.default_dof_preset}. "
+            f"Choices: {sorted(DEFAULT_DOF_PRESETS)}"
+        )
+    kp, kd = KP_PRESETS[cfg.kp_preset]
+    default_dof_pos = DEFAULT_DOF_PRESETS[cfg.default_dof_preset]
     env_cfg = EnvConfig(
         xml_path=cfg.xml_path,
         isaac_dataset_dir=cfg.isaac_dataset_dir,
         isaac_replay_seq_len=cfg.isaac_replay_seq_len,
         torque_update_mode=cfg.torque_update_mode,
+        default_dof_pos=default_dof_pos,
+        kp=kp,
+        kd=kd,
+        max_torque_step=cfg.max_torque_step,
         srl_action_filter=cfg.srl_action_filter,
         srl_action_filter_cutoff_hz=cfg.srl_action_filter_cutoff_hz,
         apply_isaac_load_cell_wrench=cfg.apply_isaac_load_cell_wrench,
@@ -742,6 +873,9 @@ def parse_args():
     parser.add_argument("--debug-rollout", action="store_true")
     parser.add_argument("--resume-optimizer", action="store_true")
     parser.add_argument("--torque-update-mode", type=str, default="physics", choices=["physics", "control"])
+    parser.add_argument("--kp-preset", type=str, default="env_default", choices=sorted(KP_PRESETS.keys()))
+    parser.add_argument("--default-dof-preset", type=str, default="isaac_hri", choices=sorted(DEFAULT_DOF_PRESETS.keys()))
+    parser.add_argument("--max-torque-step", type=float, default=0.0)
     parser.add_argument("--srl-action-filter", action="store_true")
     parser.add_argument("--srl-action-filter-cutoff-hz", type=float, default=4.0)
     parser.add_argument("--no-isaac-load-cell-wrench", action="store_true")
@@ -790,6 +924,9 @@ if __name__ == "__main__":
         debug_rollout=args.debug_rollout,
         resume_optimizer=args.resume_optimizer,
         torque_update_mode=args.torque_update_mode,
+        kp_preset=args.kp_preset,
+        default_dof_preset=args.default_dof_preset,
+        max_torque_step=args.max_torque_step,
         srl_action_filter=args.srl_action_filter,
         srl_action_filter_cutoff_hz=args.srl_action_filter_cutoff_hz,
         apply_isaac_load_cell_wrench=not args.no_isaac_load_cell_wrench,

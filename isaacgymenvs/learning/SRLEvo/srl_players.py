@@ -1045,6 +1045,13 @@ class SRL_Bot_PlayerContinuous(common_player.CommonPlayer):
         self.srl_torques_log = []
 
     def run(self):
+        if self.config.get('collect_privileged_estimator_data', False):
+            from isaacgymenvs.learning.SRLEvo.privileged_estimator_collector import collect_privileged_estimator_data
+            return collect_privileged_estimator_data(self)
+        if self.config.get('evaluate_privileged_estimator_closed_loop', False):
+            from isaacgymenvs.learning.SRLEvo.privileged_estimator_closed_loop import evaluate_privileged_estimator_closed_loop
+            return evaluate_privileged_estimator_closed_loop(self)
+
         n_games = self.games_num
         render = self.render_env
         n_game_life = self.n_game_life

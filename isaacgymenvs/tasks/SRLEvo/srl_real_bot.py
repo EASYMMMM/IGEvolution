@@ -116,7 +116,19 @@ class SRL_Real_Bot(VecTask):
         self.srl_policy_obs_num = len(self.srl_policy_obs_ids_list)
         self.srl_full_obs_size = self.srl_full_obs_num * self.obs_frame_stack + self.srl_command_num
 
-        self.cfg["env"]["numObservations"] = self.srl_policy_obs_num * self.obs_frame_stack + self.srl_command_num
+        # Concurrent estimator training keeps the deployable 133-D history and
+        # appends one current 4-D simulator target. The training agent replaces
+        # that final slot with either ground truth or a causal estimate.
+        self.append_current_privileged_obs = bool(
+            self.cfg["env"].get("append_current_privileged_obs", False)
+        )
+        self.current_privileged_obs_num = 4 if self.append_current_privileged_obs else 0
+
+        self.cfg["env"]["numObservations"] = (
+            self.srl_policy_obs_num * self.obs_frame_stack
+            + self.srl_command_num
+            + self.current_privileged_obs_num
+        )
         self.cfg["env"]["numStates"] = self.srl_full_obs_size
         self.cfg["env"]["numActions"] = 6
         self.default_joint_angles = self.cfg["env"]["default_joint_angles"]
@@ -536,9 +548,9 @@ class SRL_Real_Bot(VecTask):
 
         if env_ids is None:
             # roll stack
-            self.obs_buffer[:, 1:, :] = self.obs_buffer[:, :-1, :]
+            self.obs_buffer[:, 1:, :] = self.obs_buffer[:, :-1, :].clone()
             self.obs_buffer[:, 0, :] = policy_obs
-            self.full_obs_buffer[:, 1:, :] = self.full_obs_buffer[:, :-1, :]
+            self.full_obs_buffer[:, 1:, :] = self.full_obs_buffer[:, :-1, :].clone()
             self.full_obs_buffer[:, 0, :] = full_obs
 
             # fill zero-frames with current obs (reset-safe)
@@ -551,7 +563,7 @@ class SRL_Real_Bot(VecTask):
                 self.full_obs_buffer[zero_frames_full] = full_obs.unsqueeze(1).expand_as(self.full_obs_buffer)[zero_frames_full]
 
             # mirrored
-            self.obs_mirrored_buffer[:, 1:, :] = self.obs_mirrored_buffer[:, :-1, :]
+            self.obs_mirrored_buffer[:, 1:, :] = self.obs_mirrored_buffer[:, :-1, :].clone()
             self.obs_mirrored_buffer[:, 0, :] = policy_obs_mirrored
 
             zero_frames_m = (self.obs_mirrored_buffer.abs().sum(dim=-1) == 0)
@@ -564,20 +576,28 @@ class SRL_Real_Bot(VecTask):
             task_params = torch.stack((self.target_vel_x, self.target_ang_vel_z, self.target_pelvis_height), dim=-1)
             mirrored_task_params = torch.stack((self.target_vel_x, -self.target_ang_vel_z, self.target_pelvis_height), dim=-1)
 
-            self.obs_buf[:] = torch.cat([base_obs, task_params], dim=-1)
+            actor_parts = [base_obs, task_params]
+            mirrored_actor_parts = [
+                self.obs_mirrored_buffer.reshape(self.num_envs, -1),
+                mirrored_task_params,
+            ]
+            if self.append_current_privileged_obs:
+                actor_parts.append(full_obs[:, :4])
+                mirrored_actor_parts.append(obs_mirrored[:, :4])
+
+            self.obs_buf[:] = torch.cat(actor_parts, dim=-1)
             self.full_obs_buf[:] = torch.cat([full_base_obs, task_params], dim=-1)
             self.states_buf[:] = self.full_obs_buf
-            base_obs_mirrored = self.obs_mirrored_buffer.reshape(self.num_envs, -1)
-            self.obs_mirrored_buf[:] = torch.cat([base_obs_mirrored, mirrored_task_params], dim=-1)
+            self.obs_mirrored_buf[:] = torch.cat(mirrored_actor_parts, dim=-1)
 
             self.potentials[:] = potentials
             self.prev_potentials[:] = prev_potentials
 
         else:
             # roll stack (selected envs)
-            self.obs_buffer[env_ids, 1:, :] = self.obs_buffer[env_ids, :-1, :]
+            self.obs_buffer[env_ids, 1:, :] = self.obs_buffer[env_ids, :-1, :].clone()
             self.obs_buffer[env_ids, 0, :] = policy_obs
-            self.full_obs_buffer[env_ids, 1:, :] = self.full_obs_buffer[env_ids, :-1, :]
+            self.full_obs_buffer[env_ids, 1:, :] = self.full_obs_buffer[env_ids, :-1, :].clone()
             self.full_obs_buffer[env_ids, 0, :] = full_obs
 
             # fill zero-frames with current obs (reset-safe)  -- avoid chained indexing
@@ -594,7 +614,7 @@ class SRL_Real_Bot(VecTask):
                 self.full_obs_buffer[env_ids] = fob
 
             # mirrored
-            self.obs_mirrored_buffer[env_ids, 1:, :] = self.obs_mirrored_buffer[env_ids, :-1, :]
+            self.obs_mirrored_buffer[env_ids, 1:, :] = self.obs_mirrored_buffer[env_ids, :-1, :].clone()
             self.obs_mirrored_buffer[env_ids, 0, :] = policy_obs_mirrored
 
             mob = self.obs_mirrored_buffer[env_ids]
@@ -609,11 +629,19 @@ class SRL_Real_Bot(VecTask):
             task_params = torch.stack((self.target_vel_x[env_ids], self.target_ang_vel_z[env_ids], self.target_pelvis_height[env_ids]), dim=-1)
             mirrored_task_params = torch.stack((self.target_vel_x[env_ids], -self.target_ang_vel_z[env_ids], self.target_pelvis_height[env_ids]), dim=-1)
 
-            self.obs_buf[env_ids] = torch.cat([base_obs, task_params], dim=-1)
+            actor_parts = [base_obs, task_params]
+            mirrored_actor_parts = [
+                self.obs_mirrored_buffer[env_ids].reshape(len(env_ids), -1),
+                mirrored_task_params,
+            ]
+            if self.append_current_privileged_obs:
+                actor_parts.append(full_obs[:, :4])
+                mirrored_actor_parts.append(obs_mirrored[:, :4])
+
+            self.obs_buf[env_ids] = torch.cat(actor_parts, dim=-1)
             self.full_obs_buf[env_ids] = torch.cat([full_base_obs, task_params], dim=-1)
             self.states_buf[env_ids] = self.full_obs_buf[env_ids]
-            base_obs_mirrored = self.obs_mirrored_buffer[env_ids].reshape(len(env_ids), -1)
-            self.obs_mirrored_buf[env_ids] = torch.cat([base_obs_mirrored, mirrored_task_params], dim=-1)
+            self.obs_mirrored_buf[env_ids] = torch.cat(mirrored_actor_parts, dim=-1)
 
             self.potentials[env_ids] = potentials
             self.prev_potentials[env_ids] = prev_potentials
@@ -685,20 +713,23 @@ class SRL_Real_Bot(VecTask):
         return self.obs_dict, done_env_ids
     
     def reset_idx(self, env_ids):
+        env_ids = env_ids.reshape(-1).to(device=self.device, dtype=torch.long)
         if self.randomize:
             self.apply_randomizations(self.randomization_params)
         
         # 重置电机统计 EMA
-        self.srl_tau2_ema[env_ids] = 0.0
-        self.srl_peak_ratio_window[env_ids] = 0.0
+        # Avoid an old PyTorch CUDA advanced-indexing assertion when every
+        # environment is reset in one batch.
+        self.srl_tau2_ema.index_fill_(0, env_ids, 0.0)
+        self.srl_peak_ratio_window.index_fill_(0, env_ids, 0.0)
 
         velocities = torch_rand_float(-0.1, 0.1, (len(env_ids), self.num_dof), device=self.device)
         self.dof_pos[env_ids] = tensor_clamp(self.initial_dof_pos[env_ids] , self.dof_limits_lower, self.dof_limits_upper)
         self.dof_vel[env_ids] = velocities
         self._reset_srl_action_filter(env_ids)
-        self.raw_actions[env_ids] = 0.0
-        self.actions[env_ids] = 0.0
-        self.filtered_actions[env_ids] = 0.0
+        self.raw_actions.index_fill_(0, env_ids, 0.0)
+        self.actions.index_fill_(0, env_ids, 0.0)
+        self.filtered_actions.index_fill_(0, env_ids, 0.0)
         self.raw_pd_targets[env_ids] = self.dof_pos[env_ids]
         self.filtered_pd_targets[env_ids] = self.dof_pos[env_ids]
 

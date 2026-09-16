@@ -1,0 +1,143 @@
+model:
+  # Override this on the command line with the completed 10 ms-delay policy.
+  checkpoint: REPLACE_WITH_10MS_DELAY_CHECKPOINT.pt
+  checkpoint_key: model
+  xml: ../assets/mjcf/srl_real/srl_real_bot_nobattery.xml
+
+training:
+  updates: 1000
+  rollout_steps: 512
+  num_envs: 16
+  training_episode_steps: 5000
+  lr: 5.0e-6
+  actor_lr: 5.0e-6
+  critic_lr: 1.0e-4
+  critic_warmup_updates: 5
+  reference_policy_coef: 0.001
+  actor_sym_loss_coef: 0.4
+  reward_scale: 0.01
+  normalize_value: true
+  clip_value: true
+  bounds_loss_coef: 0.0001
+  target_kl: 0.006
+  init_log_std: -3.0
+  ent_coef: 0.0
+  device: cuda
+  seed: 1
+  save_every: 250
+  debug_rollout: true
+
+control:
+  control_backend: torque_pd
+  filter_cutoff_hz: 10.0
+  kp: [210, 260, 300, 210, 260, 300]
+  kd: [5, 6, 12, 5, 6, 12]
+  effort_limits: [90, 90, 350, 90, 90, 350]
+  pd_tracking_error_limits: null
+  pd_target_change_limit: null
+  no_randomize_initial_phase: false
+  root_height: 1.1
+
+task:
+  task_training_stage: 3
+  startup_inplace_time: 0
+  startup_ramp_time: 0
+  startup_support_enable: true
+  startup_support_in_evaluation: true
+  startup_support_mode_probabilities: [0.5, 0.0, 0.0, 0.5]
+  startup_support_fraction_range: [0.5, 0.7]
+  startup_support_unload_time_range: [5.0, 10.0]
+  startup_support_fast_unload_time_range: [0.25, 0.8]
+  startup_support_residual_fraction_range: [0.2, 0.5]
+  startup_support_residual_hold_time_range: [100, 100]
+  startup_support_final_unload_time_range: [1.0, 2.0]
+  startup_support_command_gate_enable: true
+  startup_support_command_gate_threshold: 0.55
+  startup_support_command_ramp_time: 1.5
+  startup_support_fluctuation_enable: false
+  startup_support_noise_std_range: [0.01, 0.03]
+  startup_support_noise_tau_range: [0.8, 2.0]
+  startup_support_noise_limit: 0.04
+  startup_support_actual_max_fraction: 0.5
+  startup_tether_enable: true
+  startup_tether_stiffness_1mg_range: [150.0, 200.0]
+  startup_tether_damping_range: [10.0, 20.0]
+  startup_tether_deadzone: 0.01
+  startup_tether_force_limit_fraction: 0.10
+  startup_tether_scale_with_support: true
+  startup_no_retreat_enable: false
+
+reward:
+  termination_penalty: -25.0
+  actions_rate_scale: 0.3
+  actions_smoothness_scale: 0.6
+  base_wobble_penalty_scale: 0.0
+  pitch_wobble_penalty_scale: 0.0
+  foot_impact_penalty_scale: 0.0
+  foot_force_threshold_bw: 1.8
+  foot_force_penalty_power: 2.0
+
+domain_randomization:
+  domain_randomization: true
+
+  # Isaac Gym rigid-shape friction scaling.
+  dr_friction_range: [0.7, 1.3]
+  dr_foot_friction_range: [1.0, 1.0]
+
+  # Isaac Gym randomizes each rigid-body mass independently.
+  dr_mass_range: [1.0, 1.0]
+  dr_mass_link_range: [0.5, 1.5]
+
+  # No separate inertia randomizer exists in the Isaac Gym configuration.
+  dr_inertia_range: [1.0, 1.0]
+  dr_inertia_link_range: [1.0, 1.0]
+
+  # Isaac Gym DOF stiffness/damping map to the per-joint drive PD gains.
+  dr_kp_range: [1.0, 1.0]
+  dr_kp_joint_range: [0.8, 1.2]
+  dr_kd_range: [1.0, 1.0]
+  dr_kd_joint_range: [0.8, 1.2]
+
+  # Randomizers absent from the Isaac Gym configuration stay fixed.
+  dr_effort_range: [1.0, 1.0]
+  dr_effort_joint_range: [1.0, 1.0]
+  dr_gear_range: [1.0, 1.0]
+  dr_damping_range: [1.0, 1.0]
+  dr_damping_joint_range: [1.0, 1.0]
+  dr_frictionloss_range: [1.0, 1.0]
+  dr_frictionloss_joint_range: [1.0, 1.0]
+  dr_armature_range: [1.0, 1.0]
+  dr_armature_joint_range: [1.0, 1.0]
+  dr_foot_solref_timeconst_range: [1.0, 1.0]
+  dr_foot_solref_dampratio_range: [1.0, 1.0]
+  dr_foot_solimp_width_range: [1.0, 1.0]
+  dr_foot_radius_range: [1.0, 1.0]
+  dr_base_com_shift: 0.0
+  dr_link_com_shift: 0.0
+
+  dr_gravity_std: 0.4
+  dr_joint_limit_std: 0.01
+  obs_noise_std: 0.002
+  action_noise_std: 0.02
+
+  # At 200 Hz each physics step is 5 ms, so four levels give 0..20 ms.
+  action_delay_max_steps: 0
+  action_delay_max_physics_steps: 4
+
+  velocity_perturbation: true
+  velocity_perturbation_prob: 0.002
+  velocity_perturbation_range: [0.2, 0.8]
+  horizontal_force_perturbation: false
+  horizontal_force_perturbation_prob: 0.0
+
+  dr_warmup_updates: 50
+  dr_ramp_updates: 500
+
+heldout_evaluation:
+  eval_episode_steps: 5000
+  eval_during_training: true
+  eval_every_updates: 100
+  eval_during_training_seeds: 20
+  eval_during_training_start_seed: 101
+  eval_during_training_steps: 5000
+  eval_impact_p99_weight: 0.02

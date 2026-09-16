@@ -1,0 +1,179 @@
+# Concurrent-estimator version of SRL_Real_Bot_Compliant. The actor receives
+# the deployable 133-D observation plus one current 4-D truth/estimate slot.
+name: SRL_Real_Bot_Compliant_Concurrent
+
+physics_engine: ${..physics_engine}
+
+env:
+  numEnvs: ${resolve_default:16384,${...num_envs}}
+  envSpacing: 5
+  episodeLength: 5000
+  enableDebugVis: False
+  cameraFollow: False
+  controlFrequencyInv: 3
+  clipActions: 1.0
+  obs_frame_stack: 5
+  srl_policy_obs_remove_ids: [0, 1, 2, 3]
+  append_current_privileged_obs: True
+
+  action_scale: 1.0
+  pdControl: True
+  forceControl: False
+  powerScale: 1.0
+  srl_action_filter_enable: False
+  srl_action_filter_cutoff_hz: 10.0
+  srl_action_filter_order: 2
+
+  task_training_stage: 0
+
+  headingWeight: 0.5
+  upWeight: 0.1
+
+  actionsCost: 0.01
+  energyCost: 0.05
+  dofVelocityScale: 0.1
+  angularVelocityScale: 0.25
+  contactForceScale: 0.01
+  jointsAtLimitCost: 0.25
+  deathCost: -1.0
+  terminationHeight: 0.70
+  srl_max_effort: 400
+  srl_effort_limits: [90, 90, 350, 90, 90, 350]
+
+  gait_period: 54.0
+  foot_clearance: 0.2
+
+  alive_reward_scale: 1.0
+  torques_cost_scale: 5e-4
+  progress_reward_scale: 1
+  dof_acc_cost_scale: 0.5
+  dof_vel_cost_scale: 1
+  dof_pos_cost_scale: 0.2
+  no_fly_penalty_scale: 10.0
+  gait_similarity_penalty_scale: 10
+  pelvis_height_reward_scale: 5.0
+  orientation_reward_scale: 3.0
+  tracking_ang_vel_reward_scale: 2.0
+  vel_tracking_reward_scale: 6.0
+  clearance_penalty_scale: 50
+  lateral_distance_penalty_scale: 30
+  actions_rate_scale: 0.3
+  actions_smoothness_scale: 0.6
+  srl_motor_cost_scale: 0.0
+
+  default_joint_angles: [0, -0.55, -0.3, 0, -0.55, -0.3]
+  actuated_dof_names:
+    - left_hip_x_joint
+    - left_hip_y_joint
+    - left_knee_joint
+    - right_hip_x_joint
+    - right_hip_y_joint
+    - right_knee_joint
+  passive_dof_names:
+    - left_hip_connector_y_slide
+    - right_hip_connector_y_slide
+  compliant_dof_order:
+    - left_hip_x_joint
+    - left_hip_y_joint
+    - left_hip_connector_y_slide
+    - left_knee_joint
+    - right_hip_x_joint
+    - right_hip_y_joint
+    - right_hip_connector_y_slide
+    - right_knee_joint
+  passive_dof_rest_positions: [0.0, 0.0]
+  passive_dof_stiffness: [94000.0, 94000.0]
+  passive_dof_damping: [200.0, 200.0]
+  passive_dof_effort_limits: [1000.0, 1000.0]
+  passive_dof_max_velocity: [2.0, 2.0]
+
+  asset:
+    assetFileName: "mjcf/srl_real/srl_real_bot_nobattery_isaac.xml"
+
+  plane:
+    staticFriction: 1.0
+    dynamicFriction: 1.0
+    restitution: 0.0
+
+  enableCameraSensors: False
+
+sim:
+  dt: 0.005
+  substeps: 2
+  up_axis: "z"
+  use_gpu_pipeline: ${eq:${...pipeline},"gpu"}
+  gravity: [0.0, 0.0, -9.81]
+  physx:
+    num_threads: 16
+    solver_type: ${....solver_type}
+    use_gpu: ${contains:"cuda",${....sim_device}}
+    num_position_iterations: 4
+    num_velocity_iterations: 1
+    contact_offset: 0.02
+    rest_offset: 0.0
+    bounce_threshold_velocity: 0.2
+    max_depenetration_velocity: 10.0
+    default_buffer_size_multiplier: 5.0
+    max_gpu_contact_pairs: 8388608
+    num_subscenes: 8
+    contact_collection: 0
+
+task:
+  randomize: False
+  vel_pertubation: False
+  vel_pertubation_range: [0.2, 0.8]
+  randomization_params:
+    frequency: 6000
+    observations:
+      range: [0, 0.002]
+      operation: "additive"
+      distribution: "gaussian"
+    actions:
+      range: [0.0, 0.02]
+      operation: "additive"
+      distribution: "gaussian"
+    sim_params:
+      gravity:
+        range: [0, 0.4]
+        operation: "additive"
+        distribution: "gaussian"
+        schedule: "linear"
+        schedule_steps: 3000
+    actor_params:
+      humanoid:
+        color: True
+        rigid_body_properties:
+          mass:
+            range: [0.5, 1.5]
+            operation: "scaling"
+            distribution: "uniform"
+            setup_only: True
+            schedule: "linear"
+            schedule_steps: 3000
+        rigid_shape_properties:
+          friction:
+            num_buckets: 500
+            range: [0.7, 1.3]
+            operation: "scaling"
+            distribution: "uniform"
+            schedule: "linear"
+            schedule_steps: 3000
+          restitution:
+            range: [0.0, 0.7]
+            operation: "scaling"
+            distribution: "uniform"
+            schedule: "linear"
+            schedule_steps: 3000
+        dof_properties:
+          damping:
+            range: [0.8, 1.2]
+            operation: "scaling"
+            distribution: "uniform"
+            schedule: "linear"
+            schedule_steps: 3000
+          stiffness:
+            range: [0.8, 1.2]
+            operation: "scaling"
+            distribution: "uniform"
+            schedule: "linear"
+            schedule_steps: 3000

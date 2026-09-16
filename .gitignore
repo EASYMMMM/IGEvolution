@@ -37,3 +37,15 @@ outputs/
 !isaacgymenvs/saved_runs/
 !isaacgymenvs/saved_runs/**
 /isaacgymenvs/datasets/
+
+/isaacgymenvs/eval_reports/
+/isaacgymenvs/trajectories/
+
+# Offline CNN estimator data, checkpoints and evaluation outputs
+/isaacgymenvs/estimator_*/
+/isaacgymenvs/train_srl_privileged_estimator.py
+/isaacgymenvs/eval_srl_privileged_estimator.py
+/isaacgymenvs/learning/SRLEvo/privileged_estimator.py
+/isaacgymenvs/learning/SRLEvo/privileged_estimator_adapter.py
+/isaacgymenvs/learning/SRLEvo/privileged_estimator_collector.py
+/isaacgymenvs/learning/SRLEvo/privileged_estimator_closed_loop.py

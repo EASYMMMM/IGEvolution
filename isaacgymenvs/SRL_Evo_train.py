@@ -101,6 +101,7 @@ def launch_rlg_hydra(cfg: DictConfig):
     from isaacgymenvs.learning.SRLEvo import srl_continuous,srl_models,srl_players,srl_continuous_marl
     from isaacgymenvs.learning.SRLEvo import srl_network_builder
     from isaacgymenvs.learning.SRLEvo import srl_bot_continuous
+    from isaacgymenvs.learning.SRLEvo import srl_bot_concurrent
     import isaacgymenvs
 
 
@@ -196,11 +197,13 @@ def launch_rlg_hydra(cfg: DictConfig):
         model_builder.register_network('amp', lambda **kwargs : amp_network_builder.AMPBuilder())
         # SRL 
         runner.algo_factory.register_builder('srl_bot_continuous', lambda **kwargs : srl_bot_continuous.SRL_Bot_Agent(**kwargs))
+        runner.algo_factory.register_builder('srl_bot_concurrent', lambda **kwargs : srl_bot_concurrent.SRL_Bot_Concurrent_Agent(**kwargs))
         runner.algo_factory.register_builder('srl_continuous', lambda **kwargs : srl_continuous.SRLAgent(**kwargs))
         runner.algo_factory.register_builder('srl_continuous_marl', lambda **kwargs : srl_continuous_marl.SRL_MultiAgent(**kwargs))
         runner.player_factory.register_builder('srl_continuous', lambda **kwargs : srl_players.SRLPlayerContinuous(**kwargs))
         runner.player_factory.register_builder('srl_continuous_marl', lambda **kwargs : srl_players.SRLPlayerContinuous(**kwargs))
         runner.player_factory.register_builder('srl_bot_continuous', lambda **kwargs : srl_players.SRL_Bot_PlayerContinuous(**kwargs))
+        runner.player_factory.register_builder('srl_bot_concurrent', lambda **kwargs : srl_bot_concurrent.SRL_Bot_Concurrent_Player(**kwargs))
         model_builder.register_model('continuous_srl', lambda network, **kwargs : srl_models.ModelSRLContinuous(network))
         model_builder.register_network('amp_humanoid', lambda **kwargs : srl_network_builder.HumanoidBuilder())
         model_builder.register_network('srl', lambda **kwargs : srl_network_builder.SRLBuilder())

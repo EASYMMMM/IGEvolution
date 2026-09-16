@@ -1,0 +1,94 @@
+model:
+  checkpoint: checkpoints/SRL_Real_Bot_v2_s4.pth
+  checkpoint_key: model
+  xml: mjcf/srl_real_v1/srl_real_bot_v2.xml
+
+training:
+  updates: 100
+  rollout_steps: 2500
+  num_envs: 16
+  training_episode_steps: 2500
+  reset_envs_each_rollout: true
+  lr: 5.0e-6
+  actor_lr: 5.0e-6
+  critic_lr: 1.0e-4
+  critic_warmup_updates: 5
+  reference_policy_coef: 0.01
+  reward_scale: 0.01
+  normalize_value: true
+  clip_value: true
+  bounds_loss_coef: 0.001
+  cvar_fraction: 0.0
+  cvar_weight: 1.0
+  failure_weight: 4.0
+  target_kl: 0.002
+  init_log_std: -3.0
+  ent_coef: 0.0
+  device: cuda
+  seed: 1
+  save_every: 20
+  debug_rollout: true
+
+control:
+  control_backend: torque_pd
+  filter_cutoff_hz: 10.0
+  root_height: 1.1
+
+reward:
+  termination_penalty: -25.0
+  base_wobble_penalty_scale: 3.0
+  pitch_wobble_penalty_scale: 0.0
+  foot_impact_penalty_scale: 0.1
+  foot_force_threshold_bw: 1.8
+  foot_force_penalty_power: 2.0
+
+domain_randomization:
+  domain_randomization: true
+  dr_friction_range: [0.7, 1.3]
+  dr_mass_range: [0.8, 1.2]
+  dr_mass_link_range: [0.95, 1.05]
+  dr_inertia_range: [0.85, 1.15]
+  dr_inertia_link_range: [0.95, 1.05]
+  dr_armature_range: [0.8, 1.2]
+  dr_armature_joint_range: [0.9, 1.1]
+  dr_kp_range: [0.8, 1.2]
+  dr_kp_joint_range: [0.95, 1.05]
+  dr_kd_range: [0.8, 1.2]
+  dr_kd_joint_range: [0.95, 1.05]
+  dr_effort_range: [0.9, 1.1]
+  dr_effort_joint_range: [0.95, 1.05]
+  dr_gear_range: [1.0, 1.0]
+  dr_damping_range: [0.8, 1.2]
+  dr_damping_joint_range: [0.9, 1.1]
+  dr_frictionloss_range: [0.8, 1.2]
+  dr_frictionloss_joint_range: [0.9, 1.1]
+  dr_foot_friction_range: [0.95, 1.05]
+  dr_foot_solref_timeconst_range: [0.75, 1.25]
+  dr_foot_solref_dampratio_range: [0.85, 1.15]
+  dr_foot_solimp_width_range: [0.75, 1.25]
+  dr_foot_radius_range: [0.97, 1.03]
+  dr_base_com_shift: 0.01
+  dr_link_com_shift: 0.005
+  dr_gravity_std: 0.4
+  dr_joint_limit_std: 0.01
+  dr_stratified_sampling: false
+  dr_stratified_evaluation: false
+  obs_noise_std: 0.002
+  action_noise_std: 0.02
+  action_delay_max_steps: 0
+  action_delay_max_physics_steps: 3
+  velocity_perturbation: true
+  velocity_perturbation_prob: 0.002
+  velocity_perturbation_range: [0.2, 0.8]
+  dr_warmup_updates: 0
+  dr_ramp_updates: 40
+
+heldout_evaluation:
+  eval_episode_steps: 5000
+  eval_during_training: true
+  eval_every_updates: 20
+  eval_during_training_seeds: 10
+  eval_during_training_start_seed: 101
+  eval_during_training_secondary_start_seed: 1
+  eval_during_training_steps: 5000
+  eval_impact_p99_weight: 0.02

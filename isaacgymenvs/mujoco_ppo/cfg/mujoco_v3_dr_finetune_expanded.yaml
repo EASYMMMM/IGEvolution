@@ -1,0 +1,146 @@
+model:
+  checkpoint: mujoco_ppo/runs/mujoco_v3_finetune_0721_145957/mujoco_v3_finetune_update_01000.pt
+  checkpoint_key: model
+  xml: ../assets/mjcf/srl_real/srl_real_bot_v2.xml
+
+training:
+  updates: 2000
+  rollout_steps: 512
+  num_envs: 16
+  training_episode_steps: 5000
+  lr: 1.0e-6
+  actor_lr: 1.0e-6
+  critic_lr: 1.0e-4
+  critic_warmup_updates: 5
+  reference_policy_coef: 0.005
+  actor_sym_loss_coef: 0.4
+  reward_scale: 0.01
+  normalize_value: true
+  clip_value: true
+  bounds_loss_coef: 0.0001
+  target_kl: 0.002
+  init_log_std: -3.0
+  ent_coef: 0.0
+  device: cuda
+  seed: 1
+  save_every: 500
+  debug_rollout: true
+
+control:
+  control_backend: torque_pd
+  filter_cutoff_hz: 10.0
+  # Optional PD-target safety limits. Null keeps the original behavior.
+  pd_tracking_error_limits: null
+  pd_target_change_limit: null
+  no_randomize_initial_phase: false
+  root_height: 1.1
+  effort_limits: [90, 90, 350, 90, 90, 350]
+
+task:
+  task_training_stage: 3
+  startup_inplace_time: 0
+  startup_ramp_time: 0
+  startup_support_enable: false
+  startup_support_in_evaluation: false
+  startup_support_mode_probabilities: [0.4, 0.4, 0.1, 0.1]
+  startup_support_fraction_range: [0.2, 0.8]
+  startup_support_unload_time_range: [0.8, 3.0]
+  startup_support_fast_unload_time_range: [0.25, 0.8]
+  startup_support_residual_fraction_range: [0.02, 0.10]
+  startup_support_residual_hold_time_range: [0.3, 1.0]
+  startup_support_final_unload_time_range: [0.3, 1.0]
+  startup_support_command_gate_enable: false
+  startup_support_command_gate_threshold: 0.15
+  startup_support_command_ramp_time: 0.8
+  # Optional residual-support fluctuation and horizontal tether. Both remain
+  # disabled unless explicitly enabled by YAML or CLI.
+  startup_support_fluctuation_enable: false
+  startup_support_noise_std_range: [0.02, 0.04]
+  startup_support_noise_tau_range: [0.5, 1.5]
+  startup_support_noise_limit: 0.06
+  startup_support_actual_max_fraction: 0.5
+  startup_tether_enable: false
+  startup_tether_stiffness_1mg_range: [100.0, 250.0]
+  startup_tether_damping_range: [5.0, 25.0]
+  startup_tether_deadzone: 0.01
+  startup_tether_force_limit_fraction: 0.10
+  startup_tether_scale_with_support: true
+  # Optional startup no-retreat objective. Every item remains inert unless
+  # startup_no_retreat_enable is explicitly enabled.
+  startup_no_retreat_enable: false
+  startup_no_retreat_duration: 0.0
+  startup_retreat_penalty_scale: 0.0
+  startup_negative_vx_penalty_scale: 0.0
+  startup_action_magnitude_penalty_scale: 0.0
+  startup_action_rate_penalty_scale: 0.0
+  startup_max_retreat_distance: 0.0
+
+reward:
+  termination_penalty: -25.0
+  base_wobble_penalty_scale: 0.0
+  pitch_wobble_penalty_scale: 0.0
+  foot_impact_penalty_scale: 0.0
+  foot_force_threshold_bw: 1.8
+  foot_force_penalty_power: 2.0
+
+domain_randomization:
+  domain_randomization: false
+
+  dr_friction_range: [0.6, 1.4]
+
+  dr_mass_range: [0.85, 1.15]
+  dr_mass_link_range: [0.97, 1.03]
+
+  dr_inertia_range: [0.85, 1.15]
+  dr_inertia_link_range: [0.97, 1.03]
+
+  dr_armature_range: [0.85, 1.15]
+  dr_armature_joint_range: [0.95, 1.05]
+
+  dr_kp_range: [0.85, 1.15]
+  dr_kp_joint_range: [0.97, 1.03]
+
+  dr_kd_range: [0.85, 1.15]
+  dr_kd_joint_range: [0.97, 1.03]
+
+  dr_effort_range: [0.9, 1.1]
+  dr_effort_joint_range: [0.97, 1.03]
+
+  dr_gear_range: [1.0, 1.0]
+
+  dr_damping_range: [0.85, 1.15]
+  dr_damping_joint_range: [0.95, 1.05]
+
+  dr_frictionloss_range: [0.85, 1.15]
+  dr_frictionloss_joint_range: [0.95, 1.05]
+
+  dr_foot_friction_range: [0.9, 1.1]
+  dr_foot_solref_timeconst_range: [0.85, 1.15]
+  dr_foot_solref_dampratio_range: [0.9, 1.1]
+  dr_foot_solimp_width_range: [0.85, 1.15]
+  dr_foot_radius_range: [0.98, 1.02]
+
+  dr_base_com_shift: 0.0075
+  dr_link_com_shift: 0.003
+  dr_gravity_std: 0.3
+  dr_joint_limit_std: 0.0075
+
+  obs_noise_std: 0.0015
+  action_noise_std: 0.015
+  action_delay_max_steps: 1
+
+  velocity_perturbation: true
+  velocity_perturbation_prob: 0.001
+  velocity_perturbation_range: [0.15, 0.6]
+
+  dr_warmup_updates: 0
+  dr_ramp_updates: 300
+
+heldout_evaluation:
+  eval_episode_steps: 5000
+  eval_during_training: true
+  eval_every_updates: 250
+  eval_during_training_seeds: 10
+  eval_during_training_start_seed: 101
+  eval_during_training_steps: 5000
+  eval_impact_p99_weight: 0.02

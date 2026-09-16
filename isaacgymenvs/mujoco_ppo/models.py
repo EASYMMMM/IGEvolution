@@ -37,6 +37,43 @@ class RunningNorm(nn.Module):
         return torch.clamp(obs, -clip, clip)
 
 
+class RunningValueNorm(nn.Module):
+    """Running scalar statistics for normalized critic targets."""
+
+    def __init__(self, epsilon: float = 1e-4):
+        super().__init__()
+        self.register_buffer("running_mean", torch.zeros(()))
+        self.register_buffer("running_var", torch.ones(()))
+        self.register_buffer("count", torch.tensor(float(epsilon)))
+
+    @torch.no_grad()
+    def update(self, values: torch.Tensor):
+        values = values.detach().float().reshape(-1)
+        if values.numel() == 0:
+            return
+        batch_mean = values.mean()
+        batch_var = values.var(unbiased=False)
+        batch_count = torch.as_tensor(
+            float(values.numel()), device=self.count.device, dtype=self.count.dtype
+        )
+        delta = batch_mean - self.running_mean
+        total_count = self.count + batch_count
+        new_mean = self.running_mean + delta * batch_count / total_count
+        m_a = self.running_var * self.count
+        m_b = batch_var * batch_count
+        correction = delta.square() * self.count * batch_count / total_count
+        new_var = (m_a + m_b + correction) / total_count
+        self.running_mean.copy_(new_mean)
+        self.running_var.copy_(torch.clamp(new_var, min=1e-8))
+        self.count.copy_(total_count)
+
+    def normalize(self, values: torch.Tensor) -> torch.Tensor:
+        return (values - self.running_mean) / torch.sqrt(self.running_var + 1e-8)
+
+    def denormalize(self, values: torch.Tensor) -> torch.Tensor:
+        return values * torch.sqrt(self.running_var + 1e-8) + self.running_mean
+
+
 def _build_mlp(input_dim: int, hidden_sizes: Tuple[int, ...], activation: str) -> nn.Sequential:
     activations = {
         "elu": nn.ELU,
@@ -61,6 +98,7 @@ class ActorCritic(nn.Module):
         super().__init__()
         self.cfg = cfg or ModelConfig()
         self.obs_norm = RunningNorm(self.cfg.obs_dim)
+        self.value_norm = RunningValueNorm()
 
         self.actor_mlp = _build_mlp(self.cfg.obs_dim, self.cfg.hidden_sizes, self.cfg.activation)
         self.critic_mlp = _build_mlp(self.cfg.obs_dim, self.cfg.hidden_sizes, self.cfg.activation)
@@ -149,7 +187,7 @@ def load_isaac_checkpoint(
 
     if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
         policy = ActorCritic(model_cfg).to(device)
-        policy.load_state_dict(checkpoint["model_state_dict"])
+        incompatible = policy.load_state_dict(checkpoint["model_state_dict"], strict=False)
         metadata = {
             "checkpoint_type": "mujoco_finetune",
             "checkpoint_keys": sorted(list(checkpoint.keys())),
@@ -157,6 +195,9 @@ def load_isaac_checkpoint(
             "obs_norm_loaded": True,
             "update": checkpoint.get("update"),
             "optimizer_state_available": "optimizer_state_dict" in checkpoint,
+            "value_norm_loaded": not any(
+                key.startswith("value_norm.") for key in incompatible.missing_keys
+            ),
         }
         return policy, metadata
 
@@ -186,14 +227,12 @@ def load_isaac_checkpoint(
         for linear, (weight, bias) in zip(critic_linears, critic_layers):
             _copy_linear(linear, weight, bias)
 
-        value_weight = (
-            model_state.get("a2c_network.value.weight")
-            or model_state.get("value.weight")
-        )
-        value_bias = (
-            model_state.get("a2c_network.value.bias")
-            or model_state.get("value.bias")
-        )
+        value_weight = model_state.get("a2c_network.value.weight")
+        if value_weight is None:
+            value_weight = model_state.get("value.weight")
+        value_bias = model_state.get("a2c_network.value.bias")
+        if value_bias is None:
+            value_bias = model_state.get("value.bias")
         if value_weight is not None:
             _copy_linear(policy.value, value_weight, value_bias)
             critic_loaded = True

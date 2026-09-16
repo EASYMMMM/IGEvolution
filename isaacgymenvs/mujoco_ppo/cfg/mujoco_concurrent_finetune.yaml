@@ -1,0 +1,242 @@
+model:
+  checkpoint_path: mujoco_ppo/runs/mujoco_concurrent_0913_102327/mujoco_concurrent_best_gait.pt
+  checkpoint_key: model
+  xml_path: mjcf/srl_real_v1/srl_real_bot_v2_copy.xml
+
+training:
+  total_updates: 2000
+  rollout_steps: 512
+  num_envs: 32
+  training_episode_steps: 5000
+  actor_learning_rate: 5.0e-6
+  actor_lr_schedule: adaptive
+  actor_kl_threshold: 0.006
+  actor_min_learning_rate: 1.0e-6
+  actor_max_learning_rate: 2.0e-5
+  actor_lr_multiplier: 1.5
+  critic_learning_rate: 1.0e-4
+  critic_warmup_updates: 5
+  estimator_learning_rate: 1.0e-4
+  estimator_update_epochs: 4
+  estimator_minibatch_size: 1024
+  estimator_only_updates: 0
+  actor_input_mode: estimated
+  update_epochs: 5
+  minibatch_size: 2048
+  reference_policy_coef: 0.001
+  actor_sym_loss_coef: 0.4
+  reward_scale: 0.01
+  normalize_value: true
+  clip_value: true
+  bounds_loss_coef: 0.0001
+  target_kl: 0.006
+  ent_coef: 0.0
+  device: cpu
+  seed: 45
+  save_every: 500
+  save_dir: mujoco_ppo/runs
+
+estimator:
+  estimator_history_len: 10
+  estimator_hidden_sizes: [256, 128, 64]
+  bootstrap_levels: [0.0, 0.1, 0.25, 0.5, 0.75, 0.9]
+  bootstrap_initial_level: 0
+  bootstrap_auto_advance: true
+  bootstrap_warmup_updates: 600
+  bootstrap_min_updates_per_level: 100
+  bootstrap_metric_window: 100
+  bootstrap_min_completed_episodes: 10
+  bootstrap_ground_truth_min_length: 500
+  bootstrap_promote_length_ratio: 0.90
+  bootstrap_promote_reward_ratio: 0.85
+  bootstrap_demote_length_ratio: 0.70
+  bootstrap_max_normalized_mse: 0.20
+  bootstrap_fixed_env_quota: true
+  bootstrap_min_ground_truth_envs: 1
+  bootstrap_pre_full_dr_max_probability: 0.50
+  wobble_penalty_warmup_updates: 200
+  wobble_penalty_ramp_updates: 400
+  lateral_penalty_warmup_updates: 200
+  lateral_penalty_ramp_updates: 600
+  lateral_initial_min_distance: 0.25
+  lateral_initial_max_distance: 0.85
+  lateral_initial_target_weight: 0.0
+  lateral_initial_symmetry_weight: 0.0
+  lateral_initial_velocity_penalty_scale: 0.0
+  lateral_initial_channel_penalty_scale: 0.0
+  lateral_initial_hip_x_velocity_penalty_scale: 0.0
+
+dr_curriculum:
+  dr_curriculum_enable: true
+  dr_curriculum_levels: [0.0, 0.25, 0.5, 0.75, 1.0]
+  dr_curriculum_initial_level: 3
+  dr_curriculum_min_updates_per_level: 150
+  dr_curriculum_required_passes: 2
+  dr_curriculum_gt_min_success: 0.60
+  dr_curriculum_est_min_success: 0.50
+  dr_curriculum_gt_min_length: 4000
+  dr_curriculum_est_min_length: 3500
+
+control:
+  control_backend: torque_pd
+  action_filter_enable: true
+  action_filter_cutoff_hz: 10.0
+  action_filter_jointwise_enable: true
+  action_filter_hip_x_cutoff_hz_range: [8.0, 10.0]
+  action_filter_hip_y_cutoff_hz_range: [5.0, 7.0]
+  action_filter_knee_cutoff_hz_range: [6.0, 9.0]
+  root_height: 1.1
+  default_dof_pos: [0.0, -0.55, -0.3, 0.0, -0.55, -0.3]
+  kp: [210, 260, 300, 210, 260, 300]
+  kd: [5, 6, 12, 5, 6, 12]
+  effort_limits: [90, 90, 350, 90, 90, 350]
+  randomize_initial_phase: true
+
+task:
+  task_training_stage: 3
+  initial_pose_randomization_enable: true
+  initial_pose_root_height_range: [0.85, 1.14]
+  initial_pose_ground_clearance: 0.005
+  initial_pose_low_hip_y_offset: 0.165
+  initial_pose_low_knee_offset: 0.285
+  initial_pose_high_hip_y_offset: 0.035
+  initial_pose_high_knee_offset: -0.305
+  initial_pose_hip_y_asymmetry_max: 0.02
+  initial_pose_knee_asymmetry_max: 0.02
+  initial_pose_foot_height_tolerance: 0.015
+  initial_pose_joint_limit_margin: 0.01
+  initial_pose_max_attempts: 32
+  startup_inplace_time: 0
+  startup_ramp_time: 0
+  startup_support_enable: true
+  startup_support_in_evaluation: true
+  startup_support_mode_probabilities: [0.8, 0.0, 0.0, 0.2]
+  startup_support_fraction_range: [0.5, 0.7]
+  startup_support_unload_time_range: [5.0, 10.0]
+  startup_support_fast_unload_time_range: [0.25, 0.8]
+  startup_support_residual_fraction_range: [0.2, 0.5]
+  startup_support_residual_hold_time_range: [100.0, 100.0]
+  startup_support_final_unload_time_range: [1.0, 2.0]
+  startup_support_command_gate_enable: false
+  startup_support_command_ramp_time: 1.5
+  startup_support_hold_until_unloaded: true
+  startup_support_post_unload_hold_time: 1.0
+  startup_support_fluctuation_enable: false
+  startup_tether_enable: true
+  startup_tether_stiffness_1mg_range: [150.0, 200.0]
+  startup_tether_damping_range: [10.0, 20.0]
+  startup_tether_deadzone: 0.01
+  startup_tether_force_limit_fraction: 0.10
+  startup_tether_scale_with_support: true
+
+  startup_support_curriculum_enable: true
+  startup_support_probability_start: 0.2
+  startup_support_probability_end: 0.5
+  startup_support_curriculum_warmup_updates: 0
+  startup_support_curriculum_ramp_updates: 600
+
+reward:
+  termination_penalty: -1.0
+  alive_reward_scale: 0.0
+  progress_reward_scale: 0.0
+  torques_cost_scale: 0.0005
+  dof_acc_cost_scale: 0.5
+  dof_vel_cost_scale: 1.0
+  dof_pos_cost_scale: 0.2
+  no_fly_penalty_scale: 10.0
+  vel_tracking_reward_scale: 6.0
+  tracking_ang_vel_reward_scale: 2.0
+  gait_similarity_penalty_scale: 10.0
+  pelvis_height_reward_scale: 5.0
+  orientation_reward_scale: 3.0
+  clearance_penalty_scale: 50.0
+  lateral_distance_penalty_scale: 30.0
+  lateral_min_distance: 0.31
+  lateral_max_distance: 0.60
+  lateral_target_distance: 0.34
+  lateral_target_weight: 0.25
+  lateral_symmetry_weight: 0.10
+  foot_lateral_velocity_penalty_scale: 0.5
+  foot_lateral_velocity_deadband: 0.20
+  foot_lateral_channel_penalty_scale: 20.0
+  foot_lateral_channel_center: 0.17
+  foot_lateral_channel_half_width: 0.07
+  foot_lateral_channel_turn_relaxation: 0.08
+  foot_lateral_channel_recovery_relaxation: 0.08
+  foot_lateral_channel_max_relaxation: 0.12
+  hip_x_velocity_penalty_scale: 0.001
+  hip_x_velocity_deadband: 0.20
+  hip_x_velocity_recovery_roll_threshold: 0.08
+  hip_x_velocity_recovery_rate_threshold: 0.40
+  hip_x_velocity_recovery_scale: 0.25
+  srl_motor_cost_scale: 0.0
+  actions_rate_scale: 0.3
+  actions_smoothness_scale: 0.6
+  base_wobble_penalty_scale: 1.0
+  pitch_wobble_penalty_scale: 1.0
+  roll_wobble_penalty_scale: 6.0
+  roll_rate_weight: 0.5
+  base_ang_acc_penalty_scale: 0.0002
+  yaw_drift_penalty_scale: 0.0
+  foot_impact_penalty_scale: 1.5
+  foot_force_threshold_bw: 1.3
+  foot_force_penalty_power: 2.0
+  foot_impact_penalty_warmup_updates: 0
+  foot_impact_penalty_ramp_updates: 200
+
+domain_randomization:
+  domain_randomization_enable: true
+  dr_friction_range: [0.7, 1.3]
+  dr_foot_friction_range: [1.0, 1.0]
+  dr_mass_range: [1.0, 1.0]
+  dr_mass_link_range: [0.5, 1.5]
+  dr_inertia_range: [1.0, 1.0]
+  dr_inertia_link_range: [1.0, 1.0]
+  dr_kp_range: [1.0, 1.0]
+  dr_kp_joint_range: [0.8, 1.2]
+  dr_kd_range: [1.0, 1.0]
+  dr_kd_joint_range: [0.8, 1.2]
+  dr_effort_range: [1.0, 1.0]
+  dr_effort_joint_range: [1.0, 1.0]
+  dr_gear_range: [1.0, 1.0]
+  dr_damping_range: [1.0, 1.0]
+  dr_damping_joint_range: [0.9, 1.1]
+  dr_frictionloss_range: [1.0, 1.0]
+  dr_frictionloss_joint_range: [1.0, 1.0]
+  dr_armature_range: [1.0, 1.0]
+  dr_armature_joint_range: [0.9, 1.1]
+  dr_gravity_std: 0.4
+  dr_joint_limit_std: 0.01
+  obs_noise_std: 0.002
+  action_noise_std: 0.02
+  action_delay_max_steps: 0
+  action_delay_max_physics_steps: 2
+  velocity_perturbation_enable: true
+  velocity_perturbation_prob: 0.002
+  velocity_perturbation_range: [0.2, 0.8]
+  horizontal_force_perturbation_enable: true
+  horizontal_force_perturbation_prob: 0.00075
+  horizontal_force_perturbation_range: [10.0, 50.0]
+  horizontal_force_perturbation_duration_range: [0.05, 0.15]
+  horizontal_force_curriculum_warmup_updates: 0
+  horizontal_force_curriculum_ramp_updates: 200
+  dr_warmup_updates: 800
+  dr_ramp_updates: 800
+
+heldout_evaluation:
+  eval_episode_steps: 5000
+  eval_during_training: true
+  eval_every_updates: 500
+  eval_during_training_seeds: 20
+  eval_during_training_start_seed: 1001
+  evaluation_suite_enable: true
+  evaluation_narrow_distance: 0.30
+  best_gait_min_success: 0.75
+  best_gait_min_length: 4000
+  evaluation_history_filename: evaluation_history.jsonl
+  training_history_filename: training_history.jsonl
+
+logging:
+  wandb_enabled: false
+  wandb_project: srl-mujoco-concurrent-finetune
+  wandb_mode: online

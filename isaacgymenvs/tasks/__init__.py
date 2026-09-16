@@ -67,6 +67,9 @@ from .SRLEvo.humanoid_amp_s1_smpl_v2 import HumanoidAMP_s1_Smpl_v2
 from .SRLEvo.srl_hri import SRL_HRI
 from .SRLEvo.srl_bot import SRL_bot
 from .SRLEvo.srl_real_bot import SRL_Real_Bot
+from .SRLEvo.srl_real_bot_concurrent import SRL_Real_Bot_Concurrent
+from .SRLEvo.srl_real_bot_compliant import SRL_Real_Bot_Compliant
+from .SRLEvo.srl_real_bot_compliant_concurrent import SRL_Real_Bot_Compliant_Concurrent
 from .SRLEvo.srl_real_hri import SRL_Real_HRI
 from .SRLEvo.srl_real_bot_vir import SRL_Real_Bot_Vir
 
@@ -132,8 +135,11 @@ isaacgym_task_map = {
     "HumanoidAMPSRLGym_s1_Smpl":HumanoidAMP_s1_Smpl,
     "HumanoidAMPSRLGym_s1_Smpl_v2":HumanoidAMP_s1_Smpl_v2,
     "SRLBot":SRL_bot,
+    "SRL_Real_Bot_Compliant":SRL_Real_Bot_Compliant,
+    "SRL_Real_Bot_Compliant_Concurrent":SRL_Real_Bot_Compliant_Concurrent,
     "SRL_HRI":SRL_HRI,
     "SRL_Real_Bot":SRL_Real_Bot,
+    "SRL_Real_Bot_Concurrent":SRL_Real_Bot_Concurrent,
     "SRL_Real_HRI":SRL_Real_HRI,
     "SRL_Real_Bot_Vir":SRL_Real_Bot_Vir,
     # "HumanoidSRLGym": HumanoidAMPSRLTest,

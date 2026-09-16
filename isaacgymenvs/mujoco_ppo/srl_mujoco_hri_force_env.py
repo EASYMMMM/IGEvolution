@@ -62,8 +62,8 @@ class WalkEnvConfig:
     target_point_x: float = 1000.0
 
     default_dof_pos: Tuple[float, ...] = (0.0, -0.1, 0.35, 0.0, -0.1, 0.35)
-    kp: Tuple[float, ...] = (120.0, 210.0, 280.0, 120.0, 210.0, 280.0)
-    kd: Tuple[float, ...] = (20.0, 25.0, 40.0, 20.0, 25.0, 40.0)
+    kp: Tuple[float, ...] = (114.0, 199.5, 266.0, 114.0, 199.5, 266.0)
+    kd: Tuple[float, ...] = (22.0, 27.5, 44.0, 22.0, 27.5, 44.0)
     action_scale: Tuple[float, ...] = (0.71, 0.71, 0.71, 0.71, 0.71, 0.71)
     action_delay_alpha: float = 0.0
     srl_action_filter: bool = False
@@ -73,7 +73,7 @@ class WalkEnvConfig:
 
     max_torques: Tuple[float, ...] = (150.0, 150.0, 150.0, 150.0, 150.0, 150.0)
     gear_ratio: float = 450.0
-    max_torque_step: float = 100.0
+    max_torque_step: float = 0.0
     dof_vel_filter_alpha: float = 1.0
     base_w_damp_x: float = 0.0
     base_w_damp_y: float = 0.0

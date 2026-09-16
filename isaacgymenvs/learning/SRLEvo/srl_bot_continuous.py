@@ -14,6 +14,13 @@ import copy
 import os
 import torch.distributed as dist
 
+from isaacgymenvs.learning.SRLEvo.privileged_estimator import (
+    load_privileged_estimator,
+)
+from isaacgymenvs.learning.SRLEvo.privileged_estimator_adapter import (
+    EstimatedObservationAdapter,
+)
+
 def swap_and_flatten01(arr):
     """
     swap and then flatten axes 0 and 1
@@ -28,10 +35,253 @@ class SRL_Bot_Agent(a2c_continuous.A2CAgent):
         a2c_continuous.A2CAgent.__init__(self, base_name, params)
         config = params['config']
         self.a_sym_loss_coef = config.get('a_sym_loss_coef', None)
+        self.train_with_privileged_estimator = bool(
+            config.get('train_with_privileged_estimator', False)
+        )
         if self.has_central_value:
             # The actor sees hardware-realistic observations, while the value
             # baseline is trained from privileged simulator states.
             self.critic_coef = 0.0
+
+        self.init_central_from_legacy = bool(
+            config.get(
+                'train_privileged_estimator_init_central_from_legacy', False
+            )
+        )
+        self.reset_optimizer_on_legacy_init = bool(
+            config.get(
+                'train_privileged_estimator_reset_optimizer_on_legacy_init',
+                False,
+            )
+        )
+        self.estimator_train_alpha_start = float(
+            config.get('estimator_train_alpha_start', 1.0)
+        )
+        self.estimator_train_alpha_end = float(
+            config.get('estimator_train_alpha_end', 1.0)
+        )
+        self.estimator_train_alpha_ramp_start_epoch = int(
+            config.get('estimator_train_alpha_ramp_start_epoch', -1)
+        )
+        self.estimator_train_alpha_ramp_end_epoch = int(
+            config.get('estimator_train_alpha_ramp_end_epoch', -1)
+        )
+        self.privileged_estimator_model = None
+        self.privileged_estimator_state = {}
+        self.privileged_estimator_adapter = None
+        self.estimator_rollout_metrics = {}
+
+        if self.train_with_privileged_estimator:
+            if not self.has_central_value:
+                raise ValueError(
+                    "train_with_privileged_estimator requires central_value_config"
+                )
+            if self.is_rnn:
+                raise NotImplementedError(
+                    "Estimator PPO fine-tuning currently supports feed-forward actors only"
+                )
+            for name, value in (
+                ('estimator_train_alpha_start', self.estimator_train_alpha_start),
+                ('estimator_train_alpha_end', self.estimator_train_alpha_end),
+            ):
+                if not 0.0 <= value <= 1.0:
+                    raise ValueError("{} must be in [0, 1]".format(name))
+
+            estimator_checkpoint = config.get(
+                'train_privileged_estimator_checkpoint', ''
+            )
+            if not estimator_checkpoint:
+                raise ValueError(
+                    "train_privileged_estimator_checkpoint must be provided when "
+                    "train_with_privileged_estimator=True"
+                )
+            self.privileged_estimator_model, self.privileged_estimator_state = (
+                load_privileged_estimator(
+                    estimator_checkpoint, device=self.ppo_device
+                )
+            )
+            self.privileged_estimator_model.eval()
+            for parameter in self.privileged_estimator_model.parameters():
+                parameter.requires_grad_(False)
+            print(
+                "Frozen privileged estimator enabled: checkpoint={} epoch={} "
+                "alpha={:.3f}->{:.3f} ramp_epochs={}->{}".format(
+                    estimator_checkpoint,
+                    int(self.privileged_estimator_state.get('epoch', -1)),
+                    self.estimator_train_alpha_start,
+                    self.estimator_train_alpha_end,
+                    self.estimator_train_alpha_ramp_start_epoch,
+                    self.estimator_train_alpha_ramp_end_epoch,
+                )
+            )
+
+    def _initialize_central_value_from_legacy(self, weights):
+        source_state = dict(weights['model'])
+
+        # Some rl-games releases stored normalization statistics both inside
+        # model and as top-level checkpoint entries. Accept either layout.
+        for checkpoint_key, model_prefix in (
+            ('running_mean_std', 'running_mean_std.'),
+            ('reward_mean_std', 'value_mean_std.'),
+        ):
+            stats = weights.get(checkpoint_key)
+            if stats is not None:
+                for key, value in stats.items():
+                    source_state.setdefault(model_prefix + key, value)
+
+        target_state = self.central_value_net.model.state_dict()
+        transferable_prefixes = (
+            'a2c_network.actor_cnn.',
+            'a2c_network.actor_mlp.',
+            'a2c_network.value.',
+            'running_mean_std.',
+            'value_mean_std.',
+        )
+        required_keys = [
+            key for key in target_state
+            if key.startswith(transferable_prefixes)
+        ]
+        mlp_keys = [
+            key for key in required_keys
+            if key.startswith('a2c_network.actor_mlp.')
+        ]
+        value_keys = [
+            key for key in required_keys
+            if key.startswith('a2c_network.value.')
+        ]
+        if not mlp_keys or not value_keys:
+            raise RuntimeError(
+                "Central critic does not expose the expected actor_mlp and "
+                "value parameters; legacy value migration is unsupported"
+            )
+
+        missing = [key for key in required_keys if key not in source_state]
+        mismatched = [
+            key for key in required_keys
+            if key in source_state
+            and tuple(source_state[key].shape) != tuple(target_state[key].shape)
+        ]
+        if missing or mismatched:
+            raise RuntimeError(
+                "Cannot initialize central critic from legacy value network. "
+                "Missing keys: {}. Shape mismatches: {}".format(
+                    missing, mismatched
+                )
+            )
+
+        for key in required_keys:
+            target_state[key] = source_state[key].detach().clone()
+        self.central_value_net.model.load_state_dict(target_state, strict=True)
+
+        group_counts = {}
+        for name, prefix in (
+            ('mlp', 'a2c_network.actor_mlp.'),
+            ('value', 'a2c_network.value.'),
+            ('input_rms', 'running_mean_std.'),
+            ('value_rms', 'value_mean_std.'),
+        ):
+            group_counts[name] = sum(
+                key.startswith(prefix) for key in required_keys
+            )
+        print(
+            "Initialized central critic from legacy value network: "
+            "mlp={} value={} input_rms={} value_rms={}".format(
+                group_counts['mlp'],
+                group_counts['value'],
+                group_counts['input_rms'],
+                group_counts['value_rms'],
+            )
+        )
+        return self.central_value_net.state_dict()
+
+    def set_full_state_weights(self, weights, set_epoch=True):
+        should_migrate_legacy_value = (
+            self.train_with_privileged_estimator
+            and self.init_central_from_legacy
+            and self.has_central_value
+            and 'assymetric_vf_nets' not in weights
+        )
+        if should_migrate_legacy_value:
+            weights = copy.copy(weights)
+            weights['assymetric_vf_nets'] = (
+                self._initialize_central_value_from_legacy(weights)
+            )
+            if self.reset_optimizer_on_legacy_init:
+                weights['optimizer'] = self.optimizer.state_dict()
+                print(
+                    "Reset actor optimizer while restoring legacy policy "
+                    "weights"
+                )
+        return super().set_full_state_weights(weights, set_epoch=set_epoch)
+
+    def _get_estimator_train_alpha(self):
+        start = self.estimator_train_alpha_ramp_start_epoch
+        end = self.estimator_train_alpha_ramp_end_epoch
+        if start < 0 or end <= start:
+            return self.estimator_train_alpha_start
+        epoch = int(self.epoch_num)
+        if epoch <= start:
+            return self.estimator_train_alpha_start
+        if epoch >= end:
+            return self.estimator_train_alpha_end
+        fraction = float(epoch - start) / float(end - start)
+        return (
+            self.estimator_train_alpha_start
+            + fraction
+            * (self.estimator_train_alpha_end - self.estimator_train_alpha_start)
+        )
+
+    def _build_estimator_actor_observation(self, raw_obs, done_env_ids):
+        observation = raw_obs['obs']
+        mirrored_observation = raw_obs['obs_mirrored']
+        if observation.ndim != 2 or observation.shape[1] != 153:
+            raise RuntimeError(
+                "Estimator PPO fine-tuning requires a 153D actor. Set "
+                "task.env.srl_policy_obs_remove_ids=[]; got {}".format(
+                    tuple(observation.shape)
+                )
+            )
+        if raw_obs['states'].ndim != 2 or raw_obs['states'].shape[1] != 153:
+            raise RuntimeError(
+                "Estimator PPO fine-tuning requires 153D critic states; got {}".format(
+                    tuple(raw_obs['states'].shape)
+                )
+            )
+
+        num_envs = observation.shape[0]
+        if self.privileged_estimator_adapter is None:
+            self.privileged_estimator_adapter = EstimatedObservationAdapter(
+                self.privileged_estimator_model,
+                num_envs=num_envs,
+                device=observation.device,
+            )
+        elif self.privileged_estimator_adapter.num_envs != num_envs:
+            raise RuntimeError(
+                "PPO environment count changed from {} to {}".format(
+                    self.privileged_estimator_adapter.num_envs, num_envs
+                )
+            )
+
+        first = torch.zeros(num_envs, dtype=torch.bool, device=observation.device)
+        if len(done_env_ids) > 0:
+            reset_ids = torch.as_tensor(
+                done_env_ids, device=observation.device, dtype=torch.long
+            ).reshape(-1)
+            first[reset_ids] = True
+
+        alpha = self._get_estimator_train_alpha()
+        actor_observation, mirrored_actor_observation, estimate = (
+            self.privileged_estimator_adapter.transform_pair(
+                observation,
+                mirrored_observation,
+                first,
+                alpha=alpha,
+            )
+        )
+        actor_obs = dict(raw_obs)
+        actor_obs['obs'] = actor_observation
+        actor_obs['obs_mirrored'] = mirrored_actor_observation
+        return actor_obs, estimate, alpha
 
     def init_tensors(self):
         super().init_tensors()
@@ -42,28 +292,46 @@ class SRL_Bot_Agent(a2c_continuous.A2CAgent):
         update_list = self.update_list
 
         step_time = 0.0
+        estimator_abs_error_sum = torch.zeros(4, device=self.ppo_device)
+        estimator_error_count = 0
+        estimator_alpha = 0.0
 
         for n in range(self.horizon_length):
             self.obs, done_env_ids = self._env_reset_done() # 重置环境
+            raw_obs = self.obs
+            if self.train_with_privileged_estimator:
+                actor_obs, estimate, estimator_alpha = (
+                    self._build_estimator_actor_observation(raw_obs, done_env_ids)
+                )
+                clean_target = raw_obs['states'][:, :150].reshape(
+                    estimate.shape[0], 5, 30
+                )[:, 0, :4]
+                estimator_abs_error_sum += (estimate - clean_target).abs().sum(dim=0)
+                estimator_error_count += estimate.shape[0]
+            else:
+                actor_obs = raw_obs
+
             if self.use_action_masks:
                 masks = self.vec_env.get_action_masks()
-                res_dict = self.get_masked_action_values(self.obs, masks)
+                res_dict = self.get_masked_action_values(actor_obs, masks)
             else:
-                res_dict = self.get_action_values(self.obs)
+                res_dict = self.get_action_values(actor_obs)
             if self.has_central_value:
-                res_dict['values'] = self.get_central_value({'states': self.obs['states']})
+                res_dict['values'] = self.get_central_value({'states': raw_obs['states']})
 
-            self.experience_buffer.update_data('obses', n, self.obs['obs'])
+            self.experience_buffer.update_data('obses', n, actor_obs['obs'])
             self.experience_buffer.update_data('dones', n, self.dones)
             # mirrored_obs
-            self.experience_buffer.update_data('obs_mirrored', n, self.obs['obs_mirrored'])
+            self.experience_buffer.update_data(
+                'obs_mirrored', n, actor_obs['obs_mirrored']
+            )
             mirrored_obs = {}
-            mirrored_obs['obs']  =  self.obs['obs_mirrored']
+            mirrored_obs['obs']  =  actor_obs['obs_mirrored']
 
             for k in update_list:
                 self.experience_buffer.update_data(k, n, res_dict[k]) 
             if self.has_central_value:
-                self.experience_buffer.update_data('states', n, self.obs['states'])
+                self.experience_buffer.update_data('states', n, raw_obs['states'])
 
             # simulation step
             step_time_start = time.time()
@@ -94,6 +362,14 @@ class SRL_Bot_Agent(a2c_continuous.A2CAgent):
             self.current_rewards = self.current_rewards * not_dones.unsqueeze(1)
             self.current_shaped_rewards = self.current_shaped_rewards * not_dones.unsqueeze(1)
             self.current_lengths = self.current_lengths * not_dones
+
+        if self.train_with_privileged_estimator:
+            self.estimator_rollout_metrics = {
+                'alpha': float(estimator_alpha),
+                'mae': (
+                    estimator_abs_error_sum / max(estimator_error_count, 1)
+                ).detach().cpu(),
+            }
 
         if self.has_central_value:
             last_values = self.get_central_value({'states': self.obs['states']})
@@ -232,6 +508,20 @@ class SRL_Bot_Agent(a2c_continuous.A2CAgent):
                     self.writer.add_scalar('losses/bounds_loss', torch_ext.mean_list(b_losses).item(), frame)
                 
                 self.writer.add_scalar('losses/sym_loss', torch_ext.mean_list(sym_losses).item(), frame)
+                if self.train_with_privileged_estimator:
+                    self.writer.add_scalar(
+                        'estimator_train/alpha',
+                        self.estimator_rollout_metrics['alpha'],
+                        frame,
+                    )
+                    for index, name in enumerate(
+                        ('root_height', 'local_vx', 'local_vy', 'local_vz')
+                    ):
+                        self.writer.add_scalar(
+                            'estimator_train/{}_mae'.format(name),
+                            self.estimator_rollout_metrics['mae'][index].item(),
+                            frame,
+                        )
                 # if self.has_soft_aug:
                 #     self.writer.add_scalar('losses/aug_loss', np.mean(aug_losses), frame)
 
