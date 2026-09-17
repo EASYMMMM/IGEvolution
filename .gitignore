@@ -45,7 +45,3 @@ outputs/
 /isaacgymenvs/estimator_*/
 /isaacgymenvs/train_srl_privileged_estimator.py
 /isaacgymenvs/eval_srl_privileged_estimator.py
-/isaacgymenvs/learning/SRLEvo/privileged_estimator.py
-/isaacgymenvs/learning/SRLEvo/privileged_estimator_adapter.py
-/isaacgymenvs/learning/SRLEvo/privileged_estimator_collector.py
-/isaacgymenvs/learning/SRLEvo/privileged_estimator_closed_loop.py
