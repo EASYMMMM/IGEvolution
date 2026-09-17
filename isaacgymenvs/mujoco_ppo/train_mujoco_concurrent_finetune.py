@@ -47,7 +47,8 @@ class ConcurrentPPOConfig(v2_train.V2PPOConfig):
     estimator_update_epochs: int = 4
     estimator_minibatch_size: int = 1024
     actor_lr_schedule: str = "constant"
-    actor_kl_threshold: float = 0.006
+    actor_lr_kl_low: float = 0.002
+    actor_lr_kl_high: float = 0.006
     actor_min_learning_rate: float = 1e-6
     actor_max_learning_rate: float = 2e-5
     actor_lr_multiplier: float = 1.5
@@ -648,12 +649,15 @@ def _adaptive_actor_learning_rate(cfg, current_lr, kl):
             "actor_lr_schedule must be 'constant' or 'adaptive'"
         )
 
-    threshold = float(cfg.actor_kl_threshold)
+    kl_low = float(cfg.actor_lr_kl_low)
+    kl_high = float(cfg.actor_lr_kl_high)
     multiplier = float(cfg.actor_lr_multiplier)
     min_lr = float(cfg.actor_min_learning_rate)
     max_lr = float(cfg.actor_max_learning_rate)
-    if threshold <= 0.0:
-        raise ValueError("actor_kl_threshold must be > 0")
+    if not 0.0 < kl_low < kl_high:
+        raise ValueError(
+            "actor LR KL bounds must satisfy 0 < low < high"
+        )
     if multiplier <= 1.0:
         raise ValueError("actor_lr_multiplier must be > 1")
     if not 0.0 < min_lr <= max_lr:
@@ -662,9 +666,9 @@ def _adaptive_actor_learning_rate(cfg, current_lr, kl):
         )
 
     learning_rate = float(current_lr)
-    if kl > 2.0 * threshold:
+    if kl > kl_high:
         learning_rate /= multiplier
-    elif kl < 0.5 * threshold:
+    elif kl < kl_low:
         learning_rate *= multiplier
     return float(np.clip(learning_rate, min_lr, max_lr))
 
@@ -690,14 +694,15 @@ def train(cfg):
     # Validate the schedule before the first expensive rollout.
     _adaptive_actor_learning_rate(
         cfg, optimizers["actor"].param_groups[0]["lr"],
-        float(cfg.actor_kl_threshold),
+        0.5 * (float(cfg.actor_lr_kl_low) + float(cfg.actor_lr_kl_high)),
     )
     print(
         f"Actor LR schedule: {cfg.actor_lr_schedule} "
         f"initial={cfg.actor_learning_rate:.2e} "
         f"range=[{cfg.actor_min_learning_rate:.2e}, "
         f"{cfg.actor_max_learning_rate:.2e}] "
-        f"KL target={cfg.actor_kl_threshold:.5f}"
+        f"KL band=[{cfg.actor_lr_kl_low:.5f}, "
+        f"{cfg.actor_lr_kl_high:.5f}] per update"
     )
     reference = copy.deepcopy(policy).eval()
     for parameter in reference.parameters():
@@ -1030,6 +1035,7 @@ def train(cfg):
             "pg": [], "vf": [], "ref": [], "sym": [], "kl": [],
             "clip_fraction": [], "entropy": [], "bounds": [], "std": [],
         }
+        actor_lr_used = float(optimizers["actor"].param_groups[0]["lr"])
         completed_update_epochs = 0
         for _ in range(cfg.update_epochs):
             epoch_kls = []
@@ -1085,15 +1091,16 @@ def train(cfg):
                 epoch_kls.append(float(kl))
             completed_update_epochs += 1
             epoch_kl = float(np.mean(epoch_kls))
-            if actor_enabled:
-                current_actor_lr = optimizers["actor"].param_groups[0]["lr"]
-                next_actor_lr = _adaptive_actor_learning_rate(
-                    cfg, current_actor_lr, epoch_kl
-                )
-                for param_group in optimizers["actor"].param_groups:
-                    param_group["lr"] = next_actor_lr
             if cfg.target_kl is not None and epoch_kl > cfg.target_kl:
                 break
+
+        update_kl = float(np.mean(losses["kl"]))
+        if actor_enabled:
+            next_actor_lr = _adaptive_actor_learning_rate(
+                cfg, actor_lr_used, update_kl
+            )
+            for param_group in optimizers["actor"].param_groups:
+                param_group["lr"] = next_actor_lr
 
         old_level = level_index
         if not fixed_estimator_input:
@@ -1165,7 +1172,7 @@ def train(cfg):
             "loss/reference": float(np.mean(losses["ref"])),
             "loss/symmetry": float(np.mean(losses["sym"])),
             "loss/bounds": float(np.mean(losses["bounds"])),
-            "ppo/kl": float(np.mean(losses["kl"])),
+            "ppo/kl": update_kl,
             "ppo/clip_fraction": float(np.mean(losses["clip_fraction"])),
             "ppo/entropy": float(np.mean(losses["entropy"])),
             "ppo/policy_std": float(np.mean(losses["std"])),
@@ -1173,6 +1180,7 @@ def train(cfg):
             "ppo/actor_learning_rate": float(
                 optimizers["actor"].param_groups[0]["lr"]
             ),
+            "ppo/actor_learning_rate_used": actor_lr_used,
             "ppo/critic_learning_rate": float(
                 optimizers["critic"].param_groups[0]["lr"]
             ),
@@ -1191,7 +1199,7 @@ def train(cfg):
             f"{metrics['concurrent/ground_truth_episode_length']:.0f}/"
             f"{metrics['concurrent/estimated_episode_length']:.0f}"
         )
-        print(f"[update {update:04d}] reward={metrics['train/reward_mean']:.3f} mse={estimator_mse:.5f} p={target_estimator_fraction:.2f} est_frac={metrics['concurrent/estimated_env_fraction']:.2f} {length_text} actor_on={int(actor_enabled)} lr={metrics['ppo/actor_learning_rate']:.2e} kl={metrics['ppo/kl']:.5f} epochs={completed_update_epochs} dr={progress:.2f} support={support_probability:.2f}/{metrics['startup_support/active_env_step_fraction']:.2f} push={horizontal_force_progress:.2f} impact={metrics['robustness/foot_force_exceed_fraction']:.3f} wobble={wobble_progress:.2f} lateral={lateral_progress:.2f} sep={metrics['gait/foot_separation_mean']:.3f}/{metrics['gait/foot_separation_min']:.3f}")
+        print(f"[update {update:04d}] reward={metrics['train/reward_mean']:.3f} mse={estimator_mse:.5f} p={target_estimator_fraction:.2f} est_frac={metrics['concurrent/estimated_env_fraction']:.2f} {length_text} actor_on={int(actor_enabled)} lr={metrics['ppo/actor_learning_rate_used']:.2e}->{metrics['ppo/actor_learning_rate']:.2e} kl={metrics['ppo/kl']:.5f} epochs={completed_update_epochs} dr={progress:.2f} support={support_probability:.2f}/{metrics['startup_support/active_env_step_fraction']:.2f} push={horizontal_force_progress:.2f} impact={metrics['robustness/foot_force_exceed_fraction']:.3f} wobble={wobble_progress:.2f} lateral={lateral_progress:.2f} sep={metrics['gait/foot_separation_mean']:.3f}/{metrics['gait/foot_separation_min']:.3f}")
         v2_train.base_train.log_wandb(wandb_run, metrics, step=update)
         _append_jsonl(training_history_path, {"update": update, **metrics})
 

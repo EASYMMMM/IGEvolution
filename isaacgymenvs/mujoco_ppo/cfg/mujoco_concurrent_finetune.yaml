@@ -10,7 +10,8 @@ training:
   training_episode_steps: 5000
   actor_learning_rate: 5.0e-6
   actor_lr_schedule: adaptive
-  actor_kl_threshold: 0.006
+  actor_lr_kl_low: 0.002
+  actor_lr_kl_high: 0.006
   actor_min_learning_rate: 1.0e-6
   actor_max_learning_rate: 2.0e-5
   actor_lr_multiplier: 1.5
@@ -69,7 +70,7 @@ estimator:
 dr_curriculum:
   dr_curriculum_enable: true
   dr_curriculum_levels: [0.0, 0.25, 0.5, 0.75, 1.0]
-  dr_curriculum_initial_level: 3
+  dr_curriculum_initial_level: 4
   dr_curriculum_min_updates_per_level: 150
   dr_curriculum_required_passes: 2
   dr_curriculum_gt_min_success: 0.60
