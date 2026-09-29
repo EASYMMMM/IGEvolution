@@ -68,6 +68,7 @@ class JointwiseSecondOrderLowPass:
 class ConcurrentWalkEnvConfig(V3WalkEnvConfig):
     """Concurrent-only extensions to the shared V3 walking environment."""
 
+    preserve_xml_damping: bool = False
     initial_pose_randomization_enable: bool = False
     initial_pose_root_height_range: tuple[float, float] = (0.85, 1.14)
     initial_pose_ground_clearance: float = 0.005
@@ -82,6 +83,26 @@ class ConcurrentWalkEnvConfig(V3WalkEnvConfig):
     initial_pose_max_attempts: int = 32
     startup_support_hold_until_unloaded: bool = False
     startup_support_post_unload_hold_time: float = 0.0
+    inplace_startup_task_enable: bool = False
+    inplace_startup_scenario_probabilities: tuple[float, float, float] = (
+        0.45, 0.45, 0.10
+    )
+    inplace_startup_initial_height_range: tuple[float, float] = (0.9, 0.98)
+    inplace_startup_residual_fraction: float = 0.2
+    inplace_startup_height_hold_time_range: tuple[float, float] = (1.0, 2.0)
+    inplace_startup_height_ramp_time_range: tuple[float, float] = (2.0, 4.0)
+    inplace_startup_first_target_height_range: tuple[float, float] = (1.0, 1.05)
+    inplace_startup_post_unload_height_range: tuple[float, float] = (0.9, 1.05)
+    inplace_startup_height_command_interval_range: tuple[float, float] = (6.0, 12.0)
+    inplace_startup_support_sync_with_height_ramp: bool = False
+    inplace_startup_randomize_height_after_unload: bool = True
+    inplace_startup_tether_release_delay: float = 1.0
+    inplace_startup_disturbance_after_unload_only: bool = True
+    inplace_action_scale_range: tuple[float, float] = (0.6, 1.0)
+    inplace_position_drift_penalty_scale: float = 0.0
+    inplace_position_drift_deadband: float = 0.075
+    inplace_position_drift_huber_delta: float = 0.25
+    inplace_position_drift_penalty_cap: float = 1.0
     foot_lateral_velocity_penalty_scale: float = 0.0
     foot_lateral_velocity_deadband: float = 0.25
     foot_lateral_channel_penalty_scale: float = 0.0
@@ -114,6 +135,38 @@ class SRLMujocoConcurrentEnv(SRLMujocoV3Env):
     concurrent_actor_obs_dim = 137
 
     def __init__(self, cfg: ConcurrentWalkEnvConfig, estimator_history_len: int = 10):
+        xml_motor_damping = None
+        if cfg.preserve_xml_damping:
+            xml_model = mujoco.MjModel.from_xml_path(cfg.xml_path)
+            joint_names = (
+                "left_hip_x_joint",
+                "left_hip_y_joint",
+                "left_knee_joint",
+                "right_hip_x_joint",
+                "right_hip_y_joint",
+                "right_knee_joint",
+            )
+            joint_ids = np.asarray(
+                [
+                    mujoco.mj_name2id(xml_model, mujoco.mjtObj.mjOBJ_JOINT, name)
+                    for name in joint_names
+                ],
+                dtype=np.int32,
+            )
+            if np.any(joint_ids < 0):
+                missing = [
+                    name for name, joint_id in zip(joint_names, joint_ids)
+                    if joint_id < 0
+                ]
+                raise RuntimeError(
+                    "Missing policy joints required to preserve XML damping: "
+                    + ", ".join(missing)
+                )
+            dof_ids = xml_model.jnt_dofadr[joint_ids]
+            xml_motor_damping = xml_model.dof_damping[dof_ids].copy()
+
+        self.nominal_action_scale = float(cfg.action_scale)
+        self.inplace_action_scale = self.nominal_action_scale
         self.estimator_history_len = int(estimator_history_len)
         if self.estimator_history_len <= 0:
             raise ValueError("estimator_history_len must be positive")
@@ -133,6 +186,7 @@ class SRLMujocoConcurrentEnv(SRLMujocoV3Env):
                 raise ValueError(f"{name} must be >= 0")
         if int(cfg.initial_pose_max_attempts) <= 0:
             raise ValueError("initial_pose_max_attempts must be positive")
+        self._validate_inplace_startup_config(cfg)
         for name in (
             "hip_x_velocity_penalty_scale",
             "hip_x_velocity_deadband",
@@ -145,6 +199,11 @@ class SRLMujocoConcurrentEnv(SRLMujocoV3Env):
             raise ValueError("hip_x_velocity_recovery_scale must be in [0, 1]")
         self.estimator_history = deque(maxlen=self.estimator_history_len)
         super().__init__(cfg)
+        if xml_motor_damping is not None:
+            self.model.dof_damping[self.srl_dof_indices] = xml_motor_damping
+            # Domain randomization must scale and restore the XML values, not
+            # the shared environment's default damping of 1.0.
+            self._store_nominal_model_params()
         self.action_filter_cutoff_hz_by_joint = self._nominal_filter_cutoffs()
         if self.cfg.action_filter_jointwise_enable:
             self.target_filter = JointwiseSecondOrderLowPass(
@@ -158,6 +217,64 @@ class SRLMujocoConcurrentEnv(SRLMujocoV3Env):
         self.initial_pose_target_root_height = float(self.cfg.root_height)
         self.initial_pose_foot_clearances = np.zeros(2, dtype=np.float32)
         self.initial_pose_randomization_accepted = False
+        self.inplace_startup_scenario = "disabled"
+        self.inplace_startup_initial_command_height = float(cfg.target_height)
+        self.inplace_startup_first_target_height = float(cfg.target_height)
+        self.inplace_startup_height_hold_time = 0.0
+        self.inplace_startup_height_ramp_time = 0.0
+        self.inplace_startup_height_segment_start = 0.0
+        self.inplace_startup_height_segment_duration = 0.0
+        self.inplace_startup_height_segment_from = float(cfg.target_height)
+        self.inplace_startup_height_segment_to = float(cfg.target_height)
+        self.inplace_startup_next_height_change = math.inf
+        self.inplace_startup_anchor_xy = np.zeros(2, dtype=np.float64)
+
+    @staticmethod
+    def _validate_increasing_pair(name, values, *, positive=False):
+        if len(values) != 2:
+            raise ValueError(f"{name} must contain two values")
+        low, high = map(float, values)
+        if high < low or (positive and low <= 0.0) or (not positive and low < 0.0):
+            qualifier = "positive " if positive else "non-negative "
+            raise ValueError(f"{name} must be an increasing {qualifier}pair")
+        return low, high
+
+    @classmethod
+    def _validate_inplace_startup_config(cls, cfg):
+        probabilities = np.asarray(
+            cfg.inplace_startup_scenario_probabilities, dtype=np.float64
+        )
+        if probabilities.shape != (3,) or np.any(probabilities < 0.0):
+            raise ValueError(
+                "inplace_startup_scenario_probabilities must contain three "
+                "non-negative values"
+            )
+        if cfg.inplace_startup_task_enable and probabilities.sum() <= 0.0:
+            raise ValueError(
+                "inplace_startup_scenario_probabilities must have positive sum"
+            )
+        residual = float(cfg.inplace_startup_residual_fraction)
+        if not 0.0 <= residual <= 1.0:
+            raise ValueError("inplace_startup_residual_fraction must be in [0, 1]")
+        for name, positive in (
+            ("inplace_startup_height_hold_time_range", False),
+            ("inplace_startup_height_ramp_time_range", False),
+            ("inplace_startup_initial_height_range", True),
+            ("inplace_startup_first_target_height_range", True),
+            ("inplace_startup_post_unload_height_range", True),
+            ("inplace_startup_height_command_interval_range", True),
+            ("inplace_action_scale_range", True),
+        ):
+            cls._validate_increasing_pair(name, getattr(cfg, name), positive=positive)
+        for name in (
+            "inplace_startup_tether_release_delay",
+            "inplace_position_drift_penalty_scale",
+            "inplace_position_drift_deadband",
+            "inplace_position_drift_huber_delta",
+            "inplace_position_drift_penalty_cap",
+        ):
+            if float(getattr(cfg, name)) < 0.0:
+                raise ValueError(f"{name} must be >= 0")
 
     @staticmethod
     def _validate_cutoff_range(name, value_range):
@@ -217,6 +334,13 @@ class SRLMujocoConcurrentEnv(SRLMujocoV3Env):
 
     def _reset_randomized_params(self):
         super()._reset_randomized_params()
+        if self.cfg.inplace_startup_task_enable:
+            self.inplace_action_scale = float(
+                self.rng.uniform(*self.cfg.inplace_action_scale_range)
+            )
+        else:
+            self.inplace_action_scale = self.nominal_action_scale
+        self.cfg.action_scale = self.inplace_action_scale
         cutoffs = self._sample_filter_cutoffs()
         self.action_filter_cutoff_hz_by_joint = cutoffs.astype(
             np.float32, copy=True
@@ -297,14 +421,25 @@ class SRLMujocoConcurrentEnv(SRLMujocoV3Env):
             return False
 
         baseline_qpos = self.data.qpos.copy()
-        progress = (
-            float(np.clip(self.episode_dr_progress, 0.0, 1.0))
-            if self.cfg.domain_randomization_enable else 0.0
-        )
+        if self.cfg.inplace_startup_task_enable:
+            # Initial height is part of this task distribution, not a DR
+            # curriculum dimension, so every specialized episode samples the
+            # configured range even during no-DR evaluation.
+            progress = 1.0
+        else:
+            progress = (
+                float(np.clip(self.episode_dr_progress, 0.0, 1.0))
+                if self.cfg.domain_randomization_enable else 0.0
+            )
         margin = float(self.cfg.initial_pose_joint_limit_margin)
         tolerance = float(self.cfg.initial_pose_foot_height_tolerance)
         default_height = self._contact_root_height(baseline_qpos, self.default_dof_pos)
-        configured_low, configured_high = self.cfg.initial_pose_root_height_range
+        height_range = (
+            self.cfg.inplace_startup_initial_height_range
+            if self.cfg.inplace_startup_task_enable
+            else self.cfg.initial_pose_root_height_range
+        )
+        configured_low, configured_high = height_range
         low = default_height + progress * (float(configured_low) - default_height)
         high = default_height + progress * (float(configured_high) - default_height)
 
@@ -391,6 +526,244 @@ class SRLMujocoConcurrentEnv(SRLMujocoV3Env):
         info["actor_obs_mirrored"] = self.mirror_actor_obs(actor_obs)
         self._add_startup_support_info(info)
         return actor_obs, info
+
+    def _reset_startup_support(self):
+        super()._reset_startup_support()
+        if not self.cfg.inplace_startup_task_enable:
+            self.inplace_startup_scenario = "disabled"
+            return
+        if not self.cfg.startup_support_enable:
+            self.inplace_startup_scenario = "no_support"
+            return
+
+        probabilities = np.asarray(
+            self.cfg.inplace_startup_scenario_probabilities, dtype=np.float64
+        )
+        probabilities /= probabilities.sum()
+        self.inplace_startup_scenario = str(self.rng.choice(
+            np.asarray(
+                ("residual", "unload_to_zero", "no_support"), dtype=object
+            ),
+            p=probabilities,
+        ))
+        if self.inplace_startup_scenario == "no_support":
+            self.startup_support_mode = "none"
+            self.startup_support_initial_fraction = 0.0
+            self.startup_support_unload_time = 0.0
+            self.startup_support_residual_fraction = 0.0
+            self.startup_support_residual_hold_time = 0.0
+            self.startup_support_final_unload_time = 0.0
+            self.startup_support_current_fraction = 0.0
+            self.startup_support_nominal_fraction = 0.0
+            self.startup_support_noise_state = 0.0
+            return
+        self.startup_support_mode = (
+            "residual" if self.inplace_startup_scenario == "residual" else "smooth"
+        )
+        self.startup_support_initial_fraction = float(
+            self.rng.uniform(*self.cfg.startup_support_fraction_range)
+        )
+        self.startup_support_unload_time = float(
+            self.rng.uniform(*self.cfg.startup_support_unload_time_range)
+        )
+        self.startup_support_residual_fraction = (
+            min(
+                float(self.cfg.inplace_startup_residual_fraction),
+                self.startup_support_initial_fraction,
+            )
+            if self.inplace_startup_scenario == "residual" else 0.0
+        )
+        self.startup_support_residual_hold_time = math.inf
+        self.startup_support_final_unload_time = 0.0
+        self.startup_support_current_fraction = self.startup_support_initial_fraction
+        self.startup_support_nominal_fraction = self.startup_support_initial_fraction
+        self.startup_support_noise_state = 0.0
+        if self.cfg.startup_support_fluctuation_enable:
+            self.startup_support_noise_std = float(
+                self.rng.uniform(*self.cfg.startup_support_noise_std_range)
+            )
+            self.startup_support_noise_tau = float(
+                self.rng.uniform(*self.cfg.startup_support_noise_tau_range)
+            )
+
+    def _startup_support_fraction_at(self, elapsed: float) -> float:
+        if not self.cfg.inplace_startup_task_enable:
+            return super()._startup_support_fraction_at(elapsed)
+        if self.inplace_startup_scenario in ("disabled", "no_support"):
+            return 0.0
+        target = (
+            self.startup_support_residual_fraction
+            if self.inplace_startup_scenario == "residual" else 0.0
+        )
+        if self.cfg.inplace_startup_support_sync_with_height_ramp:
+            if elapsed < self.inplace_startup_height_hold_time:
+                return float(self.startup_support_initial_fraction)
+            return self._cosine_decay(
+                self.startup_support_initial_fraction,
+                target,
+                elapsed - self.inplace_startup_height_hold_time,
+                self.inplace_startup_height_ramp_time,
+            )
+        return self._cosine_decay(
+            self.startup_support_initial_fraction,
+            target,
+            elapsed,
+            self.startup_support_unload_time,
+        )
+
+    def _startup_support_residual_plateau_active(self, elapsed: float) -> bool:
+        if self.cfg.inplace_startup_task_enable:
+            return (
+                self.inplace_startup_scenario == "residual"
+                and elapsed >= self.startup_support_unload_time
+            )
+        return super()._startup_support_residual_plateau_active(elapsed)
+
+    def _startup_tether_force(self, support_fraction: float) -> np.ndarray:
+        force = super()._startup_tether_force(support_fraction)
+        if not self.cfg.inplace_startup_task_enable:
+            return force
+        elapsed = self.rl_step_counter * self.control_dt
+        release_time = (
+            self.startup_support_unload_time
+            + float(self.cfg.inplace_startup_tether_release_delay)
+        )
+        if elapsed >= release_time:
+            self.startup_tether_force_xy[:] = 0.0
+            self.startup_tether_force_limited = False
+        return self.startup_tether_force_xy
+
+    def _inplace_startup_disturbances_released(self):
+        return (
+            not self.cfg.inplace_startup_task_enable
+            or not self.cfg.inplace_startup_disturbance_after_unload_only
+            or self.rl_step_counter * self.control_dt
+            >= self.startup_support_unload_time
+            + float(self.cfg.startup_support_post_unload_hold_time)
+        )
+
+    def _maybe_apply_velocity_perturbation(self):
+        if self._inplace_startup_disturbances_released():
+            super()._maybe_apply_velocity_perturbation()
+
+    def _maybe_start_horizontal_force_pulse(self):
+        if self._inplace_startup_disturbances_released():
+            super()._maybe_start_horizontal_force_pulse()
+
+    def _sample_inplace_value(self, value_range):
+        return float(self.rng.uniform(*value_range))
+
+    def _reset_inplace_startup_task(self):
+        if not self.cfg.inplace_startup_task_enable:
+            return
+        self.inplace_startup_initial_command_height = float(
+            self.initial_pose_root_height
+        )
+        self.inplace_startup_first_target_height = self._sample_inplace_value(
+            self.cfg.inplace_startup_first_target_height_range
+        )
+        self.inplace_startup_height_hold_time = self._sample_inplace_value(
+            self.cfg.inplace_startup_height_hold_time_range
+        )
+        self.inplace_startup_height_ramp_time = self._sample_inplace_value(
+            self.cfg.inplace_startup_height_ramp_time_range
+        )
+        if (
+            self.cfg.inplace_startup_support_sync_with_height_ramp
+            and self.inplace_startup_scenario not in ("disabled", "no_support")
+        ):
+            self.startup_support_unload_time = (
+                self.inplace_startup_height_hold_time
+                + self.inplace_startup_height_ramp_time
+            )
+        self.inplace_startup_height_segment_start = 0.0
+        self.inplace_startup_height_segment_duration = 0.0
+        self.inplace_startup_height_segment_from = (
+            self.inplace_startup_first_target_height
+        )
+        self.inplace_startup_height_segment_to = (
+            self.inplace_startup_first_target_height
+        )
+        randomization_start = max(
+            self.inplace_startup_height_hold_time
+            + self.inplace_startup_height_ramp_time,
+            self.startup_support_unload_time
+            + float(self.cfg.startup_support_post_unload_hold_time),
+        )
+        if (
+            self.cfg.inplace_startup_randomize_height_after_unload
+            and self.inplace_startup_scenario in ("unload_to_zero", "no_support")
+        ):
+            self.inplace_startup_next_height_change = (
+                randomization_start
+                + self._sample_inplace_value(
+                    self.cfg.inplace_startup_height_command_interval_range
+                )
+            )
+        else:
+            self.inplace_startup_next_height_change = math.inf
+        self.inplace_startup_anchor_xy[:] = self.data.xpos[self.base_id, :2]
+        self.task_commands.target_vel_x = 0.0
+        self.task_commands.target_ang_vel_z = 0.0
+        self.task_commands.target_yaw = float(self.cfg.target_yaw)
+        self.task_commands.target_height = self.inplace_startup_initial_command_height
+        self.cfg.target_vel_x = 0.0
+        self.cfg.target_ang_vel_z = 0.0
+        self.cfg.target_height = self.inplace_startup_initial_command_height
+
+    def _inplace_height_command(self, elapsed: float) -> float:
+        hold_end = self.inplace_startup_height_hold_time
+        ramp_end = hold_end + self.inplace_startup_height_ramp_time
+        if elapsed < hold_end:
+            return self.inplace_startup_initial_command_height
+        if elapsed < ramp_end:
+            return self._cosine_decay(
+                self.inplace_startup_initial_command_height,
+                self.inplace_startup_first_target_height,
+                elapsed - hold_end,
+                self.inplace_startup_height_ramp_time,
+            )
+
+        if self.inplace_startup_scenario not in ("unload_to_zero", "no_support"):
+            return self.inplace_startup_first_target_height
+        if elapsed >= self.inplace_startup_next_height_change:
+            self.inplace_startup_height_segment_from = float(self.cfg.target_height)
+            self.inplace_startup_height_segment_to = self._sample_inplace_value(
+                self.cfg.inplace_startup_post_unload_height_range
+            )
+            self.inplace_startup_height_segment_start = elapsed
+            self.inplace_startup_height_segment_duration = self._sample_inplace_value(
+                self.cfg.inplace_startup_height_ramp_time_range
+            )
+            self.inplace_startup_next_height_change = (
+                elapsed
+                + self.inplace_startup_height_segment_duration
+                + self._sample_inplace_value(
+                    self.cfg.inplace_startup_height_command_interval_range
+                )
+            )
+        if self.inplace_startup_height_segment_duration <= 0.0:
+            return self.inplace_startup_height_segment_to
+        return self._cosine_decay(
+            self.inplace_startup_height_segment_from,
+            self.inplace_startup_height_segment_to,
+            elapsed - self.inplace_startup_height_segment_start,
+            self.inplace_startup_height_segment_duration,
+        )
+
+    def _update_task_commands(self, progress_step: int):
+        if not self.cfg.inplace_startup_task_enable:
+            super()._update_task_commands(progress_step)
+            return
+        elapsed = max(int(progress_step) - 1, 0) * self.control_dt
+        target_height = self._inplace_height_command(elapsed)
+        self.task_commands.target_vel_x = 0.0
+        self.task_commands.target_ang_vel_z = 0.0
+        self.task_commands.target_height = target_height
+        self.cfg.target_vel_x = 0.0
+        self.cfg.target_ang_vel_z = 0.0
+        self.cfg.target_height = target_height
+        self.startup_support_command_scale = 1.0
 
     def _support_command_scale(self, policy_step: int) -> float:
         if not (
@@ -519,6 +892,26 @@ class SRLMujocoConcurrentEnv(SRLMujocoV3Env):
         hip_x_velocity_penalty = float(
             recovery_scale * np.sum(hip_x_excess * hip_x_excess)
         )
+        position_displacement = float(np.linalg.norm(
+            self.data.xpos[self.base_id, :2] - self.inplace_startup_anchor_xy
+        ))
+        position_drift = max(
+            position_displacement - self.cfg.inplace_position_drift_deadband,
+            0.0,
+        )
+        huber_delta = float(self.cfg.inplace_position_drift_huber_delta)
+        if position_drift <= huber_delta:
+            position_drift_penalty = 0.5 * position_drift * position_drift
+        else:
+            position_drift_penalty = huber_delta * (
+                position_drift - 0.5 * huber_delta
+            )
+        position_drift_penalty = min(
+            position_drift_penalty,
+            float(self.cfg.inplace_position_drift_penalty_cap),
+        )
+        if not self.cfg.inplace_startup_task_enable:
+            position_drift_penalty = 0.0
         reward -= (
             self.cfg.foot_lateral_velocity_penalty_scale
             * metrics["velocity_penalty"]
@@ -526,6 +919,8 @@ class SRLMujocoConcurrentEnv(SRLMujocoV3Env):
             * metrics["channel_penalty"]
             + self.cfg.hip_x_velocity_penalty_scale
             * hip_x_velocity_penalty
+            + self.cfg.inplace_position_drift_penalty_scale
+            * position_drift_penalty
         )
         info.update({
             "reward_total": float(reward),
@@ -542,6 +937,8 @@ class SRLMujocoConcurrentEnv(SRLMujocoV3Env):
             "penalty_hip_x_velocity": hip_x_velocity_penalty,
             "hip_x_velocity_recovery_active": float(roll_recovery),
             "hip_x_velocity_recovery_scale": float(recovery_scale),
+            "inplace_position_displacement": position_displacement,
+            "penalty_inplace_position_drift": position_drift_penalty,
             "action_filter_cutoff_hz_by_joint": (
                 self.action_filter_cutoff_hz_by_joint.copy()
             ),
@@ -581,6 +978,20 @@ class SRLMujocoConcurrentEnv(SRLMujocoV3Env):
         result["action_filter_cutoff_hz_by_joint"] = (
             self.action_filter_cutoff_hz_by_joint.copy()
         )
+        result["inplace_startup_task_enabled"] = bool(
+            self.cfg.inplace_startup_task_enable
+        )
+        result["inplace_startup_scenario"] = self.inplace_startup_scenario
+        result["inplace_startup_initial_command_height"] = float(
+            self.inplace_startup_initial_command_height
+        )
+        result["inplace_startup_first_target_height"] = float(
+            self.inplace_startup_first_target_height
+        )
+        result["inplace_startup_next_height_change"] = float(
+            self.inplace_startup_next_height_change
+        )
+        result["inplace_action_scale"] = float(self.inplace_action_scale)
         return result
 
     def reset(self, seed=None):
@@ -588,6 +999,9 @@ class SRLMujocoConcurrentEnv(SRLMujocoV3Env):
         if self._randomize_initial_pose():
             self._reset_startup_tether()
             self._reset_startup_no_retreat()
+            actor_obs, info = self._rebuild_initial_observation()
+        if self.cfg.inplace_startup_task_enable:
+            self._reset_inplace_startup_task()
             actor_obs, info = self._rebuild_initial_observation()
         frame = self._estimator_frame(actor_obs)
         self.estimator_history.clear()

@@ -30,6 +30,9 @@ training:
   normalize_value: true
   clip_value: true
   bounds_loss_coef: 0.0001
+  cvar_fraction: 0.0
+  cvar_weight: 1.0
+  failure_weight: 1.0
   target_kl: 0.006
   ent_coef: 0.0
   device: cpu
@@ -80,6 +83,9 @@ dr_curriculum:
 
 control:
   control_backend: torque_pd
+  # False keeps the historical concurrent behavior: all six motor damping
+  # values are overwritten with 1.0. True preserves the values from the XML.
+  preserve_xml_damping: false
   action_filter_enable: true
   action_filter_cutoff_hz: 10.0
   action_filter_jointwise_enable: true
@@ -90,7 +96,7 @@ control:
   default_dof_pos: [0.0, -0.55, -0.3, 0.0, -0.55, -0.3]
   kp: [210, 260, 300, 210, 260, 300]
   kd: [5, 6, 12, 5, 6, 12]
-  effort_limits: [90, 90, 350, 90, 90, 350]
+  effort_limits: [70, 70, 150, 70, 70, 150]
   randomize_initial_phase: true
 
 task:
@@ -129,6 +135,30 @@ task:
   startup_tether_deadzone: 0.01
   startup_tether_force_limit_fraction: 0.10
   startup_tether_scale_with_support: true
+
+  # Concurrent-only stationary startup task. Disabled so existing runs retain
+  # their original command and support scheduling unless explicitly enabled.
+  inplace_startup_task_enable: false
+  # [persistent 0.2 mg residual, complete unload to zero, no startup support]
+  inplace_startup_scenario_probabilities: [0.45, 0.45, 0.10]
+  inplace_startup_initial_height_range: [0.9, 0.98]
+  inplace_startup_residual_fraction: 0.2
+  inplace_startup_height_hold_time_range: [1.0, 2.0]
+  inplace_startup_height_ramp_time_range: [2.0, 4.0]
+  inplace_startup_first_target_height_range: [1.0, 1.05]
+  inplace_startup_post_unload_height_range: [0.9, 1.05]
+  inplace_startup_height_command_interval_range: [6.0, 12.0]
+  # Optional alternate schedule: hold support during the initial-height hold,
+  # then unload it over exactly the same interval as the height transition.
+  inplace_startup_support_sync_with_height_ramp: false
+  inplace_startup_randomize_height_after_unload: true
+  inplace_startup_tether_release_delay: 1.0
+  inplace_startup_disturbance_after_unload_only: true
+  inplace_action_scale_range: [0.6, 1.0]
+  inplace_position_drift_penalty_scale: 0.2
+  inplace_position_drift_deadband: 0.075
+  inplace_position_drift_huber_delta: 0.25
+  inplace_position_drift_penalty_cap: 1.0
 
   startup_support_curriculum_enable: true
   startup_support_probability_start: 0.2
@@ -188,6 +218,8 @@ reward:
 domain_randomization:
   domain_randomization_enable: true
   dr_friction_range: [0.7, 1.3]
+  dr_low_friction_fixed_delay_probability: 0.0
+  dr_low_friction_fixed_delay_range: [0.7, 1.0]
   dr_foot_friction_range: [1.0, 1.0]
   dr_mass_range: [1.0, 1.0]
   dr_mass_link_range: [0.5, 1.5]

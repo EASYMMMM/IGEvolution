@@ -31,6 +31,7 @@ PRIVILEGED_MIRROR_SIGNS = np.array([1.0, 1.0, -1.0, 1.0], dtype=np.float32)
 class ConcurrentPPOConfig(v2_train.V2PPOConfig):
     target_vel_x: float = 1.0
     target_ang_vel_z: float = 0.0
+    preserve_xml_damping: bool = False
     initial_pose_randomization_enable: bool = False
     initial_pose_root_height_range: Tuple[float, float] = (0.85, 1.14)
     initial_pose_ground_clearance: float = 0.005
@@ -90,6 +91,26 @@ class ConcurrentPPOConfig(v2_train.V2PPOConfig):
     startup_support_curriculum_ramp_updates: int = 500
     startup_support_hold_until_unloaded: bool = False
     startup_support_post_unload_hold_time: float = 0.0
+    inplace_startup_task_enable: bool = False
+    inplace_startup_scenario_probabilities: Tuple[float, float, float] = (
+        0.45, 0.45, 0.10
+    )
+    inplace_startup_initial_height_range: Tuple[float, float] = (0.9, 0.98)
+    inplace_startup_residual_fraction: float = 0.2
+    inplace_startup_height_hold_time_range: Tuple[float, float] = (1.0, 2.0)
+    inplace_startup_height_ramp_time_range: Tuple[float, float] = (2.0, 4.0)
+    inplace_startup_first_target_height_range: Tuple[float, float] = (1.0, 1.05)
+    inplace_startup_post_unload_height_range: Tuple[float, float] = (0.9, 1.05)
+    inplace_startup_height_command_interval_range: Tuple[float, float] = (6.0, 12.0)
+    inplace_startup_support_sync_with_height_ramp: bool = False
+    inplace_startup_randomize_height_after_unload: bool = True
+    inplace_startup_tether_release_delay: float = 1.0
+    inplace_startup_disturbance_after_unload_only: bool = True
+    inplace_action_scale_range: Tuple[float, float] = (0.6, 1.0)
+    inplace_position_drift_penalty_scale: float = 0.0
+    inplace_position_drift_deadband: float = 0.075
+    inplace_position_drift_huber_delta: float = 0.25
+    inplace_position_drift_penalty_cap: float = 1.0
     horizontal_force_curriculum_warmup_updates: int = 0
     horizontal_force_curriculum_ramp_updates: int = 200
     foot_impact_penalty_warmup_updates: int = 0
@@ -164,10 +185,93 @@ class ConcurrentRolloutBuffer(v3_train.AsymmetricRolloutBuffer):
         self.estimator_target[index] = estimator_target
         super().add(*args)
 
+    def batches_with_weights(self, minibatch_size, sample_weights=None):
+        if sample_weights is None:
+            for batch in super().batches(minibatch_size):
+                yield (*batch, None)
+            return
+
+        size = self.steps * self.num_envs
+        if sample_weights.shape != (self.steps, self.num_envs):
+            raise ValueError(
+                "sample_weights must have shape "
+                f"({self.steps}, {self.num_envs})"
+            )
+        arrays = (
+            self.actor_obs.reshape(size, -1),
+            self.mirrored_actor_obs.reshape(size, -1),
+            self.critic_obs.reshape(size, -1),
+            self.actions.reshape(size, -1),
+            self.logprobs.reshape(size),
+            self.advantages.reshape(size),
+            self.returns.reshape(size),
+            self.values.reshape(size),
+            sample_weights.reshape(size),
+        )
+        indices = torch.randperm(size, device=self.rewards.device)
+        for start in range(0, size, minibatch_size):
+            selected = indices[start:start + minibatch_size]
+            yield tuple(array[selected] for array in arrays)
+
+
+def _rollout_difficulty_weights(buffer, cfg):
+    cvar_fraction = float(cfg.cvar_fraction)
+    cvar_weight = float(cfg.cvar_weight)
+    failure_weight = float(cfg.failure_weight)
+    if not 0.0 <= cvar_fraction <= 1.0:
+        raise ValueError("cvar_fraction must be in [0, 1]")
+    if cvar_weight < 1.0 or failure_weight < 1.0:
+        raise ValueError("cvar_weight and failure_weight must be >= 1")
+
+    enabled = (
+        (cvar_fraction > 0.0 and cvar_weight > 1.0)
+        or failure_weight > 1.0
+    )
+    if not enabled:
+        return None, {
+            "cvar_env_count": 0,
+            "failed_env_count": 0,
+            "weight_max": 1.0,
+        }
+
+    env_weights = torch.ones(
+        buffer.num_envs, dtype=buffer.rewards.dtype,
+        device=buffer.rewards.device,
+    )
+    cvar_env_count = 0
+    if cvar_fraction > 0.0 and cvar_weight > 1.0:
+        cvar_env_count = min(
+            buffer.num_envs,
+            max(1, int(np.ceil(cvar_fraction * buffer.num_envs))),
+        )
+        rollout_returns = buffer.rewards.sum(dim=0)
+        worst_indices = torch.topk(
+            rollout_returns, cvar_env_count, largest=False
+        ).indices
+        env_weights[worst_indices] = cvar_weight
+
+    failed_envs = buffer.terminated.bool().any(dim=0)
+    if failure_weight > 1.0:
+        failure_values = torch.full_like(env_weights, failure_weight)
+        env_weights = torch.where(
+            failed_envs, torch.maximum(env_weights, failure_values), env_weights
+        )
+
+    env_weights /= env_weights.mean().clamp_min(1e-8)
+    sample_weights = env_weights.unsqueeze(0).expand(
+        buffer.steps, buffer.num_envs
+    )
+    return sample_weights, {
+        "cvar_env_count": cvar_env_count,
+        "failed_env_count": int(failed_envs.sum().item()),
+        "weight_max": float(env_weights.max().item()),
+    }
+
 
 def make_env_config(cfg, *, evaluation=False):
     base = v3_train.make_env_config(cfg, evaluation=evaluation)
     values = asdict(base)
+    values["preserve_xml_damping"] = bool(cfg.preserve_xml_damping)
     values["target_vel_x"] = float(cfg.target_vel_x)
     values["target_ang_vel_z"] = float(cfg.target_ang_vel_z)
     for name in (
@@ -185,12 +289,29 @@ def make_env_config(cfg, *, evaluation=False):
         "initial_pose_max_attempts",
     ):
         values[name] = getattr(cfg, name)
-    values["startup_support_hold_until_unloaded"] = bool(
-        cfg.startup_support_hold_until_unloaded
-    )
-    values["startup_support_post_unload_hold_time"] = float(
-        cfg.startup_support_post_unload_hold_time
-    )
+    for name in (
+        "startup_support_hold_until_unloaded",
+        "startup_support_post_unload_hold_time",
+        "inplace_startup_task_enable",
+        "inplace_startup_scenario_probabilities",
+        "inplace_startup_initial_height_range",
+        "inplace_startup_residual_fraction",
+        "inplace_startup_height_hold_time_range",
+        "inplace_startup_height_ramp_time_range",
+        "inplace_startup_first_target_height_range",
+        "inplace_startup_post_unload_height_range",
+        "inplace_startup_height_command_interval_range",
+        "inplace_startup_support_sync_with_height_ramp",
+        "inplace_startup_randomize_height_after_unload",
+        "inplace_startup_tether_release_delay",
+        "inplace_startup_disturbance_after_unload_only",
+        "inplace_action_scale_range",
+        "inplace_position_drift_penalty_scale",
+        "inplace_position_drift_deadband",
+        "inplace_position_drift_huber_delta",
+        "inplace_position_drift_penalty_cap",
+    ):
+        values[name] = getattr(cfg, name)
     for name in (
         "alive_reward_scale", "progress_reward_scale", "torques_cost_scale",
         "dof_acc_cost_scale", "dof_vel_cost_scale", "dof_pos_cost_scale",
@@ -356,6 +477,15 @@ def evaluate_policy_condition(policy, cfg, dr_progress, use_estimate, seeds=None
         elif support_mode == "residual":
             env.cfg.startup_support_enable = True
             env.cfg.startup_support_mode_probabilities = (0.0, 0.0, 0.0, 1.0)
+            if env.cfg.inplace_startup_task_enable:
+                env.cfg.inplace_startup_scenario_probabilities = (1.0, 0.0, 0.0)
+        elif support_mode == "unload_to_zero":
+            env.cfg.startup_support_enable = True
+            if not env.cfg.inplace_startup_task_enable:
+                raise ValueError(
+                    "unload_to_zero evaluation requires inplace_startup_task_enable"
+                )
+            env.cfg.inplace_startup_scenario_probabilities = (0.0, 1.0, 0.0)
         else:
             raise ValueError(f"Unsupported evaluation support mode: {support_mode}")
         env.set_dr_progress(float(dr_progress) if cfg.domain_randomization_enable else 0.0)
@@ -483,6 +613,22 @@ def run_evaluation_suite(policy, cfg, current_dr_progress, seeds=None):
                 f"roll={result['base_roll_rms']:.3f} "
                 f"impact={result['foot_force_exceed_fraction']:.3f}"
             )
+    if cfg.startup_support_enable and cfg.inplace_startup_task_enable:
+        for mode, use_estimate in (("gt", False), ("est", True)):
+            key = f"full_dr_support_zero/{mode}"
+            suite[key] = evaluate_policy_condition(
+                policy, cfg, 1.0, use_estimate, seeds=seeds,
+                support_mode="unload_to_zero",
+            )
+            result = suite[key]
+            print(
+                f"[eval {key}] len={result['length']:.0f} "
+                f"success={result['success']:.2f} return={result['return']:.0f} "
+                f"support={result['support_fraction_mean']:.3f} "
+                f"sep={result['foot_separation_mean']:.3f} "
+                f"roll={result['base_roll_rms']:.3f} "
+                f"impact={result['foot_force_exceed_fraction']:.3f}"
+            )
     return suite
 
 
@@ -583,6 +729,11 @@ def _curriculum_progress(update, warmup_updates, ramp_updates):
 def _startup_support_probability(cfg, update):
     if not cfg.startup_support_enable:
         return 0.0
+    if cfg.inplace_startup_task_enable:
+        probabilities = np.asarray(
+            cfg.inplace_startup_scenario_probabilities, dtype=np.float64
+        )
+        return float(np.sum(probabilities[:2]) / np.sum(probabilities))
     if not cfg.startup_support_curriculum_enable:
         return float(cfg.startup_support_mode_probabilities[3])
     progress = _curriculum_progress(
@@ -600,6 +751,8 @@ def _startup_support_probability(cfg, update):
 
 
 def _set_residual_support_probability(env, probability):
+    if env.cfg.inplace_startup_task_enable:
+        return
     probability = float(np.clip(probability, 0.0, 1.0))
     env.cfg.startup_support_mode_probabilities = (
         1.0 - probability, 0.0, 0.0, probability
@@ -677,7 +830,18 @@ def train(cfg):
     np.random.seed(cfg.seed)
     torch.manual_seed(cfg.seed)
     device = torch.device(cfg.device)
+    if not 0.0 <= float(cfg.cvar_fraction) <= 1.0:
+        raise ValueError("cvar_fraction must be in [0, 1]")
+    if float(cfg.cvar_weight) < 1.0 or float(cfg.failure_weight) < 1.0:
+        raise ValueError("cvar_weight and failure_weight must be >= 1")
     envs = [make_env(cfg) for _ in range(max(int(cfg.num_envs), 1))]
+    motor_damping = envs[0].model.dof_damping[envs[0].srl_dof_indices]
+    print(
+        "Motor passive damping: {} ({})".format(
+            np.array2string(motor_damping, precision=6),
+            "preserved from XML" if cfg.preserve_xml_damping else "uniform override",
+        )
+    )
     policy, metadata = make_policy(cfg, envs[0])
     print("Loaded checkpoint:", metadata)
     print("Concurrent layout: estimator 10x26 -> 256 -> 128 -> 64 -> 4; actor 137 -> 512 -> 256 -> 128 -> 6; critic 153 -> 512 -> 256 -> 128 -> 1")
@@ -703,6 +867,12 @@ def train(cfg):
         f"{cfg.actor_max_learning_rate:.2e}] "
         f"KL band=[{cfg.actor_lr_kl_low:.5f}, "
         f"{cfg.actor_lr_kl_high:.5f}] per update"
+    )
+    print(
+        "Difficulty weighting: "
+        f"CVaR fraction={cfg.cvar_fraction:.2f} "
+        f"weight={cfg.cvar_weight:.2f} "
+        f"failure_weight={cfg.failure_weight:.2f}"
     )
     reference = copy.deepcopy(policy).eval()
     for parameter in reference.parameters():
@@ -895,9 +1065,12 @@ def train(cfg):
         hip_x_velocity_recovery_active = []
         support_fractions = []
         support_mode_active = []
+        inplace_startup_scenarios = []
+        inplace_action_scales = []
         foot_force_ratios = []
         foot_force_exceeded = []
         horizontal_force_active = []
+        dr_scenarios = []
         rollout_reward_components = defaultdict(list)
         for _step in range(cfg.rollout_steps):
             actor_obs, mirrored_obs, history, target, _ = _compose(
@@ -959,7 +1132,16 @@ def train(cfg):
                 info.get("startup_support_mode", "none") != "none"
                 for info in next_infos
             )
+            inplace_startup_scenarios.extend(
+                str(info.get("inplace_startup_scenario", "disabled"))
+                for info in next_infos
+            )
+            inplace_action_scales.extend(
+                float(info.get("inplace_action_scale", 1.0))
+                for info in next_infos
+            )
             for info in next_infos:
+                dr_scenarios.append(str(info.get("dr_scenario", "normal")))
                 force_ratio = max(
                     float(info.get("left_foot_force_bw", 0.0)),
                     float(info.get("right_foot_force_bw", 0.0)),
@@ -1027,6 +1209,9 @@ def train(cfg):
         estimator_mse = float(np.mean(estimator_losses))
 
         buffer.compute_returns(cfg.gamma, cfg.gae_lambda)
+        sample_weights, difficulty_stats = _rollout_difficulty_weights(
+            buffer, cfg
+        )
         if cfg.normalize_value:
             policy.value_norm.update(buffer.returns)
         buffer.advantages = (buffer.advantages - buffer.advantages.mean()) / (buffer.advantages.std() + 1e-8)
@@ -1039,16 +1224,30 @@ def train(cfg):
         completed_update_epochs = 0
         for _ in range(cfg.update_epochs):
             epoch_kls = []
-            for batch in buffer.batches(cfg.minibatch_size):
-                b_actor, b_mirror, b_critic, b_actions, old_logp, adv, returns, old_values = batch
+            for batch in buffer.batches_with_weights(
+                cfg.minibatch_size, sample_weights
+            ):
+                (
+                    b_actor, b_mirror, b_critic, b_actions, old_logp,
+                    adv, returns, old_values, batch_weights,
+                ) = batch
                 dist = policy.dist(policy.normalize_actor_obs(b_actor), cfg.action_clip)
                 new_logp = dist.log_prob(b_actions).sum(-1)
                 ratio = (new_logp - old_logp).exp()
                 clip_fraction = (
                     torch.abs(ratio - 1.0) > cfg.clip_coef
                 ).float().mean()
-                pg = torch.max(-adv * ratio, -adv * torch.clamp(
-                    ratio, 1 - cfg.clip_coef, 1 + cfg.clip_coef)).mean()
+                pg_per_sample = torch.max(
+                    -adv * ratio,
+                    -adv * torch.clamp(
+                        ratio, 1 - cfg.clip_coef, 1 + cfg.clip_coef
+                    ),
+                )
+                pg = (
+                    pg_per_sample.mean()
+                    if batch_weights is None
+                    else (pg_per_sample * batch_weights).mean()
+                )
                 mean = dist.raw_mean
                 bounds = (torch.clamp(mean - cfg.action_clip, min=0).square() +
                           torch.clamp(-cfg.action_clip - mean, min=0).square()).sum(-1).mean()
@@ -1073,9 +1272,17 @@ def train(cfg):
                 old_v = policy.value_norm.normalize(old_values) if cfg.normalize_value else old_values
                 if cfg.clip_value:
                     clipped = old_v + torch.clamp(predicted - old_v, -cfg.clip_coef, cfg.clip_coef)
-                    vf = 0.5 * torch.max((predicted-targets).square(), (clipped-targets).square()).mean()
+                    vf_per_sample = 0.5 * torch.max(
+                        (predicted-targets).square(),
+                        (clipped-targets).square(),
+                    )
                 else:
-                    vf = 0.5 * (predicted-targets).square().mean()
+                    vf_per_sample = 0.5 * (predicted-targets).square()
+                vf = (
+                    vf_per_sample.mean()
+                    if batch_weights is None
+                    else (vf_per_sample * batch_weights).mean()
+                )
                 optimizers["critic"].zero_grad(set_to_none=True)
                 (cfg.vf_coef * vf).backward()
                 torch.nn.utils.clip_grad_norm_(critic_params, cfg.max_grad_norm)
@@ -1147,6 +1354,24 @@ def train(cfg):
                 np.mean(support_mode_active)
             ),
             "startup_support/fraction_mean": float(np.mean(support_fractions)),
+            "inplace_startup/residual_step_fraction": float(np.mean(
+                np.asarray(inplace_startup_scenarios) == "residual"
+            )),
+            "inplace_startup/unload_to_zero_step_fraction": float(np.mean(
+                np.asarray(inplace_startup_scenarios) == "unload_to_zero"
+            )),
+            "inplace_startup/no_support_step_fraction": float(np.mean(
+                np.asarray(inplace_startup_scenarios) == "no_support"
+            )),
+            "inplace_startup/action_scale_mean": float(np.mean(
+                inplace_action_scales
+            )),
+            "inplace_startup/action_scale_min": float(np.min(
+                inplace_action_scales
+            )),
+            "inplace_startup/action_scale_max": float(np.max(
+                inplace_action_scales
+            )),
             "robustness/foot_force_bw_mean": float(np.mean(foot_force_ratios)),
             "robustness/foot_force_bw_max": float(np.max(foot_force_ratios)),
             "robustness/foot_force_exceed_fraction": float(
@@ -1154,6 +1379,9 @@ def train(cfg):
             ),
             "robustness/horizontal_force_active_fraction": float(
                 np.mean(horizontal_force_active)
+            ),
+            "robustness/low_friction_fixed_delay_fraction": float(
+                np.mean(np.asarray(dr_scenarios) == "low_friction_fixed_delay")
             ),
             "concurrent/estimator_normalized_mse": estimator_mse,
             "concurrent/bootstrap_probability": target_estimator_fraction,
@@ -1176,6 +1404,15 @@ def train(cfg):
             "ppo/clip_fraction": float(np.mean(losses["clip_fraction"])),
             "ppo/entropy": float(np.mean(losses["entropy"])),
             "ppo/policy_std": float(np.mean(losses["std"])),
+            "ppo/difficulty_cvar_env_count": int(
+                difficulty_stats["cvar_env_count"]
+            ),
+            "ppo/difficulty_failed_env_count": int(
+                difficulty_stats["failed_env_count"]
+            ),
+            "ppo/difficulty_weight_max": float(
+                difficulty_stats["weight_max"]
+            ),
             "ppo/update_epochs_completed": int(completed_update_epochs),
             "ppo/actor_learning_rate": float(
                 optimizers["actor"].param_groups[0]["lr"]
@@ -1199,7 +1436,7 @@ def train(cfg):
             f"{metrics['concurrent/ground_truth_episode_length']:.0f}/"
             f"{metrics['concurrent/estimated_episode_length']:.0f}"
         )
-        print(f"[update {update:04d}] reward={metrics['train/reward_mean']:.3f} mse={estimator_mse:.5f} p={target_estimator_fraction:.2f} est_frac={metrics['concurrent/estimated_env_fraction']:.2f} {length_text} actor_on={int(actor_enabled)} lr={metrics['ppo/actor_learning_rate_used']:.2e}->{metrics['ppo/actor_learning_rate']:.2e} kl={metrics['ppo/kl']:.5f} epochs={completed_update_epochs} dr={progress:.2f} support={support_probability:.2f}/{metrics['startup_support/active_env_step_fraction']:.2f} push={horizontal_force_progress:.2f} impact={metrics['robustness/foot_force_exceed_fraction']:.3f} wobble={wobble_progress:.2f} lateral={lateral_progress:.2f} sep={metrics['gait/foot_separation_mean']:.3f}/{metrics['gait/foot_separation_min']:.3f}")
+        print(f"[update {update:04d}] reward={metrics['train/reward_mean']:.3f} mse={estimator_mse:.5f} p={target_estimator_fraction:.2f} est_frac={metrics['concurrent/estimated_env_fraction']:.2f} {length_text} actor_on={int(actor_enabled)} lr={metrics['ppo/actor_learning_rate_used']:.2e}->{metrics['ppo/actor_learning_rate']:.2e} kl={metrics['ppo/kl']:.5f} epochs={completed_update_epochs} dr={progress:.2f} support={support_probability:.2f}/{metrics['startup_support/active_env_step_fraction']:.2f} push={horizontal_force_progress:.2f} impact={metrics['robustness/foot_force_exceed_fraction']:.3f} hard={difficulty_stats['cvar_env_count']}/{difficulty_stats['failed_env_count']} wmax={difficulty_stats['weight_max']:.2f} wobble={wobble_progress:.2f} lateral={lateral_progress:.2f} sep={metrics['gait/foot_separation_mean']:.3f}/{metrics['gait/foot_separation_min']:.3f}")
         v2_train.base_train.log_wandb(wandb_run, metrics, step=update)
         _append_jsonl(training_history_path, {"update": update, **metrics})
 
@@ -1219,10 +1456,16 @@ def train(cfg):
 
             full_est = suite["full_dr/est"]
             supported_est = suite.get("full_dr_support/est", full_est)
+            support_zero_est = suite.get(
+                "full_dr_support_zero/est", supported_est
+            )
+            stability_conditions = (full_est, supported_est, support_zero_est)
             stability_score = (
-                min(full_est["success"], supported_est["success"]) * 1e6
-                + min(full_est["length"], supported_est["length"]) * 100
-                + 0.5 * (full_est["return"] + supported_est["return"])
+                min(result["success"] for result in stability_conditions) * 1e6
+                + min(result["length"] for result in stability_conditions) * 100
+                + float(np.mean([
+                    result["return"] for result in stability_conditions
+                ]))
             )
             if stability_score > best_stability:
                 best_stability = stability_score
@@ -1239,6 +1482,8 @@ def train(cfg):
                 and full_est["length"] >= cfg.best_gait_min_length
                 and supported_est["success"] >= cfg.best_gait_min_success
                 and supported_est["length"] >= cfg.best_gait_min_length
+                and support_zero_est["success"] >= cfg.best_gait_min_success
+                and support_zero_est["length"] >= cfg.best_gait_min_length
             )
             gait_score = _gait_score(full_est)
             if gait_eligible and gait_score > best_gait:
@@ -1309,9 +1554,19 @@ def _load_config(path):
     unknown = sorted(set(values) - known)
     if unknown:
         raise ValueError(f"Unknown YAML config keys: {unknown}")
-    for key in ("default_dof_pos", "kp", "kd", "effort_limits",
-                "estimator_hidden_sizes", "bootstrap_levels",
-                "dr_curriculum_levels", "initial_pose_root_height_range"):
+    for key in (
+        "default_dof_pos", "kp", "kd", "effort_limits",
+        "estimator_hidden_sizes", "bootstrap_levels", "dr_curriculum_levels",
+        "initial_pose_root_height_range",
+        "inplace_startup_scenario_probabilities",
+        "inplace_startup_initial_height_range",
+        "inplace_startup_height_hold_time_range",
+        "inplace_startup_height_ramp_time_range",
+        "inplace_startup_first_target_height_range",
+        "inplace_startup_post_unload_height_range",
+        "inplace_startup_height_command_interval_range",
+        "inplace_action_scale_range",
+    ):
         if key in values and values[key] is not None:
             values[key] = tuple(values[key])
     return ConcurrentPPOConfig(**values)

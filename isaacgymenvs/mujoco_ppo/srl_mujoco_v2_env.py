@@ -199,6 +199,8 @@ class V2WalkEnvConfig:
     dr_joint_limit_std: float = 0.0
     dr_stratified_sampling_enable: bool = False
     dr_scenario_probabilities: Tuple[float, ...] = (0.45, 0.15, 0.15, 0.05, 0.10, 0.10)
+    dr_low_friction_fixed_delay_probability: float = 0.0
+    dr_low_friction_fixed_delay_range: Tuple[float, float] = (0.7, 1.0)
     dr_hard_longitudinal_gravity_sigma_range: Tuple[float, float] = (1.5, 2.5)
     dr_hard_lateral_gravity_sigma_range: Tuple[float, float] = (1.0, 2.0)
     dr_combined_longitudinal_gravity_sigma_range: Tuple[float, float] = (2.0, 3.0)
@@ -238,6 +240,10 @@ class SRLMujocoV2Env:
         self.dr_scenario = "normal"
         self.dr_scenario_probabilities = np.array(
             [1.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float64
+        )
+        self.dr_scenario_names = (
+            "normal", "fixed_delay", "longitudinal_gravity",
+            "lateral_gravity", "high_kp_low_kd", "combined_hard",
         )
         self.default_dof_pos = np.asarray(self.cfg.default_dof_pos, dtype=np.float32)
         self.nominal_kp = np.asarray(self.cfg.kp, dtype=np.float32)
@@ -661,7 +667,7 @@ class SRLMujocoV2Env:
         return float(self.rng.uniform(lo, hi))
 
     def _reset_dr_scenario(self):
-        scenario_names = (
+        base_scenario_names = (
             "normal",
             "fixed_delay",
             "longitudinal_gravity",
@@ -669,6 +675,7 @@ class SRLMujocoV2Env:
             "high_kp_low_kd",
             "combined_hard",
         )
+        scenario_names = base_scenario_names
         if (
             not self.cfg.domain_randomization_enable
             or not self.cfg.dr_stratified_sampling_enable
@@ -680,7 +687,7 @@ class SRLMujocoV2Env:
             final_probabilities = np.asarray(
                 self.cfg.dr_scenario_probabilities, dtype=np.float64
             )
-            if final_probabilities.shape != (len(scenario_names),):
+            if final_probabilities.shape != (len(base_scenario_names),):
                 raise ValueError(
                     "dr_scenario_probabilities must contain six values for "
                     "normal/fixed_delay/longitudinal_gravity/lateral_gravity/"
@@ -689,10 +696,40 @@ class SRLMujocoV2Env:
             if np.any(final_probabilities < 0.0) or final_probabilities.sum() <= 0.0:
                 raise ValueError("dr_scenario_probabilities must be non-negative and non-zero")
             final_probabilities = final_probabilities / final_probabilities.sum()
+            targeted_probability = float(
+                self.cfg.dr_low_friction_fixed_delay_probability
+            )
+            if not 0.0 <= targeted_probability < 1.0:
+                raise ValueError(
+                    "dr_low_friction_fixed_delay_probability must be in [0, 1)"
+                )
+            if targeted_probability > 0.0:
+                friction_range = tuple(
+                    float(value)
+                    for value in self.cfg.dr_low_friction_fixed_delay_range
+                )
+                if (
+                    len(friction_range) != 2
+                    or friction_range[0] <= 0.0
+                    or friction_range[0] > friction_range[1]
+                    or friction_range[1] > 1.0
+                ):
+                    raise ValueError(
+                        "dr_low_friction_fixed_delay_range must be an increasing "
+                        "positive pair with upper bound <= 1.0"
+                    )
+                final_probabilities *= 1.0 - targeted_probability
+                final_probabilities = np.append(
+                    final_probabilities, targeted_probability
+                )
+                scenario_names = base_scenario_names + (
+                    "low_friction_fixed_delay",
+                )
             progress = self.episode_dr_progress
             probabilities = progress * final_probabilities
             probabilities[0] += 1.0 - progress
             probabilities = probabilities / probabilities.sum()
+        self.dr_scenario_names = scenario_names
         self.dr_scenario_probabilities = probabilities
         self.dr_scenario = str(self.rng.choice(scenario_names, p=probabilities))
 
@@ -739,14 +776,7 @@ class SRLMujocoV2Env:
             "scenario": self.dr_scenario,
             "scenario_probability": float(
                 self.dr_scenario_probabilities[
-                    (
-                        "normal",
-                        "fixed_delay",
-                        "longitudinal_gravity",
-                        "lateral_gravity",
-                        "high_kp_low_kd",
-                        "combined_hard",
-                    ).index(self.dr_scenario)
+                    self.dr_scenario_names.index(self.dr_scenario)
                 ]
             ),
             "gravity_delta": np.zeros(3, dtype=np.float64),
@@ -836,7 +866,10 @@ class SRLMujocoV2Env:
                 gravity_delta[0] = longitudinal_sign * longitudinal_magnitude
             self.model.opt.gravity[:] = self.nominal_gravity + gravity_delta
             self.dr_sampled_params["gravity_delta"] = gravity_delta.copy()
-        friction_scale = self._uniform(self.cfg.dr_friction_range)
+        friction_range = self.cfg.dr_friction_range
+        if self.dr_scenario == "low_friction_fixed_delay":
+            friction_range = self.cfg.dr_low_friction_fixed_delay_range
+        friction_scale = self._uniform(friction_range)
         mass_scale = self._uniform(self.cfg.dr_mass_range)
         inertia_scale = self._uniform(self.cfg.dr_inertia_range)
         mass_link_scales = self._uniform_array(self.cfg.dr_mass_link_range, self.model.nbody - 1)
@@ -1057,7 +1090,9 @@ class SRLMujocoV2Env:
         # Stochastically open the next 5 ms level as curriculum progresses.
         # At full progress this samples uniformly from 0..configured_max.
         scaled_max = configured_max * self.episode_dr_progress
-        if self.dr_scenario in ("fixed_delay", "combined_hard") and scaled_max > 0.0:
+        if self.dr_scenario in (
+            "fixed_delay", "combined_hard", "low_friction_fixed_delay"
+        ) and scaled_max > 0.0:
             # Targeted episodes always use the current curriculum frontier:
             # 5 ms early, 10 ms midway, and 15 ms at full DR.
             self.action_delay_physics_steps = min(

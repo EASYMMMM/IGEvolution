@@ -365,7 +365,33 @@ python SRL_Evo_train.py \
 
 
 
-
+python collect_concurrent_estimator_diagnostics.py \
+  task=SRL_Real_Bot_Concurrent \
+  train=SRL_Real_Bot_ConcurrentPPO \
+  checkpoint=runs/SRL_Real_Bot_v2_concurrent_s4_seed45_08-10-39-22/nn/last_SRL_Real_Bot_v2_concurrent_s4_seed45_ep_3400_rew_47289.953.pth \
+  headless=True \
+  seed=45 \
+  sim_device=cuda:0 \
+  rl_device=cuda:0 \
+  task.env.task_training_stage=3 \
+  task.task.randomize=True \
+  task.task.vel_pertubation=True \
+  task.env.asset.assetFileName=mjcf/srl_real/srl_real_bot_v2.xml \
+  task.env.forceControl=False \
+  task.env.pdControl=True \
+  task.env.srl_action_filter_enable=True \
+  'task.env.default_joint_angles=[0,-0.55,-0.3,0,-0.55,-0.3]' \
+  'task.env.srl_effort_limits=[90,90,350,90,90,350]' \
+  train.params.config.concurrent_estimator_history_len=10 \
+  +diagnostics.num_envs=64 \
+  +diagnostics.collect_steps=5000 \
+  +diagnostics.startup_steps=300 \
+  +diagnostics.fixed_command=True \
+  +diagnostics.target_vx=1.0 \
+  +diagnostics.target_wz=0.0 \
+  +diagnostics.target_height=1.0 \
+  +diagnostics.full_strength_dr=True \
+  +diagnostics.output=diagnostic_data/isaacgym_full_dr_gt_shadow.npz
 
 
 

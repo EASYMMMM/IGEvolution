@@ -215,6 +215,8 @@ class V2PPOConfig:
     dr_stratified_sampling_enable: bool = False
     dr_stratified_evaluation_enable: bool = False
     dr_scenario_probabilities: Tuple[float, ...] = (0.45, 0.15, 0.15, 0.05, 0.10, 0.10)
+    dr_low_friction_fixed_delay_probability: float = 0.0
+    dr_low_friction_fixed_delay_range: Tuple[float, float] = (0.7, 1.0)
     dr_hard_longitudinal_gravity_sigma_range: Tuple[float, float] = (1.5, 2.5)
     dr_hard_lateral_gravity_sigma_range: Tuple[float, float] = (1.0, 2.0)
     dr_combined_longitudinal_gravity_sigma_range: Tuple[float, float] = (2.0, 3.0)
@@ -344,6 +346,12 @@ def make_env_config(cfg: V2PPOConfig, *, evaluation: bool = False):
         dr_joint_limit_std=cfg.dr_joint_limit_std,
         dr_stratified_sampling_enable=stratified_sampling,
         dr_scenario_probabilities=cfg.dr_scenario_probabilities,
+        dr_low_friction_fixed_delay_probability=(
+            cfg.dr_low_friction_fixed_delay_probability
+        ),
+        dr_low_friction_fixed_delay_range=(
+            cfg.dr_low_friction_fixed_delay_range
+        ),
         dr_hard_longitudinal_gravity_sigma_range=(
             cfg.dr_hard_longitudinal_gravity_sigma_range
         ),

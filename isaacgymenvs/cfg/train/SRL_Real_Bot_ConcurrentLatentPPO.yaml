@@ -1,0 +1,44 @@
+defaults:
+  - SRL_Real_Bot_ConcurrentPPO
+  - _self_
+
+params:
+  algo:
+    name: srl_bot_concurrent_latent
+
+  config:
+    # Causal history encoder: 10 x 26 -> explicit(4) + latent(16).
+    latent_history_len: 10
+    latent_dim: 16
+    latent_encoder_hidden_dims: [256, 128, 64]
+    latent_decoder_hidden_dims: [128, 128]
+    latent_learning_rate: 1e-3
+    latent_mini_epochs: 2
+    latent_minibatch_size: 8192
+    latent_samples_per_step: 256
+    latent_grad_norm: 1.0
+    latent_update_normalization: True
+
+    # The reconstruction objective makes the latent carry predictive dynamics.
+    latent_use_next_observation_loss: True
+    latent_explicit_loss_coef: 1.0
+    latent_next_observation_loss_coef: 1.0
+    latent_l2_loss_coef: 1e-4
+
+    # These heads and simulator labels are present for controlled ablations.
+    # They do not affect the task reward and are disabled by default.
+    latent_use_com_cop_auxiliary: False
+    latent_use_contact_auxiliary: False
+    latent_com_cop_loss_coef: 0.25
+    latent_contact_loss_coef: 0.1
+
+    # The latent itself is encouraged to be left/right invariant; the actor's
+    # ordinary symmetry loss still handles mirrored kinematics and actions.
+    latent_use_mirror_consistency: True
+    latent_mirror_consistency_loss_coef: 0.05
+
+    latent_eval_use_estimator: True
+
+    # Kept equal so the inherited bootstrap plumbing is initialized safely.
+    concurrent_estimator_history_len: ${.latent_history_len}
+

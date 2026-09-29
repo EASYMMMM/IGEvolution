@@ -68,6 +68,8 @@ from .SRLEvo.srl_hri import SRL_HRI
 from .SRLEvo.srl_bot import SRL_bot
 from .SRLEvo.srl_real_bot import SRL_Real_Bot
 from .SRLEvo.srl_real_bot_concurrent import SRL_Real_Bot_Concurrent
+from .SRLEvo.srl_real_bot_concurrent_v2 import SRL_Real_Bot_Concurrent_v2
+from .SRLEvo.srl_real_bot_concurrent_latent import SRL_Real_Bot_ConcurrentLatent
 from .SRLEvo.srl_real_bot_compliant import SRL_Real_Bot_Compliant
 from .SRLEvo.srl_real_bot_compliant_concurrent import SRL_Real_Bot_Compliant_Concurrent
 from .SRLEvo.srl_real_hri import SRL_Real_HRI
@@ -140,6 +142,8 @@ isaacgym_task_map = {
     "SRL_HRI":SRL_HRI,
     "SRL_Real_Bot":SRL_Real_Bot,
     "SRL_Real_Bot_Concurrent":SRL_Real_Bot_Concurrent,
+    "SRL_Real_Bot_Concurrent_v2":SRL_Real_Bot_Concurrent_v2,
+    "SRL_Real_Bot_ConcurrentLatent":SRL_Real_Bot_ConcurrentLatent,
     "SRL_Real_HRI":SRL_Real_HRI,
     "SRL_Real_Bot_Vir":SRL_Real_Bot_Vir,
     # "HumanoidSRLGym": HumanoidAMPSRLTest,

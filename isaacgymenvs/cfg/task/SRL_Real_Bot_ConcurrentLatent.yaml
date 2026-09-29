@@ -1,0 +1,12 @@
+defaults:
+  - SRL_Real_Bot_Concurrent
+  - _self_
+
+name: SRL_Real_Bot_ConcurrentLatent
+
+env:
+  # Raw task observation: 133 deployable + 4 simulator truth + 16 label slots.
+  # The agent replaces the final 20 values with explicit(4) + latent(16).
+  latent_contact_force_threshold: 5.0
+  latent_contact_height_threshold: 0.055
+  latent_track_randomized_body_masses: True

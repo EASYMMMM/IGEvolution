@@ -102,6 +102,8 @@ def launch_rlg_hydra(cfg: DictConfig):
     from isaacgymenvs.learning.SRLEvo import srl_network_builder
     from isaacgymenvs.learning.SRLEvo import srl_bot_continuous
     from isaacgymenvs.learning.SRLEvo import srl_bot_concurrent
+    from isaacgymenvs.learning.SRLEvo import srl_bot_concurrent_v2
+    from isaacgymenvs.learning.SRLEvo import srl_bot_concurrent_latent
     import isaacgymenvs
 
 
@@ -198,12 +200,16 @@ def launch_rlg_hydra(cfg: DictConfig):
         # SRL 
         runner.algo_factory.register_builder('srl_bot_continuous', lambda **kwargs : srl_bot_continuous.SRL_Bot_Agent(**kwargs))
         runner.algo_factory.register_builder('srl_bot_concurrent', lambda **kwargs : srl_bot_concurrent.SRL_Bot_Concurrent_Agent(**kwargs))
+        runner.algo_factory.register_builder('srl_bot_concurrent_v2', lambda **kwargs : srl_bot_concurrent_v2.SRL_Bot_Concurrent_v2_Agent(**kwargs))
+        runner.algo_factory.register_builder('srl_bot_concurrent_latent', lambda **kwargs : srl_bot_concurrent_latent.SRL_Bot_ConcurrentLatent_Agent(**kwargs))
         runner.algo_factory.register_builder('srl_continuous', lambda **kwargs : srl_continuous.SRLAgent(**kwargs))
         runner.algo_factory.register_builder('srl_continuous_marl', lambda **kwargs : srl_continuous_marl.SRL_MultiAgent(**kwargs))
         runner.player_factory.register_builder('srl_continuous', lambda **kwargs : srl_players.SRLPlayerContinuous(**kwargs))
         runner.player_factory.register_builder('srl_continuous_marl', lambda **kwargs : srl_players.SRLPlayerContinuous(**kwargs))
         runner.player_factory.register_builder('srl_bot_continuous', lambda **kwargs : srl_players.SRL_Bot_PlayerContinuous(**kwargs))
         runner.player_factory.register_builder('srl_bot_concurrent', lambda **kwargs : srl_bot_concurrent.SRL_Bot_Concurrent_Player(**kwargs))
+        runner.player_factory.register_builder('srl_bot_concurrent_v2', lambda **kwargs : srl_bot_concurrent_v2.SRL_Bot_Concurrent_v2_Player(**kwargs))
+        runner.player_factory.register_builder('srl_bot_concurrent_latent', lambda **kwargs : srl_bot_concurrent_latent.SRL_Bot_ConcurrentLatent_Player(**kwargs))
         model_builder.register_model('continuous_srl', lambda network, **kwargs : srl_models.ModelSRLContinuous(network))
         model_builder.register_network('amp_humanoid', lambda **kwargs : srl_network_builder.HumanoidBuilder())
         model_builder.register_network('srl', lambda **kwargs : srl_network_builder.SRLBuilder())
