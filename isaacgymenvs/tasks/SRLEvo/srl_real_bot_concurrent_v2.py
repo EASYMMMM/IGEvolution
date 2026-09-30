@@ -1,7 +1,8 @@
 from isaacgymenvs.tasks.SRLEvo.srl_real_bot import SRL_Real_Bot
+from isaacgymenvs.tasks.SRLEvo.stable_gait_rewards import StableGaitRewardMixin
 
 
-class SRL_Real_Bot_Concurrent_v2(SRL_Real_Bot):
+class SRL_Real_Bot_Concurrent_v2(StableGaitRewardMixin, SRL_Real_Bot):
     """SRL task exposing five complete 30-D frames to Concurrent_v2."""
 
     def __init__(self, cfg, *args, **kwargs):

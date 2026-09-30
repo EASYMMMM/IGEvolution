@@ -3,10 +3,11 @@ import torch
 from gym import spaces
 
 from isaacgymenvs.tasks.SRLEvo.srl_real_bot import SRL_Real_Bot
+from isaacgymenvs.tasks.SRLEvo.stable_gait_rewards import StableGaitRewardMixin
 from isaacgymenvs.utils.torch_jit_utils import quat_rotate_inverse
 
 
-class SRL_Real_Bot_ConcurrentLatent(SRL_Real_Bot):
+class SRL_Real_Bot_ConcurrentLatent(StableGaitRewardMixin, SRL_Real_Bot):
     """SRL task exposing supervision slots for the concurrent latent encoder."""
 
     deployable_obs_dim = 133

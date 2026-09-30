@@ -5,6 +5,10 @@ defaults:
 name: SRL_Real_Bot_ConcurrentLatent
 
 env:
+  # Coefficients are inherited from Concurrent; one switch enables all penalties.
+  # Stage 1/2: False. Stage 3/4: task.env.stable_gait_reward.enable=True.
+  stable_gait_reward:
+    enable: False
   # Raw task observation: 133 deployable + 4 simulator truth + 16 label slots.
   # The agent replaces the final 20 values with explicit(4) + latent(16).
   latent_contact_force_threshold: 5.0

@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 import numpy as np
 import torch
 
@@ -64,6 +67,8 @@ class SRL_Bot_ConcurrentLatent_Agent(SRL_Bot_Concurrent_Agent):
         self.estimator_minibatch_size = int(
             config.get("latent_minibatch_size", 8192)
         )
+        if self.estimator_minibatch_size < 2:
+            raise ValueError("latent_minibatch_size must fit an original/mirror pair")
         self.estimator_samples_per_step = int(
             config.get("latent_samples_per_step", 256)
         )
@@ -81,9 +86,19 @@ class SRL_Bot_ConcurrentLatent_Agent(SRL_Bot_Concurrent_Agent):
         self.use_contact_auxiliary = bool(
             config.get("latent_use_contact_auxiliary", False)
         )
-        self.use_mirror_consistency = bool(
-            config.get("latent_use_mirror_consistency", True)
-        )
+        if bool(config.get("latent_use_mirror_consistency", False)):
+            raise ValueError("Latent v2 removes mirror-latent equality; set latent_use_mirror_consistency=False")
+        self.est_only_after_epochs = int(config.get("latent_est_only_after_epochs", 600))
+        self.est_only_min_task_stage = int(config.get("latent_est_only_min_task_stage", 3))
+        if self.est_only_after_epochs < -1:
+            raise ValueError("latent_est_only_after_epochs must be >= 0, or -1 to disable")
+        self.latent_stage_start_epoch = int(self.epoch_num)
+        self.latent_diagnostics_every = int(config.get("latent_diagnostics_every", 25))
+        self.latent_diagnostics_samples = int(config.get("latent_diagnostics_samples", 1024))
+        if self.latent_diagnostics_every < 1 or self.latent_diagnostics_samples < 2:
+            raise ValueError("Latent diagnostics require interval >= 1 and samples >= 2")
+        self.latent_diagnostics = {}
+        self._est_only_announced = False
         self.loss_weights = {
             "explicit": float(config.get("latent_explicit_loss_coef", 1.0)),
             "next_observation": float(
@@ -91,21 +106,21 @@ class SRL_Bot_ConcurrentLatent_Agent(SRL_Bot_Concurrent_Agent):
             ),
             "com_cop": float(config.get("latent_com_cop_loss_coef", 0.25)),
             "contact": float(config.get("latent_contact_loss_coef", 0.1)),
-            "mirror_latent": float(
-                config.get("latent_mirror_consistency_loss_coef", 0.05)
-            ),
             "latent_l2": float(config.get("latent_l2_loss_coef", 1e-4)),
         }
 
         self.mirrored_estimator_history = None
         self.pending_decoder_history = None
         self.pending_decoder_explicit_target = None
+        self.pending_decoder_mirrored_history = None
         self.latent_training_mirrored_history = []
         self.latent_training_com_cop = []
         self.latent_training_contacts = []
         self.latent_decoder_history = []
         self.latent_decoder_explicit_targets = []
         self.latent_decoder_next_targets = []
+        self.latent_decoder_mirrored_history = []
+        self.latent_decoder_mirrored_next_targets = []
         self.latent_metrics = {}
         print(
             "Concurrent latent encoder enabled: history={} input={} latent={} "
@@ -118,6 +133,22 @@ class SRL_Bot_ConcurrentLatent_Agent(SRL_Bot_Concurrent_Agent):
                 self.use_contact_auxiliary,
             )
         )
+
+    @property
+    def est_only_active(self):
+        after = getattr(self, "est_only_after_epochs", -1)
+        return (after >= 0
+                and self.concurrent_task_training_stage >= self.est_only_min_task_stage
+                and int(self.epoch_num) - self.latent_stage_start_epoch >= after)
+
+    @property
+    def bootstrap_probability(self):
+        return 1.0 if self.est_only_active else super().bootstrap_probability
+
+    def _maybe_update_bootstrap_level(self, normalized_mse):
+        if self.est_only_active:
+            return
+        super()._maybe_update_bootstrap_level(normalized_mse)
 
     def _update_mirrored_history(self, mirrored_deployable, reset_env_ids):
         current = mirrored_deployable[:, : self.estimator_input_dim]
@@ -135,7 +166,7 @@ class SRL_Bot_ConcurrentLatent_Agent(SRL_Bot_Concurrent_Agent):
                 reset_env_ids
             ].unsqueeze(1).expand(-1, self.concurrent_estimator.history_len, -1)
 
-    def _collect_decoder_transitions(self, current_frame, reset_ids):
+    def _collect_decoder_transitions(self, current_frame, mirrored_frame, reset_ids):
         if self.pending_decoder_history is not None:
             valid = torch.ones(
                 current_frame.shape[0], device=self.ppo_device, dtype=torch.bool
@@ -155,6 +186,12 @@ class SRL_Bot_ConcurrentLatent_Agent(SRL_Bot_Concurrent_Agent):
                 )
                 self.latent_decoder_next_targets.append(
                     current_frame[selected].detach().clone()
+                )
+                self.latent_decoder_mirrored_history.append(
+                    self.pending_decoder_mirrored_history[selected].detach().clone()
+                )
+                self.latent_decoder_mirrored_next_targets.append(
+                    mirrored_frame[selected].detach().clone()
                 )
 
     def _build_concurrent_actor_observation(self, raw_obs, done_env_ids):
@@ -183,7 +220,8 @@ class SRL_Bot_ConcurrentLatent_Agent(SRL_Bot_Concurrent_Agent):
 
         if not self._observation_layout_validated:
             state_error = (raw_truth - truth).abs().max()
-            if float(state_error.item()) > 1e-5:
+            mirror_error = (mirrored_observation[:, 133:137] - truth * self._mirror_sign).abs().max()
+            if max(float(state_error.item()), float(mirror_error.item())) > 1e-5:
                 raise RuntimeError(
                     "ConcurrentLatent truth/state layout mismatch: {:.3e}".format(
                         state_error.item()
@@ -196,7 +234,9 @@ class SRL_Bot_ConcurrentLatent_Agent(SRL_Bot_Concurrent_Agent):
             )
 
         current_frame = deployable[:, : self.estimator_input_dim]
-        self._collect_decoder_transitions(current_frame, reset_ids)
+        self._collect_decoder_transitions(
+            current_frame, mirrored_deployable[:, :self.estimator_input_dim], reset_ids
+        )
         self._update_history(deployable, reset_ids)
         self._update_mirrored_history(mirrored_deployable, reset_ids)
 
@@ -204,6 +244,7 @@ class SRL_Bot_ConcurrentLatent_Agent(SRL_Bot_Concurrent_Agent):
         # histories, so rollout inference must not retain a horizon-long graph.
         with torch.no_grad():
             output = self.concurrent_estimator(self.estimator_history)
+            mirrored_output = self.concurrent_estimator(self.mirrored_estimator_history)
         estimate = output["explicit"]
         latent = output["latent"]
         selected_explicit = torch.where(
@@ -211,7 +252,7 @@ class SRL_Bot_ConcurrentLatent_Agent(SRL_Bot_Concurrent_Agent):
         )
         mirrored_explicit = torch.where(
             self.episode_uses_estimator.unsqueeze(1),
-            estimate.detach() * self._mirror_sign,
+            mirrored_output["explicit"],
             mirrored_observation[
                 :,
                 self.deployable_obs_dim : self.deployable_obs_dim
@@ -222,7 +263,7 @@ class SRL_Bot_ConcurrentLatent_Agent(SRL_Bot_Concurrent_Agent):
             (deployable, selected_explicit, latent.detach()), dim=-1
         )
         mirrored_actor_observation = torch.cat(
-            (mirrored_deployable, mirrored_explicit, latent.detach()), dim=-1
+            (mirrored_deployable, mirrored_explicit, mirrored_output["latent"]), dim=-1
         )
 
         count = min(self.estimator_samples_per_step, observation.shape[0])
@@ -244,15 +285,22 @@ class SRL_Bot_ConcurrentLatent_Agent(SRL_Bot_Concurrent_Agent):
         )
         self.pending_decoder_history = self.estimator_history.detach().clone()
         self.pending_decoder_explicit_target = truth.detach().clone()
+        self.pending_decoder_mirrored_history = self.mirrored_estimator_history.detach().clone()
         return actor_observation, mirrored_actor_observation, estimate, truth
 
     def play_steps(self):
+        if self.est_only_active and not self._est_only_announced:
+            print("Latent late EST-only enabled: new episodes use 100% estimates; "
+                  "existing GT episodes finish before switching.")
+            self._est_only_announced = True
         self.latent_training_mirrored_history = []
         self.latent_training_com_cop = []
         self.latent_training_contacts = []
         self.latent_decoder_history = []
         self.latent_decoder_explicit_targets = []
         self.latent_decoder_next_targets = []
+        self.latent_decoder_mirrored_history = []
+        self.latent_decoder_mirrored_next_targets = []
         return super().play_steps()
 
     def _weighted_sum(self, losses):
@@ -282,36 +330,59 @@ class SRL_Bot_ConcurrentLatent_Agent(SRL_Bot_Concurrent_Agent):
             if self.latent_decoder_next_targets
             else None
         )
+        decoder_mirrored_history = (
+            torch.cat(self.latent_decoder_mirrored_history, dim=0)
+            if self.latent_decoder_mirrored_history else None
+        )
+        decoder_mirrored_next = (
+            torch.cat(self.latent_decoder_mirrored_next_targets, dim=0)
+            if self.latent_decoder_mirrored_next_targets else None
+        )
+
+        # Measure fresh rollout samples BEFORE fitting/updating their normalizers.
+        self.latent_diagnostics = {}
+        if int(self.epoch_num) % self.latent_diagnostics_every == 0:
+            probe_history = decoder_history if decoder_history is not None else history
+            probe_truth = decoder_explicit if decoder_history is not None else explicit_targets
+            count = min(self.latent_diagnostics_samples, probe_history.shape[0])
+            ids = torch.linspace(0, probe_history.shape[0] - 1, count,
+                                 device=self.ppo_device).long()
+            self.latent_diagnostics = self.concurrent_estimator.diagnostic_metrics(
+                probe_history[ids], probe_truth[ids],
+                next_target=decoder_next[ids] if decoder_next is not None else None,
+            )
 
         if self.update_estimator_normalization:
             self.concurrent_estimator.update_normalization(
-                history,
-                explicit_targets,
-                next_target=decoder_next if self.use_next_observation_loss else None,
-                com_cop_target=com_cop_targets if self.use_com_cop_auxiliary else None,
+                torch.cat((history, mirrored_history)),
+                torch.cat((explicit_targets, explicit_targets * self._mirror_sign)),
+                next_target=(torch.cat((decoder_next, decoder_mirrored_next))
+                             if self.use_next_observation_loss and decoder_next is not None else None),
+                com_cop_target=(torch.cat((com_cop_targets, com_cop_targets *
+                                          com_cop_targets.new_tensor([1., -1., 1.])))
+                                if self.use_com_cop_auxiliary else None),
             )
 
         self.concurrent_estimator.train()
         metrics = {}
         total_samples = history.shape[0]
+        # The configured batch budget includes both original and mirrored samples.
+        original_batch_size = self.estimator_minibatch_size // 2
         for _ in range(self.estimator_mini_epochs):
             permutation = torch.randperm(total_samples, device=self.ppo_device)
-            for start in range(0, total_samples, self.estimator_minibatch_size):
-                ids = permutation[start : start + self.estimator_minibatch_size]
+            for start in range(0, total_samples, original_batch_size):
+                ids = permutation[start : start + original_batch_size]
                 losses = self.concurrent_estimator.compute_losses(
-                    history[ids],
-                    explicit_targets[ids],
+                    torch.cat((history[ids], mirrored_history[ids])),
+                    torch.cat((explicit_targets[ids], explicit_targets[ids] * self._mirror_sign)),
                     com_cop_target=(
-                        com_cop_targets[ids] if self.use_com_cop_auxiliary else None
+                        torch.cat((com_cop_targets[ids], com_cop_targets[ids] *
+                                   com_cop_targets.new_tensor([1., -1., 1.])))
+                        if self.use_com_cop_auxiliary else None
                     ),
                     contact_target=(
-                        contact_targets[ids]
+                        torch.cat((contact_targets[ids], contact_targets[ids][:, [1, 0]]))
                         if self.use_contact_auxiliary
-                        else None
-                    ),
-                    mirrored_history=(
-                        mirrored_history[ids]
-                        if self.use_mirror_consistency
                         else None
                     ),
                 )
@@ -324,9 +395,10 @@ class SRL_Bot_ConcurrentLatent_Agent(SRL_Bot_Concurrent_Agent):
                         device=self.ppo_device,
                     )
                     decoder_losses = self.concurrent_estimator.compute_losses(
-                        decoder_history[decoder_ids],
-                        decoder_explicit[decoder_ids],
-                        next_target=decoder_next[decoder_ids],
+                        torch.cat((decoder_history[decoder_ids], decoder_mirrored_history[decoder_ids])),
+                        torch.cat((decoder_explicit[decoder_ids],
+                                   decoder_explicit[decoder_ids] * self._mirror_sign)),
+                        next_target=torch.cat((decoder_next[decoder_ids], decoder_mirrored_next[decoder_ids])),
                     )
                     next_loss = decoder_losses["next_observation"]
                     total_loss = total_loss + self.loss_weights["next_observation"] * next_loss
@@ -353,6 +425,9 @@ class SRL_Bot_ConcurrentLatent_Agent(SRL_Bot_Concurrent_Agent):
         frame = self.frame // self.num_agents
         for name, value in self.latent_metrics.items():
             self.writer.add_scalar("concurrent_latent/{}_loss".format(name), value, frame)
+        self.writer.add_scalar("concurrent_latent/est_only_active", float(self.est_only_active), frame)
+        for name, value in self.latent_diagnostics.items():
+            self.writer.add_scalar("latent_diagnostics/pre_update/" + name, value, frame)
 
     def get_full_state_weights(self):
         state = super().get_full_state_weights()
@@ -363,12 +438,22 @@ class SRL_Bot_ConcurrentLatent_Agent(SRL_Bot_Concurrent_Agent):
         state["concurrent_latent_config"] = state.pop(
             "concurrent_estimator_config"
         )
+        state["concurrent_latent_schedule"] = {
+            "stage_start_epoch": self.latent_stage_start_epoch,
+            "task_training_stage": self.concurrent_task_training_stage,
+        }
         return state
 
     def set_full_state_weights(self, weights, set_epoch=True):
         translated = dict(weights)
         if "concurrent_latent_model" not in translated:
             raise KeyError("checkpoint does not contain concurrent_latent_model")
+        restored = ConcurrentLatentEncoder.from_checkpoint(
+            translated["concurrent_latent_model"], translated.get("concurrent_latent_config", {})
+        )
+        if restored.model_config() != self.concurrent_estimator.model_config():
+            raise ValueError("Latent training checkpoint architecture differs from this v2 encoder. "
+                             "Start this design from scratch; legacy checkpoints remain inference-only.")
         translated["concurrent_estimator"] = translated["concurrent_latent_model"]
         translated["concurrent_estimator_optimizer"] = translated.get(
             "concurrent_latent_optimizer"
@@ -378,7 +463,15 @@ class SRL_Bot_ConcurrentLatent_Agent(SRL_Bot_Concurrent_Agent):
         )
         if translated["concurrent_estimator_optimizer"] is None:
             translated.pop("concurrent_estimator_optimizer")
-        return super().set_full_state_weights(translated, set_epoch=set_epoch)
+        schedule = weights.get("concurrent_latent_schedule", {})
+        same_stage = schedule.get("task_training_stage") == self.concurrent_task_training_stage
+        self.latent_stage_start_epoch = (
+            int(schedule["stage_start_epoch"]) if same_stage and set_epoch
+            else int(weights.get("epoch", self.epoch_num) if set_epoch else self.epoch_num)
+        )
+        result = super().set_full_state_weights(translated, set_epoch=set_epoch)
+        self._est_only_announced = False
+        return result
 
 
 class SRL_Bot_ConcurrentLatent_Player(common_player.CommonPlayer):
@@ -394,6 +487,15 @@ class SRL_Bot_ConcurrentLatent_Player(common_player.CommonPlayer):
         super().__init__(params)
         config = params["config"]
         self.eval_use_estimator = bool(config.get("latent_eval_use_estimator", True))
+        self.eval_seed = params.get("seed", config.get("seed"))
+        self.eval_latent_mode = str(config.get("latent_eval_mode", "normal"))
+        if self.eval_latent_mode not in ("normal", "zero", "shuffle"):
+            raise ValueError("latent_eval_mode must be normal, zero, or shuffle")
+        self.latent_evaluation_enable = bool(config.get("latent_evaluation_enable", False))
+        self.latent_evaluation_steps = int(config.get("latent_evaluation_steps", 5000))
+        self.latent_evaluation_output = str(config.get("latent_evaluation_output", ""))
+        if self.latent_evaluation_steps < 1:
+            raise ValueError("latent_evaluation_steps must be positive")
         self.encoder = ConcurrentLatentEncoder(
             input_dim=self.input_dim,
             history_len=int(config.get("latent_history_len", 10)),
@@ -419,23 +521,13 @@ class SRL_Bot_ConcurrentLatent_Player(common_player.CommonPlayer):
             self.model.running_mean_std.load_state_dict(checkpoint["running_mean_std"])
         if "concurrent_latent_model" not in checkpoint:
             raise KeyError("checkpoint does not contain concurrent_latent_model")
-        checkpoint_config = checkpoint.get("concurrent_latent_config", {})
-        expected = self.encoder.model_config()
-        for key in (
-            "input_dim",
-            "history_len",
-            "explicit_dim",
-            "latent_dim",
-            "hidden_dims",
-            "decoder_hidden_dims",
-        ):
-            if key in checkpoint_config and checkpoint_config[key] != expected[key]:
-                raise RuntimeError(
-                    "latent checkpoint {}={} does not match config {}".format(
-                        key, checkpoint_config[key], expected[key]
-                    )
-                )
-        self.encoder.load_state_dict(checkpoint["concurrent_latent_model"])
+        self.encoder = ConcurrentLatentEncoder.from_checkpoint(
+            checkpoint["concurrent_latent_model"], checkpoint.get("concurrent_latent_config", {})
+        ).to(self.device).eval()
+        if (self.encoder.input_dim, self.encoder.explicit_dim, self.encoder.latent_dim) != (26, 4, 16):
+            raise ValueError("Player requires encoder dimensions 26 -> explicit(4) + latent(16)")
+        self.history = None
+        self.checkpoint_path = str(fn)
         env_state = checkpoint.get("env_state")
         if self.env is not None and env_state is not None:
             self.env.set_env_state(env_state)
@@ -473,13 +565,113 @@ class SRL_Bot_ConcurrentLatent_Player(common_player.CommonPlayer):
                 )
         self.pending_reset_ids = None
         output = self.encoder(self.history)
+        self.last_explicit_error = output["explicit"] - observation[:, 133:137]
         if self.eval_use_estimator:
             explicit = output["explicit"]
         else:
             explicit = observation[
                 :, self.deployable_obs_dim : self.deployable_obs_dim + self.explicit_dim
             ]
-        return torch.cat((deployable, explicit, output["latent"]), dim=-1)
+        latent = self.encoder.ablate_latent(output["latent"], self.eval_latent_mode)
+        return torch.cat((deployable, explicit, latent), dim=-1)
+
+    def run(self):
+        if not self.latent_evaluation_enable:
+            return super().run()
+        if self.is_rnn or self.num_agents != 1:
+            raise ValueError("Latent diagnostics require the feed-forward single-agent SRL task")
+        # SRL ends at progress >= episodeLength - 1. Reserve the extra tick so
+        # the requested number of control steps is actually measurable.
+        self.env.max_episode_length = max(
+            self.env.max_episode_length, self.latent_evaluation_steps + 1
+        )
+        if self.eval_latent_mode == "shuffle" and self.env.num_envs < 2:
+            raise ValueError("shuffle evaluation requires num_envs >= 2")
+        self.env_reset(self.env)
+        self.history = None
+        self.pending_reset_ids = None
+        env = self.env
+        n = env.num_envs
+        device = env.device
+        active = torch.ones(n, device=device, dtype=torch.bool)
+        failed = torch.zeros_like(active)
+        timed_out = torch.zeros_like(active)
+        lengths = torch.zeros(n, device=device)
+        returns = torch.zeros_like(lengths)
+        roll2 = torch.zeros_like(lengths)
+        hip2 = torch.zeros_like(lengths)
+        separation = torch.zeros_like(lengths)
+        vx_error = torch.zeros_like(lengths)
+        explicit_abs = torch.zeros(n, 4, device=device)
+        explicit2 = torch.zeros_like(explicit_abs)
+        # Each environment contributes its first episode only; no short-episode
+        # overrepresentation. Use the same seed/config in separate mode runs.
+        with torch.no_grad():
+            for _ in range(self.latent_evaluation_steps):
+                obs, _ = self._env_reset_done()
+                action = self.get_action(obs, is_determenistic=True)
+                ids = active.nonzero(as_tuple=False).reshape(-1)
+                roll2[ids] += env.full_obs_buf[ids, 9].square()
+                hip2[ids] += env.dof_vel[ids][:, [0, 3]].square().mean(dim=1)
+                vx_error[ids] += (env.full_obs_buf[ids, 1] - env.target_vel_x[ids]).abs()
+                root = env.srl_root_states[ids]
+                qx, qy, qz, qw = root[:, 3:7].unbind(dim=1)
+                yaw = torch.atan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy.square() + qz.square()))
+                feet = env._rigid_body_pos[ids][:, env._srl_end_ids]
+                delta = feet[:, 0] - feet[:, 1]
+                separation[ids] += (-yaw.sin() * delta[:, 0] + yaw.cos() * delta[:, 1]).abs()
+                error = self.last_explicit_error.to(device)[ids]
+                explicit_abs[ids] += error.abs()
+                explicit2[ids] += error.square()
+                _, reward, done, info = self.env_step(env, action)
+                lengths[ids] += 1
+                returns[ids] += reward.to(device).reshape(n, -1).mean(dim=1)[ids]
+                done = done.to(device).reshape(-1).bool()
+                terminated = env._terminate_buf.reshape(-1).bool()
+                failed |= active & terminated
+                timed_out |= active & done & ~terminated
+                active &= ~(done | terminated)
+                if self.render_env:
+                    env.render(mode="human")
+                if not active.any():
+                    break
+        denominator = lengths.clamp_min(1)
+        success = ~failed & (lengths >= self.latent_evaluation_steps)
+        rows = []
+        for i in range(n):
+            rows.append({
+                "env_id": i, "steps": int(lengths[i].item()),
+                "success": bool(success[i].item()), "failed": bool(failed[i].item()),
+                "environment_timeout": bool(timed_out[i].item()),
+                "return": returns[i].item(),
+                "roll_rms": (roll2[i] / denominator[i]).sqrt().item(),
+                "hip_x_velocity_rms": (hip2[i] / denominator[i]).sqrt().item(),
+                "foot_separation": (separation[i] / denominator[i]).item(),
+                "vx_tracking_mae": (vx_error[i] / denominator[i]).item(),
+                "explicit_mae": (explicit_abs[i] / denominator[i]).cpu().tolist(),
+                "explicit_rmse": (explicit2[i] / denominator[i]).sqrt().cpu().tolist(),
+            })
+        report = {
+            "checkpoint": getattr(self, "checkpoint_path", ""),
+            "model_version": self.encoder.model_version,
+            "mode": self.eval_latent_mode, "explicit_mode": "est" if self.eval_use_estimator else "gt",
+            "seed": self.eval_seed, "horizon": self.latent_evaluation_steps,
+            "num_envs": n, "success_rate": success.float().mean().item(),
+            "mean_length": lengths.mean().item(), "mean_return": returns.mean().item(),
+            "episodes": rows,
+        }
+        print("[latent eval {}/{}] len={:.0f} success={:.3f} return={:.0f}".format(
+            report["explicit_mode"], report["mode"], report["mean_length"],
+            report["success_rate"], report["mean_return"]))
+        if timed_out.any() and (lengths[timed_out] < self.latent_evaluation_steps).any():
+            print("WARNING: environment episodeLength is shorter than requested evaluation horizon; "
+                  "these episodes are censored, not counted as full-horizon successes.")
+        if self.latent_evaluation_output:
+            path = Path(self.latent_evaluation_output)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+            print("Latent evaluation saved to {}".format(path))
+        return report
 
     def get_action(self, obs_dict, is_determenistic=False):
         with torch.no_grad():

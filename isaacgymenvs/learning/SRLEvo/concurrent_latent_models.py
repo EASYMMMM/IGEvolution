@@ -17,6 +17,7 @@ class ConcurrentLatentEncoder(nn.Module):
         com_cop_dim=3,
         contact_dim=2,
         normalization_epsilon=1e-4,
+        model_version=2,
     ):
         super().__init__()
         self.input_dim = int(input_dim)
@@ -28,6 +29,9 @@ class ConcurrentLatentEncoder(nn.Module):
         self.com_cop_dim = int(com_cop_dim)
         self.contact_dim = int(contact_dim)
         self.normalization_epsilon = float(normalization_epsilon)
+        self.model_version = int(model_version)
+        if self.model_version not in (1, 2):
+            raise ValueError("Unsupported latent model_version: {}".format(model_version))
 
         self.encoder = self._mlp(
             self.input_dim * self.history_len,
@@ -39,7 +43,9 @@ class ConcurrentLatentEncoder(nn.Module):
         self.latent_head = nn.Linear(feature_dim, self.latent_dim)
         self.com_cop_head = nn.Linear(feature_dim, self.com_cop_dim)
         self.contact_head = nn.Linear(feature_dim, self.contact_dim)
-        decoder_input_dim = self.input_dim + self.explicit_dim + self.latent_dim
+        decoder_input_dim = self.explicit_dim + self.latent_dim
+        if self.model_version == 1:
+            decoder_input_dim += self.input_dim
         self.next_observation_decoder = self._mlp(
             decoder_input_dim, self.decoder_hidden_dims, self.input_dim
         )
@@ -163,7 +169,6 @@ class ConcurrentLatentEncoder(nn.Module):
         next_target=None,
         com_cop_target=None,
         contact_target=None,
-        mirrored_history=None,
     ):
         output = self(history)
         explicit_target_normalized = (
@@ -177,15 +182,7 @@ class ConcurrentLatentEncoder(nn.Module):
         }
 
         if next_target is not None:
-            decoder_input = torch.cat(
-                (
-                    output["normalized_history"][:, -1],
-                    output["explicit_normalized"],
-                    output["latent"],
-                ),
-                dim=-1,
-            )
-            next_prediction = self.next_observation_decoder(decoder_input)
+            next_prediction = self.decode(output)
             next_target_normalized = (
                 next_target - self.next_mean
             ) / self._std(self.next_var)
@@ -204,15 +201,68 @@ class ConcurrentLatentEncoder(nn.Module):
             losses["contact"] = F.binary_cross_entropy_with_logits(
                 output["contact_logits"], contact_target
             )
-        if mirrored_history is not None:
-            mirrored_latent = self(mirrored_history)["latent"]
-            losses["mirror_latent"] = F.mse_loss(
-                output["latent"], mirrored_latent
-            )
         return losses
+
+    def decode(self, output, latent=None):
+        parts = [output["explicit_normalized"],
+                 output["latent"] if latent is None else latent]
+        if self.model_version == 1:
+            parts.insert(0, output["normalized_history"][:, -1])
+        return self.next_observation_decoder(torch.cat(parts, dim=-1))
+
+    @staticmethod
+    def ablate_latent(latent, mode):
+        if mode == "normal":
+            return latent
+        if mode == "zero":
+            return torch.zeros_like(latent)
+        if mode == "shuffle":
+            if latent.shape[0] < 2:
+                raise ValueError("shuffle requires at least two parallel environments/samples")
+            # A fixed derangement avoids extra RNG draws and self-assignment.
+            return latent.roll(1, dims=0)
+        raise ValueError("latent mode must be normal, zero, or shuffle")
+
+    @torch.no_grad()
+    def diagnostic_metrics(self, history, explicit_target, next_target=None):
+        output = self(history)
+        latent = output["latent"]
+        metrics = {"latent_std_{:02d}".format(i): value.item()
+                   for i, value in enumerate(latent.std(dim=0, unbiased=False))}
+        error = output["explicit"] - explicit_target
+        for i, name in enumerate(("height", "vx", "vy", "vz")):
+            metrics["explicit_{}_mae".format(name)] = error[:, i].abs().mean().item()
+        if next_target is not None:
+            target = (next_target - self.next_mean) / self._std(self.next_var)
+            for mode in ("normal", "zero", "shuffle"):
+                if mode == "shuffle" and latent.shape[0] < 2:
+                    continue
+                prediction = self.decode(output, self.ablate_latent(latent, mode))
+                metrics["next_mse_" + mode] = F.mse_loss(prediction, target).item()
+        return metrics
+
+    @classmethod
+    def from_checkpoint(cls, state, config):
+        config = dict(config)
+        input_dim = int(config.get("input_dim", 26))
+        encoded_dim = int(config.get("explicit_dim", 4)) + int(config.get("latent_dim", 16))
+        width = state["next_observation_decoder.0.weight"].shape[1]
+        if width == encoded_dim:
+            inferred = 2
+        elif width == input_dim + encoded_dim:
+            inferred = 1
+        else:
+            raise ValueError("Unrecognized latent decoder input width: {}".format(width))
+        if int(config.get("model_version", inferred)) != inferred:
+            raise ValueError("Latent checkpoint metadata disagrees with decoder weights")
+        config["model_version"] = inferred
+        model = cls(**config)
+        model.load_state_dict(state, strict=True)
+        return model
 
     def model_config(self):
         return {
+            "model_version": self.model_version,
             "input_dim": self.input_dim,
             "history_len": self.history_len,
             "explicit_dim": self.explicit_dim,
