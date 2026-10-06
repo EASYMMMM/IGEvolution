@@ -590,6 +590,8 @@ class SRL_Bot_ConcurrentLatent_Player(common_player.CommonPlayer):
         self.env_reset(self.env)
         self.history = None
         self.pending_reset_ids = None
+        # The vector environment keeps a batch axis even when num_envs == 1.
+        self.has_batch_dimension = True
         env = self.env
         n = env.num_envs
         device = env.device

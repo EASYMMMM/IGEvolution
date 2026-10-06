@@ -64,6 +64,27 @@ class StableGaitRewardMixin:
         self.stable_gait_landing_min_downward_speed = float(
             gait_cfg.get("landing_min_downward_speed", 0.03)
         )
+        self.stable_gait_swing_placement_enable = bool(
+            gait_cfg.get("swing_placement_enable", False)
+        )
+        self.stable_gait_swing_placement_min_separation = float(
+            gait_cfg.get("swing_placement_min_separation", 0.35)
+        )
+        self.stable_gait_swing_placement_max_separation = float(
+            gait_cfg.get("swing_placement_max_separation", 0.45)
+        )
+        self.stable_gait_swing_placement_narrow_scale = float(
+            gait_cfg.get("swing_placement_narrow_scale", 10.0)
+        )
+        self.stable_gait_swing_placement_wide_scale = float(
+            gait_cfg.get("swing_placement_wide_scale", 1.0)
+        )
+        self.stable_gait_swing_placement_max_height = float(
+            gait_cfg.get("swing_placement_max_height", 0.25)
+        )
+        self.stable_gait_swing_placement_min_downward_speed = float(
+            gait_cfg.get("swing_placement_min_downward_speed", 0.03)
+        )
         self.stable_gait_stance_slip_scale = float(
             gait_cfg.get("stance_slip_scale", 0.0)
         )
@@ -77,6 +98,10 @@ class StableGaitRewardMixin:
             raise ValueError("landing_max_separation must exceed landing_min_separation")
         if self.stable_gait_landing_approach_height <= self.stable_gait_landing_contact_height:
             raise ValueError("landing_approach_height must exceed landing_contact_height")
+        if self.stable_gait_swing_placement_max_separation <= self.stable_gait_swing_placement_min_separation:
+            raise ValueError("swing_placement_max_separation must exceed swing_placement_min_separation")
+        if self.stable_gait_swing_placement_max_height <= self.stable_gait_landing_contact_height:
+            raise ValueError("swing_placement_max_height must exceed landing_contact_height")
         if self.stable_gait_stance_slip_grace_steps < 0:
             raise ValueError("stance_slip_grace_steps must be nonnegative")
         self._stable_gait_contact_age = None
@@ -110,6 +135,7 @@ class StableGaitRewardMixin:
             + self.stable_gait_foot_separation_scale
             * penalties["foot_separation"]
             + penalties["landing_width"]
+            + penalties["swing_placement"]
             + self.stable_gait_stance_slip_scale * penalties["stance_slip"]
         )
 
@@ -245,6 +271,32 @@ class StableGaitRewardMixin:
                    + self.stable_gait_landing_wide_scale * wide.square())
             )
 
+        swing_placement_penalty = torch.zeros_like(foot_separation)
+        if self.stable_gait_swing_placement_enable:
+            descending = (
+                (~contact)
+                & (feet_pos[:, :, 2] <= self.stable_gait_swing_placement_max_height)
+                & (feet_vel[:, :, 2] < -self.stable_gait_swing_placement_min_downward_speed)
+            )
+            placement_active = (
+                (descending[:, 0] & contact[:, 1])
+                | (descending[:, 1] & contact[:, 0])
+            )
+            signed_separation = feet_local_y[:, 0] - feet_local_y[:, 1]
+            narrow = torch.clamp(
+                self.stable_gait_swing_placement_min_separation - signed_separation,
+                min=0.0,
+            )
+            wide = torch.clamp(
+                signed_separation - self.stable_gait_swing_placement_max_separation,
+                min=0.0,
+            )
+            swing_placement_penalty = (
+                relaxation * placement_active.to(foot_separation.dtype)
+                * (self.stable_gait_swing_placement_narrow_scale * narrow
+                   + self.stable_gait_swing_placement_wide_scale * wide)
+            )
+
         stance_slip_penalty = torch.zeros_like(foot_separation)
         if self.stable_gait_stance_slip_scale > 0.0:
             if self._stable_gait_contact_age is None:
@@ -277,5 +329,6 @@ class StableGaitRewardMixin:
             "foot_separation": foot_separation_penalty,
             "foot_separation_m": foot_separation,
             "landing_width": landing_width_penalty,
+            "swing_placement": swing_placement_penalty,
             "stance_slip": stance_slip_penalty,
         }
