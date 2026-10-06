@@ -9,6 +9,20 @@ env:
   # Stage 1/2: False. Stage 3/4: task.env.stable_gait_reward.enable=True.
   stable_gait_reward:
     enable: False
+    foot_channel_center: 0.19
+    foot_channel_half_width: 0.04
+    foot_separation_scale: 0.0
+    landing_width_enable: True
+    landing_min_separation: 0.34
+    landing_max_separation: 0.45
+    landing_narrow_scale: 10.0
+    landing_wide_scale: 0.5
+    landing_contact_height: 0.055
+    landing_approach_height: 0.12
+    landing_min_downward_speed: 0.03
+    stance_slip_scale: 0.0
+    stance_slip_deadband: 0.05
+    stance_slip_grace_steps: 2
   # Raw task observation: 133 deployable + 4 simulator truth + 16 label slots.
   # The agent replaces the final 20 values with explicit(4) + latent(16).
   latent_contact_force_threshold: 5.0

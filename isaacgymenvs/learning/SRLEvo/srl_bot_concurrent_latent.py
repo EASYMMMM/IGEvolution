@@ -604,6 +604,20 @@ class SRL_Bot_ConcurrentLatent_Player(common_player.CommonPlayer):
         vx_error = torch.zeros_like(lengths)
         explicit_abs = torch.zeros(n, 4, device=device)
         explicit2 = torch.zeros_like(explicit_abs)
+        foot_contact_height = env.stable_gait_landing_contact_height
+        feet_initial = env._rigid_body_pos[:, env._srl_end_ids, :]
+        previous_contact = feet_initial[:, :, 2] <= foot_contact_height
+        contact_age = previous_contact.long()
+        foot_anchor_xy = feet_initial[:, :, :2].clone()
+        touchdown_count = torch.zeros_like(lengths)
+        touchdown_separation_sum = torch.zeros_like(lengths)
+        touchdown_narrow_030 = torch.zeros_like(lengths)
+        touchdown_narrow_034 = torch.zeros_like(lengths)
+        touchdown_hip_x_sum = torch.zeros_like(lengths)
+        stance_frame_count = torch.zeros_like(lengths)
+        stance_lateral_speed_sum = torch.zeros_like(lengths)
+        stance_lateral_speed_over_005 = torch.zeros_like(lengths)
+        stance_lateral_drift_max = torch.zeros_like(lengths)
         # Each environment contributes its first episode only; no short-episode
         # overrepresentation. Use the same seed/config in separate mode runs.
         with torch.no_grad():
@@ -626,6 +640,61 @@ class SRL_Bot_ConcurrentLatent_Player(common_player.CommonPlayer):
                 _, reward, done, info = self.env_step(env, action)
                 lengths[ids] += 1
                 returns[ids] += reward.to(device).reshape(n, -1).mean(dim=1)[ids]
+                root_after = env.srl_root_states
+                qx, qy, qz, qw = root_after[:, 3:7].unbind(dim=1)
+                yaw_after = torch.atan2(2 * (qw * qz + qx * qy),
+                                        1 - 2 * (qy.square() + qz.square()))
+                feet_after = env._rigid_body_pos[:, env._srl_end_ids, :]
+                feet_vel_after = env._rigid_body_vel[:, env._srl_end_ids, :]
+                foot_delta = feet_after[:, 0] - feet_after[:, 1]
+                width_after = (
+                    -yaw_after.sin() * foot_delta[:, 0]
+                    + yaw_after.cos() * foot_delta[:, 1]
+                ).abs()
+                contact = feet_after[:, :, 2] <= foot_contact_height
+                touchdown = contact & ~previous_contact
+                touchdown_per_env = touchdown.sum(dim=1).to(lengths.dtype)
+                touchdown_count[ids] += touchdown_per_env[ids]
+                touchdown_separation_sum[ids] += (
+                    width_after * touchdown_per_env
+                )[ids]
+                touchdown_narrow_030[ids] += (
+                    (width_after < 0.30).to(lengths.dtype) * touchdown_per_env
+                )[ids]
+                touchdown_narrow_034[ids] += (
+                    (width_after < 0.34).to(lengths.dtype) * touchdown_per_env
+                )[ids]
+                touchdown_hip_x_sum[ids] += (
+                    env.dof_pos[:, [0, 3]].abs() * touchdown
+                ).sum(dim=1)[ids]
+                foot_anchor_xy = torch.where(
+                    touchdown.unsqueeze(-1), feet_after[:, :, :2], foot_anchor_xy
+                )
+                contact_age = torch.where(contact, contact_age + 1, 0)
+                established_contact = contact_age > 2
+                world_lateral_speed = (
+                    -yaw_after.sin().unsqueeze(1) * feet_vel_after[:, :, 0]
+                    + yaw_after.cos().unsqueeze(1) * feet_vel_after[:, :, 1]
+                ).abs()
+                lateral_drift = (
+                    -yaw_after.sin().unsqueeze(1)
+                    * (feet_after[:, :, 0] - foot_anchor_xy[:, :, 0])
+                    + yaw_after.cos().unsqueeze(1)
+                    * (feet_after[:, :, 1] - foot_anchor_xy[:, :, 1])
+                ).abs()
+                stance_frame_count[ids] += established_contact.sum(dim=1)[ids]
+                stance_lateral_speed_sum[ids] += (
+                    world_lateral_speed * established_contact
+                ).sum(dim=1)[ids]
+                stance_lateral_speed_over_005[ids] += (
+                    (world_lateral_speed > 0.05) & established_contact
+                ).sum(dim=1)[ids]
+                stance_lateral_drift_max[ids] = torch.maximum(
+                    stance_lateral_drift_max[ids],
+                    torch.where(established_contact, lateral_drift, 0.0)
+                    .max(dim=1).values[ids],
+                )
+                previous_contact = contact
                 done = done.to(device).reshape(-1).bool()
                 terminated = env._terminate_buf.reshape(-1).bool()
                 failed |= active & terminated
@@ -647,6 +716,32 @@ class SRL_Bot_ConcurrentLatent_Player(common_player.CommonPlayer):
                 "roll_rms": (roll2[i] / denominator[i]).sqrt().item(),
                 "hip_x_velocity_rms": (hip2[i] / denominator[i]).sqrt().item(),
                 "foot_separation": (separation[i] / denominator[i]).item(),
+                "touchdown_count": int(touchdown_count[i].item()),
+                "touchdown_separation_m": (
+                    (touchdown_separation_sum[i] / touchdown_count[i]).item()
+                    if touchdown_count[i] > 0 else None
+                ),
+                "touchdown_narrow_030_rate": (
+                    (touchdown_narrow_030[i] / touchdown_count[i]).item()
+                    if touchdown_count[i] > 0 else None
+                ),
+                "touchdown_narrow_034_rate": (
+                    (touchdown_narrow_034[i] / touchdown_count[i]).item()
+                    if touchdown_count[i] > 0 else None
+                ),
+                "touchdown_hip_x_abs_rad": (
+                    (touchdown_hip_x_sum[i] / touchdown_count[i]).item()
+                    if touchdown_count[i] > 0 else None
+                ),
+                "stance_lateral_speed_mps": (
+                    (stance_lateral_speed_sum[i] / stance_frame_count[i]).item()
+                    if stance_frame_count[i] > 0 else None
+                ),
+                "stance_lateral_speed_over_005_rate": (
+                    (stance_lateral_speed_over_005[i] / stance_frame_count[i]).item()
+                    if stance_frame_count[i] > 0 else None
+                ),
+                "stance_lateral_drift_max_m": stance_lateral_drift_max[i].item(),
                 "vx_tracking_mae": (vx_error[i] / denominator[i]).item(),
                 "explicit_mae": (explicit_abs[i] / denominator[i]).cpu().tolist(),
                 "explicit_rmse": (explicit2[i] / denominator[i]).sqrt().cpu().tolist(),
@@ -658,11 +753,43 @@ class SRL_Bot_ConcurrentLatent_Player(common_player.CommonPlayer):
             "seed": self.eval_seed, "horizon": self.latent_evaluation_steps,
             "num_envs": n, "success_rate": success.float().mean().item(),
             "mean_length": lengths.mean().item(), "mean_return": returns.mean().item(),
+            "touchdown_count": int(touchdown_count.sum().item()),
+            "touchdown_separation_m": (
+                (touchdown_separation_sum.sum() / touchdown_count.sum()).item()
+                if touchdown_count.sum() > 0 else None
+            ),
+            "touchdown_narrow_030_rate": (
+                (touchdown_narrow_030.sum() / touchdown_count.sum()).item()
+                if touchdown_count.sum() > 0 else None
+            ),
+            "touchdown_narrow_034_rate": (
+                (touchdown_narrow_034.sum() / touchdown_count.sum()).item()
+                if touchdown_count.sum() > 0 else None
+            ),
+            "touchdown_hip_x_abs_rad": (
+                (touchdown_hip_x_sum.sum() / touchdown_count.sum()).item()
+                if touchdown_count.sum() > 0 else None
+            ),
+            "stance_lateral_speed_mps": (
+                (stance_lateral_speed_sum.sum() / stance_frame_count.sum()).item()
+                if stance_frame_count.sum() > 0 else None
+            ),
+            "stance_lateral_speed_over_005_rate": (
+                (stance_lateral_speed_over_005.sum() / stance_frame_count.sum()).item()
+                if stance_frame_count.sum() > 0 else None
+            ),
+            "stance_lateral_drift_max_m": stance_lateral_drift_max.max().item(),
             "episodes": rows,
         }
         print("[latent eval {}/{}] len={:.0f} success={:.3f} return={:.0f}".format(
             report["explicit_mode"], report["mode"], report["mean_length"],
             report["success_rate"], report["mean_return"]))
+        print("[latent gait] touchdown_n={} sep={} narrow<0.30={} narrow<0.34={} hip_x={} stance_vy={} drift_max={}".format(
+            report["touchdown_count"], report["touchdown_separation_m"],
+            report["touchdown_narrow_030_rate"], report["touchdown_narrow_034_rate"],
+            report["touchdown_hip_x_abs_rad"], report["stance_lateral_speed_mps"],
+            report["stance_lateral_drift_max_m"],
+        ))
         if timed_out.any() and (lengths[timed_out] < self.latent_evaluation_steps).any():
             print("WARNING: environment episodeLength is shorter than requested evaluation horizon; "
                   "these episodes are censored, not counted as full-horizon successes.")

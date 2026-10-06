@@ -40,6 +40,46 @@ class StableGaitRewardMixin:
         self.stable_gait_foot_separation_scale = float(
             gait_cfg.get("foot_separation_scale", 0.25)
         )
+        self.stable_gait_landing_width_enable = bool(
+            gait_cfg.get("landing_width_enable", False)
+        )
+        self.stable_gait_landing_min_separation = float(
+            gait_cfg.get("landing_min_separation", 0.34)
+        )
+        self.stable_gait_landing_max_separation = float(
+            gait_cfg.get("landing_max_separation", 0.45)
+        )
+        self.stable_gait_landing_narrow_scale = float(
+            gait_cfg.get("landing_narrow_scale", 10.0)
+        )
+        self.stable_gait_landing_wide_scale = float(
+            gait_cfg.get("landing_wide_scale", 0.5)
+        )
+        self.stable_gait_landing_contact_height = float(
+            gait_cfg.get("landing_contact_height", 0.055)
+        )
+        self.stable_gait_landing_approach_height = float(
+            gait_cfg.get("landing_approach_height", 0.12)
+        )
+        self.stable_gait_landing_min_downward_speed = float(
+            gait_cfg.get("landing_min_downward_speed", 0.03)
+        )
+        self.stable_gait_stance_slip_scale = float(
+            gait_cfg.get("stance_slip_scale", 0.0)
+        )
+        self.stable_gait_stance_slip_deadband = float(
+            gait_cfg.get("stance_slip_deadband", 0.05)
+        )
+        self.stable_gait_stance_slip_grace_steps = int(
+            gait_cfg.get("stance_slip_grace_steps", 2)
+        )
+        if self.stable_gait_landing_max_separation <= self.stable_gait_landing_min_separation:
+            raise ValueError("landing_max_separation must exceed landing_min_separation")
+        if self.stable_gait_landing_approach_height <= self.stable_gait_landing_contact_height:
+            raise ValueError("landing_approach_height must exceed landing_contact_height")
+        if self.stable_gait_stance_slip_grace_steps < 0:
+            raise ValueError("stance_slip_grace_steps must be nonnegative")
+        self._stable_gait_contact_age = None
         self.stable_gait_recovery_roll_threshold = float(
             gait_cfg.get("recovery_roll_threshold", 0.08)
         )
@@ -69,6 +109,8 @@ class StableGaitRewardMixin:
             + self.stable_gait_foot_channel_scale * penalties["foot_channel"]
             + self.stable_gait_foot_separation_scale
             * penalties["foot_separation"]
+            + penalties["landing_width"]
+            + self.stable_gait_stance_slip_scale * penalties["stance_slip"]
         )
 
         # Preserve the base task's exact terminal reward on fall frames.
@@ -76,7 +118,11 @@ class StableGaitRewardMixin:
         self.rew_buf -= active * total_penalty
 
         self.extras["stable_gait/total_penalty"] = total_penalty.mean()
-        for name, value in penalties.items():
+        for name in (
+            "roll", "hip_x_velocity", "swing_lateral_velocity",
+            "foot_channel", "foot_separation", "foot_separation_m",
+        ):
+            value = penalties[name]
             self.extras["stable_gait/{}".format(name)] = value.mean()
 
     def _compute_stable_gait_penalties(self):
@@ -178,6 +224,51 @@ class StableGaitRewardMixin:
             foot_separation - self.stable_gait_foot_separation_target
         ).square()
 
+        landing_width_penalty = torch.zeros_like(foot_separation)
+        contact = feet_pos[:, :, 2] <= self.stable_gait_landing_contact_height
+        if self.stable_gait_landing_width_enable:
+            approaching = (
+                (feet_pos[:, :, 2] > self.stable_gait_landing_contact_height)
+                & (feet_pos[:, :, 2] <= self.stable_gait_landing_approach_height)
+                & (feet_vel[:, :, 2] < -self.stable_gait_landing_min_downward_speed)
+            )
+            landing_or_double_support = approaching.any(dim=1) | contact.all(dim=1)
+            narrow = torch.clamp(
+                self.stable_gait_landing_min_separation - foot_separation, min=0.0
+            )
+            wide = torch.clamp(
+                foot_separation - self.stable_gait_landing_max_separation, min=0.0
+            )
+            landing_width_penalty = (
+                relaxation * landing_or_double_support.to(foot_separation.dtype)
+                * (self.stable_gait_landing_narrow_scale * narrow.square()
+                   + self.stable_gait_landing_wide_scale * wide.square())
+            )
+
+        stance_slip_penalty = torch.zeros_like(foot_separation)
+        if self.stable_gait_stance_slip_scale > 0.0:
+            if self._stable_gait_contact_age is None:
+                self._stable_gait_contact_age = torch.zeros_like(contact, dtype=torch.long)
+            previous_age = torch.where(
+                (self.progress_buf <= 1).unsqueeze(1),
+                torch.zeros_like(self._stable_gait_contact_age),
+                self._stable_gait_contact_age,
+            )
+            self._stable_gait_contact_age = torch.where(contact, previous_age + 1, 0)
+            established_contact = (
+                self._stable_gait_contact_age > self.stable_gait_stance_slip_grace_steps
+            )
+            foot_world_yaw_vy = (
+                -sin_yaw * feet_vel[:, :, 0] + cos_yaw * feet_vel[:, :, 1]
+            )
+            slip_excess = torch.clamp(
+                torch.abs(foot_world_yaw_vy) - self.stable_gait_stance_slip_deadband,
+                min=0.0,
+            )
+            stance_slip_penalty = relaxation * torch.sum(
+                established_contact * slip_excess.square(), dim=1
+            )
+
         return {
             "roll": roll_penalty,
             "hip_x_velocity": hip_x_velocity_penalty,
@@ -185,4 +276,6 @@ class StableGaitRewardMixin:
             "foot_channel": foot_channel_penalty,
             "foot_separation": foot_separation_penalty,
             "foot_separation_m": foot_separation,
+            "landing_width": landing_width_penalty,
+            "stance_slip": stance_slip_penalty,
         }
