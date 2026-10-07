@@ -85,6 +85,24 @@ class StableGaitRewardMixin:
         self.stable_gait_swing_placement_min_downward_speed = float(
             gait_cfg.get("swing_placement_min_downward_speed", 0.03)
         )
+        self.stable_gait_contact_width_enable = bool(
+            gait_cfg.get("contact_width_enable", False)
+        )
+        self.stable_gait_contact_width_min_separation = float(
+            gait_cfg.get("contact_width_min_separation", 0.35)
+        )
+        self.stable_gait_contact_width_max_separation = float(
+            gait_cfg.get("contact_width_max_separation", 0.45)
+        )
+        self.stable_gait_contact_width_narrow_scale = float(
+            gait_cfg.get("contact_width_narrow_scale", 12.0)
+        )
+        self.stable_gait_contact_width_wide_scale = float(
+            gait_cfg.get("contact_width_wide_scale", 3.0)
+        )
+        self.stable_gait_contact_width_touchdown_steps = int(
+            gait_cfg.get("contact_width_touchdown_steps", 4)
+        )
         self.stable_gait_stance_slip_scale = float(
             gait_cfg.get("stance_slip_scale", 0.0)
         )
@@ -102,6 +120,10 @@ class StableGaitRewardMixin:
             raise ValueError("swing_placement_max_separation must exceed swing_placement_min_separation")
         if self.stable_gait_swing_placement_max_height <= self.stable_gait_landing_contact_height:
             raise ValueError("swing_placement_max_height must exceed landing_contact_height")
+        if self.stable_gait_contact_width_max_separation <= self.stable_gait_contact_width_min_separation:
+            raise ValueError("contact_width_max_separation must exceed contact_width_min_separation")
+        if self.stable_gait_contact_width_touchdown_steps < 0:
+            raise ValueError("contact_width_touchdown_steps must be nonnegative")
         if self.stable_gait_stance_slip_grace_steps < 0:
             raise ValueError("stance_slip_grace_steps must be nonnegative")
         self._stable_gait_contact_age = None
@@ -136,6 +158,7 @@ class StableGaitRewardMixin:
             * penalties["foot_separation"]
             + penalties["landing_width"]
             + penalties["swing_placement"]
+            + penalties["contact_width"]
             + self.stable_gait_stance_slip_scale * penalties["stance_slip"]
         )
 
@@ -297,8 +320,9 @@ class StableGaitRewardMixin:
                    + self.stable_gait_swing_placement_wide_scale * wide)
             )
 
+        contact_width_penalty = torch.zeros_like(foot_separation)
         stance_slip_penalty = torch.zeros_like(foot_separation)
-        if self.stable_gait_stance_slip_scale > 0.0:
+        if self.stable_gait_contact_width_enable or self.stable_gait_stance_slip_scale > 0.0:
             if self._stable_gait_contact_age is None:
                 self._stable_gait_contact_age = torch.zeros_like(contact, dtype=torch.long)
             previous_age = torch.where(
@@ -307,6 +331,26 @@ class StableGaitRewardMixin:
                 self._stable_gait_contact_age,
             )
             self._stable_gait_contact_age = torch.where(contact, previous_age + 1, 0)
+        if self.stable_gait_contact_width_enable:
+            recent_touchdown = contact & (
+                self._stable_gait_contact_age <= self.stable_gait_contact_width_touchdown_steps
+            )
+            width_active = contact.all(dim=1) | recent_touchdown.any(dim=1)
+            signed_separation = feet_local_y[:, 0] - feet_local_y[:, 1]
+            narrow = torch.clamp(
+                self.stable_gait_contact_width_min_separation - signed_separation,
+                min=0.0,
+            )
+            wide = torch.clamp(
+                signed_separation - self.stable_gait_contact_width_max_separation,
+                min=0.0,
+            )
+            contact_width_penalty = (
+                relaxation * width_active.to(foot_separation.dtype)
+                * (self.stable_gait_contact_width_narrow_scale * narrow
+                   + self.stable_gait_contact_width_wide_scale * wide)
+            )
+        if self.stable_gait_stance_slip_scale > 0.0:
             established_contact = (
                 self._stable_gait_contact_age > self.stable_gait_stance_slip_grace_steps
             )
@@ -330,5 +374,6 @@ class StableGaitRewardMixin:
             "foot_separation_m": foot_separation,
             "landing_width": landing_width_penalty,
             "swing_placement": swing_placement_penalty,
+            "contact_width": contact_width_penalty,
             "stance_slip": stance_slip_penalty,
         }

@@ -27,6 +27,12 @@ env:
     swing_placement_wide_scale: 1.0
     swing_placement_max_height: 0.25
     swing_placement_min_downward_speed: 0.03
+    contact_width_enable: True
+    contact_width_min_separation: 0.35
+    contact_width_max_separation: 0.45
+    contact_width_narrow_scale: 12.0
+    contact_width_wide_scale: 3.0
+    contact_width_touchdown_steps: 4
     stance_slip_scale: 10.0
     stance_slip_deadband: 0.05
     stance_slip_grace_steps: 2
