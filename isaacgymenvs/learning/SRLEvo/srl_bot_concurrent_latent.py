@@ -593,6 +593,8 @@ class SRL_Bot_ConcurrentLatent_Player(common_player.CommonPlayer):
         # The vector environment keeps a batch axis even when num_envs == 1.
         self.has_batch_dimension = True
         env = self.env
+        gait_reward_diagnostics = bool(env.stable_gait_reward_enable)
+        env._stable_gait_eval_enabled = gait_reward_diagnostics
         n = env.num_envs
         device = env.device
         active = torch.ones(n, device=device, dtype=torch.bool)
@@ -616,10 +618,19 @@ class SRL_Bot_ConcurrentLatent_Player(common_player.CommonPlayer):
         touchdown_narrow_030 = torch.zeros_like(lengths)
         touchdown_narrow_034 = torch.zeros_like(lengths)
         touchdown_hip_x_sum = torch.zeros_like(lengths)
+        touchdown_local_y_sum = torch.zeros(n, 2, device=device)
+        touchdown_side_count = torch.zeros_like(touchdown_local_y_sum)
         stance_frame_count = torch.zeros_like(lengths)
         stance_lateral_speed_sum = torch.zeros_like(lengths)
         stance_lateral_speed_over_005 = torch.zeros_like(lengths)
         stance_lateral_drift_max = torch.zeros_like(lengths)
+        gait_count_keys = ("swing_active", "contact_active", "relaxed", "swing_relaxed", "contact_relaxed")
+        gait_penalty_keys = (
+            "swing_penalty", "contact_penalty", "landing_penalty",
+            "separation_penalty", "channel_penalty", "slip_penalty",
+        )
+        gait_counts = {key: torch.zeros_like(lengths) for key in gait_count_keys}
+        gait_penalty_sums = {key: torch.zeros_like(lengths) for key in gait_penalty_keys}
         # Each environment contributes its first episode only; no short-episode
         # overrepresentation. Use the same seed/config in separate mode runs.
         with torch.no_grad():
@@ -642,6 +653,23 @@ class SRL_Bot_ConcurrentLatent_Player(common_player.CommonPlayer):
                 _, reward, done, info = self.env_step(env, action)
                 lengths[ids] += 1
                 returns[ids] += reward.to(device).reshape(n, -1).mean(dim=1)[ids]
+                if gait_reward_diagnostics:
+                    snapshot = env._stable_gait_eval_snapshot
+                    if snapshot is None:
+                        raise RuntimeError("Stable gait evaluation snapshot was not populated by the reward")
+                    swing_active = snapshot["swing_active"]
+                    contact_active = snapshot["contact_active"]
+                    relaxed = snapshot["relaxed"]
+                    for key, value in (
+                        ("swing_active", swing_active),
+                        ("contact_active", contact_active),
+                        ("relaxed", relaxed),
+                        ("swing_relaxed", swing_active & relaxed),
+                        ("contact_relaxed", contact_active & relaxed),
+                    ):
+                        gait_counts[key][ids] += value[ids].to(lengths.dtype)
+                    for key in gait_penalty_keys:
+                        gait_penalty_sums[key][ids] += snapshot[key][ids]
                 root_after = env.srl_root_states
                 qx, qy, qz, qw = root_after[:, 3:7].unbind(dim=1)
                 yaw_after = torch.atan2(2 * (qw * qz + qx * qy),
@@ -669,6 +697,14 @@ class SRL_Bot_ConcurrentLatent_Player(common_player.CommonPlayer):
                 touchdown_hip_x_sum[ids] += (
                     env.dof_pos[:, [0, 3]].abs() * touchdown
                 ).sum(dim=1)[ids]
+                foot_relative_x = feet_after[:, :, 0] - root_after[:, None, 0]
+                foot_relative_y = feet_after[:, :, 1] - root_after[:, None, 1]
+                foot_local_y = (
+                    -yaw_after.sin().unsqueeze(1) * foot_relative_x
+                    + yaw_after.cos().unsqueeze(1) * foot_relative_y
+                )
+                touchdown_local_y_sum[ids] += (foot_local_y * touchdown)[ids]
+                touchdown_side_count[ids] += touchdown[ids].to(lengths.dtype)
                 foot_anchor_xy = torch.where(
                     touchdown.unsqueeze(-1), feet_after[:, :, :2], foot_anchor_xy
                 )
@@ -708,6 +744,29 @@ class SRL_Bot_ConcurrentLatent_Player(common_player.CommonPlayer):
                     break
         denominator = lengths.clamp_min(1)
         success = ~failed & (lengths >= self.latent_evaluation_steps)
+        def reward_diagnostics(index=None):
+            if not gait_reward_diagnostics:
+                return None
+            total = lambda values: values.sum() if index is None else values[index]
+            frames = total(lengths).clamp_min(1)
+            swing_frames = total(gait_counts["swing_active"]).clamp_min(1)
+            contact_frames = total(gait_counts["contact_active"]).clamp_min(1)
+            result = {
+                "foot_width_penalty_multiplier": env.stable_gait_foot_width_penalty_multiplier,
+                "swing_active_rate": (total(gait_counts["swing_active"]) / frames).item(),
+                "contact_active_rate": (total(gait_counts["contact_active"]) / frames).item(),
+                "relaxed_rate": (total(gait_counts["relaxed"]) / frames).item(),
+                "swing_relaxed_when_active_rate": (total(gait_counts["swing_relaxed"]) / swing_frames).item(),
+                "contact_relaxed_when_active_rate": (total(gait_counts["contact_relaxed"]) / contact_frames).item(),
+                "mean_swing_penalty_when_active": (total(gait_penalty_sums["swing_penalty"]) / swing_frames).item(),
+                "mean_contact_penalty_when_active": (total(gait_penalty_sums["contact_penalty"]) / contact_frames).item(),
+            }
+            result["mean_penalty_per_step"] = {
+                key: (total(gait_penalty_sums[key]) / frames).item()
+                for key in gait_penalty_keys
+            }
+            return result
+
         rows = []
         for i in range(n):
             rows.append({
@@ -735,6 +794,15 @@ class SRL_Bot_ConcurrentLatent_Player(common_player.CommonPlayer):
                     (touchdown_hip_x_sum[i] / touchdown_count[i]).item()
                     if touchdown_count[i] > 0 else None
                 ),
+                "touchdown_left_local_y_m": (
+                    (touchdown_local_y_sum[i, 0] / touchdown_side_count[i, 0]).item()
+                    if touchdown_side_count[i, 0] > 0 else None
+                ),
+                "touchdown_right_local_y_m": (
+                    (touchdown_local_y_sum[i, 1] / touchdown_side_count[i, 1]).item()
+                    if touchdown_side_count[i, 1] > 0 else None
+                ),
+                "gait_reward_diagnostics": reward_diagnostics(i),
                 "stance_lateral_speed_mps": (
                     (stance_lateral_speed_sum[i] / stance_frame_count[i]).item()
                     if stance_frame_count[i] > 0 else None
@@ -772,6 +840,15 @@ class SRL_Bot_ConcurrentLatent_Player(common_player.CommonPlayer):
                 (touchdown_hip_x_sum.sum() / touchdown_count.sum()).item()
                 if touchdown_count.sum() > 0 else None
             ),
+            "touchdown_left_local_y_m": (
+                (touchdown_local_y_sum[:, 0].sum() / touchdown_side_count[:, 0].sum()).item()
+                if touchdown_side_count[:, 0].sum() > 0 else None
+            ),
+            "touchdown_right_local_y_m": (
+                (touchdown_local_y_sum[:, 1].sum() / touchdown_side_count[:, 1].sum()).item()
+                if touchdown_side_count[:, 1].sum() > 0 else None
+            ),
+            "gait_reward_diagnostics": reward_diagnostics(),
             "stance_lateral_speed_mps": (
                 (stance_lateral_speed_sum.sum() / stance_frame_count.sum()).item()
                 if stance_frame_count.sum() > 0 else None
@@ -792,6 +869,18 @@ class SRL_Bot_ConcurrentLatent_Player(common_player.CommonPlayer):
             report["touchdown_hip_x_abs_rad"], report["stance_lateral_speed_mps"],
             report["stance_lateral_drift_max_m"],
         ))
+        if gait_reward_diagnostics:
+            diagnostics = report["gait_reward_diagnostics"]
+            print("[latent width] active(swing/contact)={:.3f}/{:.3f} relaxed_on_active={:.3f}/{:.3f} penalty_per_step(swing/contact/slip)={:.3f}/{:.3f}/{:.3f} touchdown_y(left/right)={}/{}".format(
+                diagnostics["swing_active_rate"], diagnostics["contact_active_rate"],
+                diagnostics["swing_relaxed_when_active_rate"], diagnostics["contact_relaxed_when_active_rate"],
+                diagnostics["mean_penalty_per_step"]["swing_penalty"],
+                diagnostics["mean_penalty_per_step"]["contact_penalty"],
+                diagnostics["mean_penalty_per_step"]["slip_penalty"],
+                report["touchdown_left_local_y_m"], report["touchdown_right_local_y_m"],
+            ))
+        env._stable_gait_eval_enabled = False
+        env._stable_gait_eval_snapshot = None
         if timed_out.any() and (lengths[timed_out] < self.latent_evaluation_steps).any():
             print("WARNING: environment episodeLength is shorter than requested evaluation horizon; "
                   "these episodes are censored, not counted as full-horizon successes.")

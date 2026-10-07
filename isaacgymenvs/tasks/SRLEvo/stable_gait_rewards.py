@@ -40,6 +40,9 @@ class StableGaitRewardMixin:
         self.stable_gait_foot_separation_scale = float(
             gait_cfg.get("foot_separation_scale", 0.25)
         )
+        self.stable_gait_foot_width_penalty_multiplier = float(
+            gait_cfg.get("foot_width_penalty_multiplier", 1.0)
+        )
         self.stable_gait_landing_width_enable = bool(
             gait_cfg.get("landing_width_enable", False)
         )
@@ -126,7 +129,11 @@ class StableGaitRewardMixin:
             raise ValueError("contact_width_touchdown_steps must be nonnegative")
         if self.stable_gait_stance_slip_grace_steps < 0:
             raise ValueError("stance_slip_grace_steps must be nonnegative")
+        if self.stable_gait_foot_width_penalty_multiplier < 0.0:
+            raise ValueError("foot_width_penalty_multiplier must be nonnegative")
         self._stable_gait_contact_age = None
+        self._stable_gait_eval_enabled = False
+        self._stable_gait_eval_snapshot = None
         self.stable_gait_recovery_roll_threshold = float(
             gait_cfg.get("recovery_roll_threshold", 0.08)
         )
@@ -145,26 +152,35 @@ class StableGaitRewardMixin:
     def compute_reward(self, actions):
         super().compute_reward(actions)
         if not self.stable_gait_reward_enable:
+            self._stable_gait_eval_snapshot = None
             return
 
         penalties = self._compute_stable_gait_penalties()
+        width_penalty = self.stable_gait_foot_width_penalty_multiplier * (
+            self.stable_gait_foot_separation_scale * penalties["foot_separation"]
+            + penalties["landing_width"]
+            + penalties["swing_placement"]
+            + penalties["contact_width"]
+        )
         total_penalty = (
             self.stable_gait_roll_scale * penalties["roll"]
             + self.stable_gait_hip_x_velocity_scale * penalties["hip_x_velocity"]
             + self.stable_gait_swing_lateral_velocity_scale
             * penalties["swing_lateral_velocity"]
             + self.stable_gait_foot_channel_scale * penalties["foot_channel"]
-            + self.stable_gait_foot_separation_scale
-            * penalties["foot_separation"]
-            + penalties["landing_width"]
-            + penalties["swing_placement"]
-            + penalties["contact_width"]
+            + width_penalty
             + self.stable_gait_stance_slip_scale * penalties["stance_slip"]
         )
 
         # Preserve the base task's exact terminal reward on fall frames.
         active = (self._terminate_buf == 0).to(total_penalty.dtype)
         self.rew_buf -= active * total_penalty
+        if self._stable_gait_eval_enabled:
+            for key in (
+                "swing_penalty", "contact_penalty", "landing_penalty",
+                "separation_penalty", "channel_penalty", "slip_penalty",
+            ):
+                self._stable_gait_eval_snapshot[key] *= active
 
         self.extras["stable_gait/total_penalty"] = total_penalty.mean()
         for name in (
@@ -295,6 +311,7 @@ class StableGaitRewardMixin:
             )
 
         swing_placement_penalty = torch.zeros_like(foot_separation)
+        placement_active = torch.zeros_like(contact[:, 0])
         if self.stable_gait_swing_placement_enable:
             descending = (
                 (~contact)
@@ -321,6 +338,7 @@ class StableGaitRewardMixin:
             )
 
         contact_width_penalty = torch.zeros_like(foot_separation)
+        width_active = torch.zeros_like(contact[:, 0])
         stance_slip_penalty = torch.zeros_like(foot_separation)
         if self.stable_gait_contact_width_enable or self.stable_gait_stance_slip_scale > 0.0:
             if self._stable_gait_contact_age is None:
@@ -364,6 +382,20 @@ class StableGaitRewardMixin:
             stance_slip_penalty = relaxation * torch.sum(
                 established_contact * slip_excess.square(), dim=1
             )
+
+        if self._stable_gait_eval_enabled:
+            multiplier = self.stable_gait_foot_width_penalty_multiplier
+            self._stable_gait_eval_snapshot = {
+                "swing_active": placement_active,
+                "contact_active": width_active,
+                "relaxed": relaxed,
+                "swing_penalty": multiplier * swing_placement_penalty,
+                "contact_penalty": multiplier * contact_width_penalty,
+                "landing_penalty": multiplier * landing_width_penalty,
+                "separation_penalty": multiplier * self.stable_gait_foot_separation_scale * foot_separation_penalty,
+                "channel_penalty": self.stable_gait_foot_channel_scale * foot_channel_penalty,
+                "slip_penalty": self.stable_gait_stance_slip_scale * stance_slip_penalty,
+            }
 
         return {
             "roll": roll_penalty,
