@@ -82,10 +82,11 @@ python SRL_Evo_train.py task=SRL_Real_Bot wandb_project=SRL_Real experiment=SRL_
        'task.env.srl_effort_limits=[90, 90, 350, 90, 90, 350]' \
        task.env.asset.assetFileName="mjcf/srl_real/srl_real_bot_v2.xml" 
 # --- check ---
-python SRL_Evo_train.py task=SRL_Real_Bot test=True force_render=True task.env.cameraFollow=True num_envs=4 task.env.task_training_stage=2 checkpoint=runs/SRL_Real_Bot_v2_s2_14-17-16-18/nn/SRL_Real_Bot_v2_s2.pth   sim_device=cuda:1 rl_device=cuda:1 task.env.asset.assetFileName="mjcf/srl_real/srl_real_bot_v2.xml" \
+python SRL_Evo_train.py task=SRL_Real_Bot test=True force_render=True task.env.cameraFollow=True num_envs=4 task.env.task_training_stage=2 checkpoint=runs/SRL_Real_Bot_v2_s2_08-16-47-37/nn/SRL_Real_Bot_v2_s2.pth  task.env.asset.assetFileName="mjcf/srl_real/srl_real_bot_v2.xml" \
        'task.env.default_joint_angles=[0 , -0.55,  -0.3, 0 , -0.55,  -0.3]'   'task.env.srl_effort_limits=[90, 90, 350, 90, 90, 350]' task.env.forceControl=False  task.env.pdControl=True  task.env.srl_action_filter_enable=True
 # --- stage 3 --- vel+hei+ori
-python SRL_Evo_train.py task=SRL_Real_Bot wandb_project=SRL_Real experiment=SRL_Real_Bot_v2_s3  task.env.task_training_stage=3 headless=True wandb_activate=True max_iterations=2500    checkpoint=runs/SRL_Real_Bot_v2_s2_14-17-16-18/nn/SRL_Real_Bot_v2_s2.pth \
+python SRL_Evo_train.py task=SRL_Real_Bot wandb_project=SRL_Real experiment=SRL_Real_Bot_v2_s3  task.env.task_training_stage=3 headless=True wandb_activate=True max_iterations=2500\
+       checkpoint=runs/SRL_Real_Bot_v2_s2_08-16-47-37/nn/SRL_Real_Bot_v2_s2.pth \
        task.env.orientation_reward_scale=7 task.env.pelvis_height_reward_scale=5.0 task.env.asset.assetFileName="mjcf/srl_real/srl_real_bot_v2.xml" \
        'task.env.default_joint_angles=[0 , -0.55,  -0.3, 0 , -0.55,  -0.3]' \
        task.env.forceControl=False  task.env.pdControl=True  task.env.srl_action_filter_enable=True\
@@ -96,7 +97,7 @@ python SRL_Evo_train.py task=SRL_Real_Bot test=True force_render=True task.env.c
        'task.env.default_joint_angles=[0 , -0.55,  -0.3, 0 , -0.55,  -0.3]'  'task.env.srl_effort_limits=[90, 90, 350, 90, 90, 350]' task.env.forceControl=False  task.env.pdControl=True  task.env.srl_action_filter_enable=True
 # --- stage 4 --- Domain Randomization 
 python SRL_Evo_train.py task=SRL_Real_Bot wandb_project=SRL_Real experiment=SRL_Real_Bot_v2_s4  task.env.task_training_stage=3 task.task.randomize=True task.task.vel_pertubation=True headless=True wandb_activate=True max_iterations=3500  task.env.asset.assetFileName="mjcf/srl_real/srl_real_bot_v2.xml" \
-       checkpoint=runs/SRL_Real_Bot_v2_s3_14-19-09-17/nn/SRL_Real_Bot_v2_s3.pth  task.env.progress_reward_scale=0.0  task.env.srl_motor_cost_scale=0.0  task.env.alive_reward_scale=0.0  \
+       checkpoint=runs/SRL_Real_Bot_v2_s3_08-17-16-06/nn/SRL_Real_Bot_v2_s3.pth  task.env.progress_reward_scale=0.0  task.env.srl_motor_cost_scale=0.0  task.env.alive_reward_scale=0.0  \
        'task.env.default_joint_angles=[0 , -0.55,  -0.3, 0 , -0.55,  -0.3]'  'task.env.srl_effort_limits=[90, 90, 350, 90, 90, 350]'\
        task.env.forceControl=False  task.env.pdControl=True  task.env.srl_action_filter_enable=True
 # --- check ---
