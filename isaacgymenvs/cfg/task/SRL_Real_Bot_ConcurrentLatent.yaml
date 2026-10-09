@@ -5,14 +5,12 @@ defaults:
 name: SRL_Real_Bot_ConcurrentLatent
 
 env:
-  # Coefficients are inherited from Concurrent; one switch enables all penalties.
+  # Inherit the original Concurrent gait coefficients without overrides.
   # Stage 1/2: False. Stage 3/4: task.env.stable_gait_reward.enable=True.
+  # Additional placement and slip penalties remain opt-in CLI experiments.
   stable_gait_reward:
     enable: False
     foot_width_penalty_multiplier: 1.0
-    foot_channel_center: 0.19
-    foot_channel_half_width: 0.04
-    foot_separation_scale: 0.0
     landing_width_enable: False
     landing_min_separation: 0.34
     landing_max_separation: 0.45
@@ -21,20 +19,20 @@ env:
     landing_contact_height: 0.055
     landing_approach_height: 0.12
     landing_min_downward_speed: 0.03
-    swing_placement_enable: True
+    swing_placement_enable: False
     swing_placement_min_separation: 0.35
     swing_placement_max_separation: 0.45
     swing_placement_narrow_scale: 10.0
     swing_placement_wide_scale: 1.0
     swing_placement_max_height: 0.25
     swing_placement_min_downward_speed: 0.03
-    contact_width_enable: True
+    contact_width_enable: False
     contact_width_min_separation: 0.35
     contact_width_max_separation: 0.45
     contact_width_narrow_scale: 12.0
     contact_width_wide_scale: 3.0
     contact_width_touchdown_steps: 4
-    stance_slip_scale: 10.0
+    stance_slip_scale: 0.0
     stance_slip_deadband: 0.05
     stance_slip_grace_steps: 2
   # Raw task observation: 133 deployable + 4 simulator truth + 16 label slots.
