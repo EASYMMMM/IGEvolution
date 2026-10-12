@@ -1,0 +1,46 @@
+{
+  "source_frames": 1896,
+  "source_fps": 120.00480019200768,
+  "source_axes": "Z up, +X right, +Y forward (specific to this recording)",
+  "target_axes": "Z up, +X forward, +Y left",
+  "source_unit_to_target_meter": 0.029025154382701267,
+  "target_leg_length_m": 0.9268440008163452,
+  "fps": 60,
+  "full_frames": 948,
+  "walking_frames": [
+    205,
+    738
+  ],
+  "walking_seconds_in_source": [
+    3.4166666666666665,
+    12.283333333333333
+  ],
+  "floor_clearance_m": 0.005,
+  "root_height_correction_m": [
+    -0.024441379883992535,
+    0.011137875281159833
+  ],
+  "joint_limit_clipped_frames": {
+    "torso": 0,
+    "head": 0,
+    "right_upper_arm": 0,
+    "right_lower_arm": 0,
+    "left_upper_arm": 0,
+    "left_lower_arm": 0,
+    "right_thigh": 0,
+    "right_shin": 0,
+    "right_foot": 0,
+    "left_thigh": 0,
+    "left_shin": 0,
+    "left_foot": 0
+  },
+  "notes": [
+    "No measured muscle activations/contact forces are inferred.",
+    "Hands are fixed to the forearms; source toe rotations are discarded.",
+    "Per-frame root height makes the lowest foot box sit on a flat floor.",
+    "The walking clip includes acceleration/deceleration and is not a seamless gait loop."
+  ],
+  "source": "P002_WALK_T01.bvh",
+  "reference": "amp_humanoid_walk_175.npy",
+  "model": "amp_humanoid_175_muscle.xml"
+}

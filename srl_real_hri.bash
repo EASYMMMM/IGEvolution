@@ -32,6 +32,12 @@ python SRL_Evo_train.py task=HumanoidAMPSRLGym_s1_Smpl experiment=Humanoid_175_P
 # check
 python SRL_Evo_train.py task=HumanoidAMPSRLGym_s1_Smpl test=True force_render=True task.env.cameraFollow=True num_envs=1 task.env.train_stage=4  sim_device=cuda:0 rl_device=cuda:0 checkpoint=runs/Humanoid_175_Pretrain_s3_smp_23-16-56-25/nn/Humanoid_175_Pretrain_s3_smp_23-16-56-31.pth      task.env.stateInit=Default seed=$RANDOM  task.env.episodeLength=4000
 
+# =========== Humanoid MuscleFlat任务(2026.10) ===========
+# Humanoid 直线
+python SRL_Evo_train.py task=HumanoidAMPMuscleFlat test=False headless=True force_render=False task.env.cameraFollow=False num_envs=4096 task.env.train_stage=2  task.env.episodeLength=500 sim_device=cuda:0 rl_device=cuda:0 checkpoint=runs/HumanoidAMPMuscleFlat_P002_Finetune_11-17-46-29/nn/HumanoidAMPMuscleFlat_P002_Finetune_11-17-46-33.pth seed=42 experiment=HumanoidAMPMuscleFlat_P002_Finetune max_iterations=42000
+# check
+python SRL_Evo_train.py task=HumanoidAMPMuscleFlat test=True force_render=True task.env.cameraFollow=True num_envs=1 task.env.train_stage=2 sim_device=cuda:0 rl_device=cuda:0 checkpoint=runs/HumanoidAMPMuscleFlat_P002_Finetune_11-17-46-29/nn/HumanoidAMPMuscleFlat_P002_Finetune_11-17-46-33.pth seed=-1 task.env.episodeLength=4000
+
 
 # =========== Real HRI ==========
 # (1.4) 关节力矩更大的humanoid  
