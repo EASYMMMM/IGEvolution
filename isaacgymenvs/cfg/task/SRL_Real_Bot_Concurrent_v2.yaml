@@ -18,6 +18,16 @@ env:
   append_current_privileged_obs: False
 
   action_scale: 1.0
+  # Shared opt-in dynamics extension; latent inherits the Concurrent config.
+  srl_dynamics_dr:
+    enable: False
+    action_delay_enable: True
+    action_delay_ms: [0.0, 5.0, 10.0]
+    armature_enable: True
+    armature_range: [0.8, 1.2]
+    armature_nominal: null
+    inertia_enable: True
+    inertia_range: [0.8, 1.2]
   pdControl: True
   forceControl: False
   powerScale: 1.0

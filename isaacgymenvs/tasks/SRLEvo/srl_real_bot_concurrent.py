@@ -1,8 +1,9 @@
 from isaacgymenvs.tasks.SRLEvo.srl_real_bot import SRL_Real_Bot
 from isaacgymenvs.tasks.SRLEvo.stable_gait_rewards import StableGaitRewardMixin
+from isaacgymenvs.tasks.SRLEvo.srl_dynamics_randomization import SRLDynamicsRandomizationMixin
 
 
-class SRL_Real_Bot_Concurrent(StableGaitRewardMixin, SRL_Real_Bot):
+class SRL_Real_Bot_Concurrent(SRLDynamicsRandomizationMixin, StableGaitRewardMixin, SRL_Real_Bot):
     """SRL task variant for concurrent policy and state-estimator training."""
 
     def __init__(self, cfg, *args, **kwargs):

@@ -304,6 +304,10 @@ class SRL_Real_Bot(VecTask):
         plane_params.restitution = self.plane_restitution
         self.gym.add_ground(self.sim, plane_params)
 
+    def _configure_srl_asset_options(self, options):
+        """Optional asset setup extension; preserve existing import defaults."""
+        pass
+
     def _create_envs(self, num_envs, spacing, num_per_row):
         lower = gymapi.Vec3(-spacing, -spacing, 0.0)
         upper = gymapi.Vec3(spacing, spacing, spacing) 
@@ -324,6 +328,7 @@ class SRL_Real_Bot(VecTask):
         asset_options.max_angular_velocity = 100.0
         # Note - DOF mode is set in the MJCF file and loaded by Isaac Gym
         asset_options.default_dof_drive_mode = gymapi.DOF_MODE_NONE
+        self._configure_srl_asset_options(asset_options)
         humanoid_asset = self.gym.load_asset(self.sim, asset_root, asset_file, asset_options)
 
         # Add actuator list
@@ -811,15 +816,19 @@ class SRL_Real_Bot(VecTask):
             self.srl_lpf_y1[:] = self.filtered_pd_targets
         self.filtered_actions = self._srl_pd_targets_to_action(self.filtered_pd_targets)
 
+        self._apply_srl_pd_targets(self.filtered_pd_targets)
+
+    def _apply_srl_pd_targets(self, targets):
+
         if self._force_control:
-            torques = self.p_gains*(self.filtered_pd_targets - self.dof_pos) - self.d_gains*self.dof_vel
+            torques = self.p_gains*(targets - self.dof_pos) - self.d_gains*self.dof_vel
             self.torques = torch.clip(torques, -self.torque_limits, self.torque_limits).view(self.torques.shape)
             self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(self.torques))
         elif (self._pd_control):
             # 即使是位置控制，我们也可以近似计算输出力矩用于惩罚项
-            self.torques = self.p_gains*(self.filtered_pd_targets - self.dof_pos) - self.d_gains*self.dof_vel
+            self.torques = self.p_gains*(targets - self.dof_pos) - self.d_gains*self.dof_vel
             self.torques = torch.clip(self.torques, -self.torque_limits, self.torque_limits)
-            pd_tar_tensor = gymtorch.unwrap_tensor(self.filtered_pd_targets)
+            pd_tar_tensor = gymtorch.unwrap_tensor(targets)
             self.gym.set_dof_position_target_tensor(self.sim, pd_tar_tensor)
 
     def post_physics_step(self):

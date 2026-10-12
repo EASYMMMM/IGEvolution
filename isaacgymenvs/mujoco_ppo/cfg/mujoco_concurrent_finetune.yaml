@@ -83,6 +83,8 @@ dr_curriculum:
 
 control:
   control_backend: torque_pd
+  # Keep legacy MuJoCo fine-tuning behavior; use 0.05 for Isaac Gym inputs.
+  dof_vel_obs_scale: 0.1
   # False keeps the historical concurrent behavior: all six motor damping
   # values are overwritten with 1.0. True preserves the values from the XML.
   preserve_xml_damping: false

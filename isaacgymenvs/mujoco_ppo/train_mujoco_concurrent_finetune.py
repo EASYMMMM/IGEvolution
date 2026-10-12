@@ -31,6 +31,7 @@ PRIVILEGED_MIRROR_SIGNS = np.array([1.0, 1.0, -1.0, 1.0], dtype=np.float32)
 class ConcurrentPPOConfig(v2_train.V2PPOConfig):
     target_vel_x: float = 1.0
     target_ang_vel_z: float = 0.0
+    dof_vel_obs_scale: float = 0.1
     preserve_xml_damping: bool = False
     initial_pose_randomization_enable: bool = False
     initial_pose_root_height_range: Tuple[float, float] = (0.85, 1.14)
@@ -269,8 +270,12 @@ def _rollout_difficulty_weights(buffer, cfg):
 
 
 def make_env_config(cfg, *, evaluation=False):
+    dof_vel_obs_scale = float(cfg.dof_vel_obs_scale)
+    if not np.isfinite(dof_vel_obs_scale) or dof_vel_obs_scale <= 0.0:
+        raise ValueError("dof_vel_obs_scale must be finite and positive")
     base = v3_train.make_env_config(cfg, evaluation=evaluation)
     values = asdict(base)
+    values["dof_vel_obs_scale"] = dof_vel_obs_scale
     values["preserve_xml_damping"] = bool(cfg.preserve_xml_damping)
     values["target_vel_x"] = float(cfg.target_vel_x)
     values["target_ang_vel_z"] = float(cfg.target_ang_vel_z)
@@ -835,6 +840,7 @@ def train(cfg):
     if float(cfg.cvar_weight) < 1.0 or float(cfg.failure_weight) < 1.0:
         raise ValueError("cvar_weight and failure_weight must be >= 1")
     envs = [make_env(cfg) for _ in range(max(int(cfg.num_envs), 1))]
+    print(f"Joint velocity observation scale: {envs[0].cfg.dof_vel_obs_scale:g}")
     motor_damping = envs[0].model.dof_damping[envs[0].srl_dof_indices]
     print(
         "Motor passive damping: {} ({})".format(

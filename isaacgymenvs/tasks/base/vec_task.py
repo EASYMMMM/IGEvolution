@@ -357,6 +357,10 @@ class VecTask(Env):
     def post_physics_step(self):
         """Compute reward and observations, reset any environments that require it."""
 
+    def pre_simulation_step(self, substep_index: int):
+        """Optional control update before each sim.dt tick; default is a no-op."""
+        pass
+
     def step(self, actions: torch.Tensor) -> Tuple[Dict[str, torch.Tensor], torch.Tensor, torch.Tensor, Dict[str, Any]]:
         """Step the physics of the environment.
 
@@ -377,6 +381,7 @@ class VecTask(Env):
 
         # step physics and render each frame
         for i in range(self.control_freq_inv):
+            self.pre_simulation_step(i)
             self.gym.simulate(self.sim)
         if self.force_render:
                 self.render()
