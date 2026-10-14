@@ -1,0 +1,103 @@
+name: HumanoidAMPMuscleFlat
+physics_engine: ${..physics_engine}
+
+env:
+  numEnvs: ${resolve_default:4096,${...num_envs}}
+  envSpacing: 5
+  episodeLength: 500
+  cameraFollow: True
+  enableDebugVis: True
+
+  # Retain the mclegs single-environment test output and muscle drawing.
+  enableCsvLog: True
+  enableMuscleVis: True
+  enableMuscleDiagnostics: True
+
+  pdControl: False
+  powerScale: 1.0
+  controlFrequencyInv: 3 # 0.005 * 3 = 0.015 s, approximately 66.7 Hz
+  stateInit: "Random"
+  hybridInitProb: 0.5
+  numAMPObsSteps: 2
+
+  # 1: standing pretraining; 2: straight walking; 3: curved walking.
+  train_stage: 2
+  speedMean: 1.0
+  turnSpeedMax: 0.5
+  numTurns: 2
+  maxTrajectoryDistance: 3.0
+
+  # Independent of task.randomize. Defaults preserve the old checkpoint task.
+  compliance:
+    enabled: True              # 导纳总开关
+    mass: 70.0                 # virtual mass, kg; actual body mass is unchanged
+    damping: 35.0              # N*s/m
+    stiffness: 45.0            # N/m
+    alpha_range: [0.04, 0.16]
+    force_reference: 220.0     # N
+    force_filter_tau: 0.03     # s; 0 disables filtering
+    max_displacement: 0.75     # horizontal norm, m
+    position_reward_weight: 1.0
+    velocity_reward_weight: 1.0
+    heading_reward_weight: 1.0
+    activation_cost_weight: 0.0
+  perturbation:
+    enabled: False             # 外力总开关
+    randomize: False           # 随机外力采样开关
+    randomize_in_test: False   # 是否允许测试启用随机外力
+    test_mode: ${test}          # viewer/headless/numEnvs do not determine this mode
+    force_range: [80.0, 120.0]  # total horizontal force magnitude, N
+    duration_range: [0.2, 0.5]  # s
+    interval_range: [3.0, 6.0]  # s after the previous pulse ends
+    reset_quiet_time: 1.0       # s; added before the first random waiting interval
+    clean_episode_probability: 0.25
+    fixed:
+      enabled: False           # one deterministic pulse per episode
+      start_time: 2.0           # s after reset
+      magnitude: 100.0         # N; also used by viewer key F
+      angle_deg: 90.0          # world XY: 0=+X, 90=+Y, 180=-X, 270=-Y
+      duration: 0.5            # s; also used by viewer key F
+
+  localRootObs: True
+  # Six zeroed load-cell slots remain in the 117-value policy observation.
+  humanoid_load_cell_obs: False
+  contactBodies: ["right_foot", "left_foot", "right_shin", "left_shin"]
+  terminationHeight: 0.5
+  enableEarlyTermination: True
+  #motion_file: "fixed_smp_walk.npy"
+  # Retargeted measured walking reference (60 Hz; same humanoid skeleton).
+  motion_file: "P002_WALK_T01_walk_amp.npy"
+
+  asset:
+    # Original collision model with SMPL visual meshes.
+    assetFileName: "mjcf/amp_humanoid_175_muscle_smpl.xml"
+    # Original collision model without the SMPL visual meshes.
+    # assetFileName: "mjcf/amp_humanoid_175_muscle.xml"
+  plane:
+    staticFriction: 1.0
+    dynamicFriction: 1.0
+    restitution: 0.0
+
+sim:
+  dt: 0.005
+  substeps: 2
+  up_axis: "z"
+  use_gpu_pipeline: ${eq:${...pipeline},"gpu"}
+  gravity: [0.0, 0.0, -9.81]
+  physx:
+    num_threads: ${....num_threads}
+    solver_type: ${....solver_type}
+    use_gpu: ${contains:"cuda",${....sim_device}}
+    num_position_iterations: 4
+    num_velocity_iterations: 0
+    contact_offset: 0.02
+    rest_offset: 0.0
+    bounce_threshold_velocity: 0.2
+    max_depenetration_velocity: 10.0
+    default_buffer_size_multiplier: 200.0
+    max_gpu_contact_pairs: 8388608
+    num_subscenes: ${....num_subscenes}
+    contact_collection: 2
+
+task:
+  randomize: False
