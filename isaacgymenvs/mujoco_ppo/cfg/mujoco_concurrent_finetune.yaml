@@ -39,6 +39,10 @@ training:
   seed: 45
   save_every: 500
   save_dir: mujoco_ppo/runs
+  # Fixed environment groups share one actor/critic/estimator. Opt-in only.
+  mixed_task_enable: false
+  mixed_task_inplace_fraction: 0.5
+  mixed_task_action_scale: 0.5
 
 estimator:
   estimator_history_len: 10
@@ -80,9 +84,12 @@ dr_curriculum:
   dr_curriculum_est_min_success: 0.50
   dr_curriculum_gt_min_length: 4000
   dr_curriculum_est_min_length: 3500
+  # none: no startup support; unload_to_zero: supported startup, then free stepping.
+  dr_curriculum_support_mode: none
 
 control:
   control_backend: torque_pd
+  action_scale: 1.0 # Ordinary tasks only; specialized tasks use their own range.
   # Keep legacy MuJoCo fine-tuning behavior; use 0.05 for Isaac Gym inputs.
   dof_vel_obs_scale: 0.1
   # False keeps the historical concurrent behavior: all six motor damping

@@ -33,6 +33,10 @@ class ConcurrentPPOConfig(v2_train.V2PPOConfig):
     target_ang_vel_z: float = 0.0
     dof_vel_obs_scale: float = 0.1
     preserve_xml_damping: bool = False
+    action_scale: float = 1.0
+    mixed_task_enable: bool = False
+    mixed_task_inplace_fraction: float = 0.5
+    mixed_task_action_scale: float = 0.5
     initial_pose_randomization_enable: bool = False
     initial_pose_root_height_range: Tuple[float, float] = (0.85, 1.14)
     initial_pose_ground_clearance: float = 0.005
@@ -127,6 +131,7 @@ class ConcurrentPPOConfig(v2_train.V2PPOConfig):
     dr_curriculum_est_min_success: float = 0.5
     dr_curriculum_gt_min_length: float = 4000.0
     dr_curriculum_est_min_length: float = 3500.0
+    dr_curriculum_support_mode: str = "none" # none / unload_to_zero
 
     evaluation_suite_enable: bool = True
     evaluation_narrow_distance: float = 0.30
@@ -277,6 +282,9 @@ def make_env_config(cfg, *, evaluation=False):
     values = asdict(base)
     values["dof_vel_obs_scale"] = dof_vel_obs_scale
     values["preserve_xml_damping"] = bool(cfg.preserve_xml_damping)
+    if not np.isfinite(cfg.action_scale) or not 0.0 < cfg.action_scale <= 1.0:
+        raise ValueError("action_scale must be finite and in (0, 1]")
+    values["action_scale"] = float(cfg.action_scale)
     values["target_vel_x"] = float(cfg.target_vel_x)
     values["target_ang_vel_z"] = float(cfg.target_ang_vel_z)
     for name in (
@@ -352,6 +360,58 @@ def make_env(cfg, *, evaluation=False):
         make_env_config(cfg, evaluation=evaluation),
         estimator_history_len=cfg.estimator_history_len,
     )
+
+
+def _training_task_labels(cfg):
+    count = int(cfg.num_envs)
+    if not cfg.mixed_task_enable:
+        return ("single",) * max(count, 1)
+    fraction = float(cfg.mixed_task_inplace_fraction)
+    if count < 2:
+        raise ValueError("Mixed tasks require num_envs >= 2")
+    if not np.isfinite(fraction) or not 0.0 < fraction < 1.0:
+        raise ValueError("mixed_task_inplace_fraction must be in (0, 1)")
+    if not cfg.inplace_startup_task_enable:
+        raise ValueError("Mixed tasks require inplace_startup_task_enable=True")
+    if (not np.isfinite(cfg.mixed_task_action_scale)
+            or not 0.0 < cfg.mixed_task_action_scale <= 1.0):
+        raise ValueError("mixed_task_action_scale must be finite and in (0, 1]")
+    inplace_count = min(count - 1, max(1, int(np.floor(count * fraction + 0.5))))
+    return ("inplace",) * inplace_count + ("stage3",) * (count - inplace_count)
+
+
+def _task_config(cfg, task):
+    if task not in ("inplace", "stage3"):
+        raise ValueError(f"Unknown mixed task: {task}")
+    result = copy.deepcopy(cfg)
+    result.mixed_task_enable = False
+    result.action_scale = float(cfg.mixed_task_action_scale)
+    result.inplace_action_scale_range = (result.action_scale, result.action_scale)
+    if task == "stage3":
+        result.inplace_startup_task_enable = False
+        result.task_training_stage = 3
+        result.target_vel_x = 1.0
+        result.target_ang_vel_z = 0.0
+        result.target_height = 1.0
+        result.startup_support_enable = False
+        result.startup_support_in_evaluation = False
+        result.startup_support_curriculum_enable = False
+        result.startup_support_hold_until_unloaded = False
+        result.startup_support_command_gate_enable = False
+        result.startup_tether_enable = False
+        result.startup_no_retreat_enable = False
+        result.startup_inplace_time = 0.0
+        result.startup_ramp_time = 0.0
+        result.inplace_position_drift_penalty_scale = 0.0
+        result.dr_curriculum_support_mode = "none"
+    return result
+
+
+def _make_training_envs(cfg):
+    labels = _training_task_labels(cfg)
+    envs = [make_env(cfg if task == "single" else _task_config(cfg, task))
+            for task in labels]
+    return envs, labels
 
 
 def make_policy(cfg, env):
@@ -578,7 +638,21 @@ def evaluate_policy_condition(policy, cfg, dr_progress, use_estimate, seeds=None
     return result
 
 
-def run_evaluation_suite(policy, cfg, current_dr_progress, seeds=None):
+def run_evaluation_suite(policy, cfg, current_dr_progress, seeds=None, _label_prefix=""):
+    if cfg.mixed_task_enable:
+        _training_task_labels(cfg)
+        suite = run_evaluation_suite(
+            policy, _task_config(cfg, "inplace"), current_dr_progress,
+            seeds=seeds, _label_prefix="inplace_",
+        )
+        stage3_suite = run_evaluation_suite(
+            policy, _task_config(cfg, "stage3"), current_dr_progress,
+            seeds=seeds, _label_prefix="stage3_",
+        )
+        # Preserve legacy in-place keys for checkpoint ranking and DR gates.
+        suite.update({f"stage3_{key}": value for key, value in stage3_suite.items()})
+        return suite
+    gate_condition = _dr_gate_condition(cfg)
     suite = {}
     cache = {}
     for condition, progress in (
@@ -594,7 +668,7 @@ def run_evaluation_suite(policy, cfg, current_dr_progress, seeds=None):
             suite[f"{condition}/{mode}"] = copy.deepcopy(cache[cache_key])
             result = suite[f"{condition}/{mode}"]
             print(
-                f"[eval {condition}/{mode}] len={result['length']:.0f} "
+                f"[eval {_label_prefix}{condition}/{mode}] len={result['length']:.0f} "
                 f"success={result['success']:.2f} return={result['return']:.0f} "
                 f"sep={result['foot_separation_mean']:.3f} "
                 f"narrow={result['narrow_step_fraction']:.2f} "
@@ -611,7 +685,7 @@ def run_evaluation_suite(policy, cfg, current_dr_progress, seeds=None):
             )
             result = suite[key]
             print(
-                f"[eval {key}] len={result['length']:.0f} "
+                f"[eval {_label_prefix}{key}] len={result['length']:.0f} "
                 f"success={result['success']:.2f} return={result['return']:.0f} "
                 f"support={result['support_fraction_mean']:.3f} "
                 f"sep={result['foot_separation_mean']:.3f} "
@@ -619,21 +693,28 @@ def run_evaluation_suite(policy, cfg, current_dr_progress, seeds=None):
                 f"impact={result['foot_force_exceed_fraction']:.3f}"
             )
     if cfg.startup_support_enable and cfg.inplace_startup_task_enable:
-        for mode, use_estimate in (("gt", False), ("est", True)):
-            key = f"full_dr_support_zero/{mode}"
-            suite[key] = evaluate_policy_condition(
-                policy, cfg, 1.0, use_estimate, seeds=seeds,
-                support_mode="unload_to_zero",
-            )
-            result = suite[key]
-            print(
-                f"[eval {key}] len={result['length']:.0f} "
-                f"success={result['success']:.2f} return={result['return']:.0f} "
-                f"support={result['support_fraction_mean']:.3f} "
-                f"sep={result['foot_separation_mean']:.3f} "
-                f"roll={result['base_roll_rms']:.3f} "
-                f"impact={result['foot_force_exceed_fraction']:.3f}"
-            )
+        zero_conditions = [("full_dr_support_zero", 1.0)]
+        if gate_condition == "current_dr_support_zero":
+            zero_conditions.insert(0, (gate_condition, float(current_dr_progress)))
+        for condition, progress in zero_conditions:
+            for mode, use_estimate in (("gt", False), ("est", True)):
+                key = f"{condition}/{mode}"
+                cache_key = (float(progress), bool(use_estimate), "unload_to_zero")
+                if cache_key not in cache:
+                    cache[cache_key] = evaluate_policy_condition(
+                        policy, cfg, progress, use_estimate, seeds=seeds,
+                        support_mode="unload_to_zero",
+                    )
+                suite[key] = copy.deepcopy(cache[cache_key])
+                result = suite[key]
+                print(
+                    f"[eval {_label_prefix}{key}] len={result['length']:.0f} "
+                    f"success={result['success']:.2f} return={result['return']:.0f} "
+                    f"support={result['support_fraction_mean']:.3f} "
+                    f"sep={result['foot_separation_mean']:.3f} "
+                    f"roll={result['base_roll_rms']:.3f} "
+                    f"impact={result['foot_force_exceed_fraction']:.3f}"
+                )
     return suite
 
 
@@ -756,7 +837,7 @@ def _startup_support_probability(cfg, update):
 
 
 def _set_residual_support_probability(env, probability):
-    if env.cfg.inplace_startup_task_enable:
+    if env.cfg.inplace_startup_task_enable or not env.cfg.startup_support_enable:
         return
     probability = float(np.clip(probability, 0.0, 1.0))
     env.cfg.startup_support_mode_probabilities = (
@@ -764,15 +845,36 @@ def _set_residual_support_probability(env, probability):
     )
 
 
+def _dr_gate_condition(cfg):
+    mode = cfg.dr_curriculum_support_mode
+    if mode == "none":
+        return "current_dr"
+    if mode != "unload_to_zero":
+        raise ValueError("dr_curriculum_support_mode must be none or unload_to_zero")
+    if not cfg.startup_support_enable or not cfg.inplace_startup_task_enable:
+        raise ValueError(
+            "unload_to_zero DR promotion requires startup_support_enable=True "
+            "and inplace_startup_task_enable=True"
+        )
+    return "current_dr_support_zero"
+
+
 def _dr_promotion_passes(cfg, suite):
-    gt = suite["current_dr/gt"]
-    est = suite["current_dr/est"]
-    return (
-        gt["success"] >= cfg.dr_curriculum_gt_min_success
-        and est["success"] >= cfg.dr_curriculum_est_min_success
-        and gt["length"] >= cfg.dr_curriculum_gt_min_length
-        and est["length"] >= cfg.dr_curriculum_est_min_length
+    return all(
+        suite[f"{condition}/gt"]["success"] >= cfg.dr_curriculum_gt_min_success
+        and suite[f"{condition}/est"]["success"] >= cfg.dr_curriculum_est_min_success
+        and suite[f"{condition}/gt"]["length"] >= cfg.dr_curriculum_gt_min_length
+        and suite[f"{condition}/est"]["length"] >= cfg.dr_curriculum_est_min_length
+        for condition in _dr_gate_conditions(cfg)
     )
+
+
+def _dr_gate_conditions(cfg):
+    conditions = (_dr_gate_condition(cfg),)
+    if cfg.mixed_task_enable:
+        _training_task_labels(cfg)
+        conditions += ("stage3_current_dr",)
+    return conditions
 
 
 def _gait_score(result):
@@ -832,6 +934,10 @@ def _adaptive_actor_learning_rate(cfg, current_lr, kl):
 
 
 def train(cfg):
+    gate_condition = _dr_gate_condition(cfg)
+    gate_conditions = _dr_gate_conditions(cfg)
+    gate_description = " + ".join(gate_conditions)
+    print(f"DR promotion evaluation: {gate_description} (GT and EST)")
     np.random.seed(cfg.seed)
     torch.manual_seed(cfg.seed)
     device = torch.device(cfg.device)
@@ -839,7 +945,13 @@ def train(cfg):
         raise ValueError("cvar_fraction must be in [0, 1]")
     if float(cfg.cvar_weight) < 1.0 or float(cfg.failure_weight) < 1.0:
         raise ValueError("cvar_weight and failure_weight must be >= 1")
-    envs = [make_env(cfg) for _ in range(max(int(cfg.num_envs), 1))]
+    envs, task_labels = _make_training_envs(cfg)
+    if cfg.mixed_task_enable:
+        print(
+            f"Mixed tasks: inplace={task_labels.count('inplace')} "
+            f"stage3={task_labels.count('stage3')} "
+            f"fixed_action_scale={cfg.mixed_task_action_scale:g}"
+        )
     print(f"Joint velocity observation scale: {envs[0].cfg.dof_vel_obs_scale:g}")
     motor_damping = envs[0].model.dof_damping[envs[0].srl_dof_indices]
     print(
@@ -947,6 +1059,9 @@ def train(cfg):
     window = int(cfg.bootstrap_metric_window)
     gt_lengths, est_lengths = deque(maxlen=window), deque(maxlen=window)
     gt_returns, est_returns = deque(maxlen=window), deque(maxlen=window)
+    task_episode_windows = {
+        task: deque(maxlen=window) for task in ("inplace", "stage3")
+    } if cfg.mixed_task_enable else {}
     run_name = f"mujoco_concurrent_{time.strftime('%m%d_%H%M%S')}"
     save_dir = os.path.join(cfg.save_dir, run_name)
     os.makedirs(save_dir, exist_ok=True)
@@ -1078,6 +1193,9 @@ def train(cfg):
         horizontal_force_active = []
         dr_scenarios = []
         rollout_reward_components = defaultdict(list)
+        task_rollout_metrics = {
+            task: defaultdict(list) for task in task_episode_windows
+        }
         for _step in range(cfg.rollout_steps):
             actor_obs, mirrored_obs, history, target, _ = _compose(
                 policy, deployable, mirrored_np, history_np, target_np, modes, device
@@ -1092,6 +1210,20 @@ def train(cfg):
             terminated = np.asarray([item[2] for item in results], dtype=np.float32)
             truncated = np.asarray([item[3] for item in results], dtype=np.float32)
             next_infos = [item[4] for item in results]
+            if cfg.mixed_task_enable:
+                for index, (task, info) in enumerate(zip(task_labels, next_infos)):
+                    task_metrics = task_rollout_metrics[task]
+                    task_metrics["reward"].append(float(rewards[index]))
+                    task_metrics["estimated_input"].append(float(modes[index]))
+                    task_metrics["vx_abs_error"].append(abs(
+                        float(info["vel_x"]) - float(info["target_vel_x"])
+                    ))
+                    task_metrics["wz_abs_error"].append(abs(
+                        float(info["wz"]) - float(info["target_ang_vel_z"])
+                    ))
+                    task_metrics["height_abs_error"].append(abs(
+                        float(info["root_height"]) - float(info["target_height"])
+                    ))
             foot_separations.extend(
                 float(info.get("foot_lateral_distance", 0.0))
                 for info in next_infos
@@ -1180,6 +1312,12 @@ def train(cfg):
                 returns = est_returns if modes[index] else gt_returns
                 lengths.append(int(episode_lengths[index]))
                 returns.append(float(episode_returns[index]))
+                if cfg.mixed_task_enable:
+                    task_episode_windows[task_labels[index]].append({
+                        "length": int(episode_lengths[index]),
+                        "return": float(episode_returns[index]),
+                        "success": bool(truncated[index] and not terminated[index]),
+                    })
                 _, next_infos[index] = env.reset()
                 reset_indices.append(index)
                 episode_returns[index] = 0.0
@@ -1435,6 +1573,22 @@ def train(cfg):
             f"reward_weighted/{name}": float(np.mean(values))
             for name, values in rollout_reward_components.items()
         })
+        if cfg.mixed_task_enable:
+            for task, samples in task_rollout_metrics.items():
+                prefix = f"mixed_task/{task}"
+                metrics[f"{prefix}/env_count"] = task_labels.count(task)
+                metrics[f"{prefix}/step_fraction"] = (
+                    len(samples["reward"]) / (len(envs) * cfg.rollout_steps)
+                )
+                for name, values in samples.items():
+                    metrics[f"{prefix}/{name}_mean"] = float(np.mean(values))
+                completed = list(task_episode_windows[task])
+                metrics[f"{prefix}/completed_episode_count"] = len(completed)
+                for field in ("length", "return", "success"):
+                    metrics[f"{prefix}/episode_{field}_mean"] = (
+                        float(np.mean([episode[field] for episode in completed]))
+                        if completed else 0.0
+                    )
         length_text = (
             f"len(est)={metrics['concurrent/estimated_episode_length']:.0f}"
             if fixed_estimator_input else
@@ -1443,18 +1597,32 @@ def train(cfg):
             f"{metrics['concurrent/estimated_episode_length']:.0f}"
         )
         print(f"[update {update:04d}] reward={metrics['train/reward_mean']:.3f} mse={estimator_mse:.5f} p={target_estimator_fraction:.2f} est_frac={metrics['concurrent/estimated_env_fraction']:.2f} {length_text} actor_on={int(actor_enabled)} lr={metrics['ppo/actor_learning_rate_used']:.2e}->{metrics['ppo/actor_learning_rate']:.2e} kl={metrics['ppo/kl']:.5f} epochs={completed_update_epochs} dr={progress:.2f} support={support_probability:.2f}/{metrics['startup_support/active_env_step_fraction']:.2f} push={horizontal_force_progress:.2f} impact={metrics['robustness/foot_force_exceed_fraction']:.3f} hard={difficulty_stats['cvar_env_count']}/{difficulty_stats['failed_env_count']} wmax={difficulty_stats['weight_max']:.2f} wobble={wobble_progress:.2f} lateral={lateral_progress:.2f} sep={metrics['gait/foot_separation_mean']:.3f}/{metrics['gait/foot_separation_min']:.3f}")
+        if cfg.mixed_task_enable:
+            for task in task_episode_windows:
+                prefix = f"mixed_task/{task}"
+                print(
+                    f"[task {task}] envs={task_labels.count(task)} "
+                    f"reward={metrics[f'{prefix}/reward_mean']:.3f} "
+                    f"len={metrics[f'{prefix}/episode_length_mean']:.0f} "
+                    f"success={metrics[f'{prefix}/episode_success_mean']:.2f} "
+                    f"completed={metrics[f'{prefix}/completed_episode_count']} "
+                    f"vx_err={metrics[f'{prefix}/vx_abs_error_mean']:.3f} "
+                    f"height_err={metrics[f'{prefix}/height_abs_error_mean']:.3f}"
+                )
         v2_train.base_train.log_wandb(wandb_run, metrics, step=update)
         _append_jsonl(training_history_path, {"update": update, **metrics})
 
         if cfg.eval_during_training and update % cfg.eval_every_updates == 0:
-            if cfg.evaluation_suite_enable or cfg.dr_curriculum_enable:
+            if cfg.evaluation_suite_enable or cfg.dr_curriculum_enable or cfg.mixed_task_enable:
                 suite = run_evaluation_suite(policy, cfg, progress)
             else:
                 result = evaluate_estimator_policy(policy, cfg)
                 suite = {"full_dr/est": result}
             _append_jsonl(
                 evaluation_history_path,
-                {"update": update, "dr_progress": progress, "results": suite},
+                {"update": update, "dr_progress": progress,
+                 "dr_gate_condition": gate_condition,
+                 "dr_gate_conditions": list(gate_conditions), "results": suite},
             )
             v2_train.base_train.log_wandb(
                 wandb_run, _flatten_evaluation_suite(suite), step=update
@@ -1466,6 +1634,8 @@ def train(cfg):
                 "full_dr_support_zero/est", supported_est
             )
             stability_conditions = (full_est, supported_est, support_zero_est)
+            if cfg.mixed_task_enable:
+                stability_conditions += (suite["stage3_full_dr/est"],)
             stability_score = (
                 min(result["success"] for result in stability_conditions) * 1e6
                 + min(result["length"] for result in stability_conditions) * 100
@@ -1483,15 +1653,14 @@ def train(cfg):
                     "mujoco_concurrent_best_eval.pt",
                 )
 
-            gait_eligible = (
-                full_est["success"] >= cfg.best_gait_min_success
-                and full_est["length"] >= cfg.best_gait_min_length
-                and supported_est["success"] >= cfg.best_gait_min_success
-                and supported_est["length"] >= cfg.best_gait_min_length
-                and support_zero_est["success"] >= cfg.best_gait_min_success
-                and support_zero_est["length"] >= cfg.best_gait_min_length
+            gait_eligible = all(
+                result["success"] >= cfg.best_gait_min_success
+                and result["length"] >= cfg.best_gait_min_length
+                for result in stability_conditions
             )
-            gait_score = _gait_score(full_est)
+            gait_conditions = ((full_est, suite["stage3_full_dr/est"])
+                               if cfg.mixed_task_enable else (full_est,))
+            gait_score = float(np.mean([_gait_score(result) for result in gait_conditions]))
             if gait_eligible and gait_score > best_gait:
                 best_gait = gait_score
                 print("Saved best full-DR estimated gait checkpoint:", _save(
@@ -1510,7 +1679,8 @@ def train(cfg):
                     dr_consecutive_passes + 1 if passed else 0
                 )
                 print(
-                    f"[DR gate] level={progress:.2f} pass={int(passed)} "
+                    f"[DR gate] level={progress:.2f} condition={gate_description} "
+                    f"pass={int(passed)} "
                     f"consecutive={dr_consecutive_passes}/"
                     f"{cfg.dr_curriculum_required_passes}"
                 )
