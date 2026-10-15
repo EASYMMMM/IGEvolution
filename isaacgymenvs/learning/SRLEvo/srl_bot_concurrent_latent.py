@@ -12,12 +12,13 @@ from isaacgymenvs.learning.SRLEvo.srl_bot_concurrent import (
     SRL_Bot_Concurrent_Agent,
 )
 from rl_games.algos_torch import torch_ext
+from isaacgymenvs.learning.SRLEvo.latent_ppo import LatentPPORollout, LatentPPOUpdateMixin
 
 
 LATENT_TARGET_NAMES = ("root_height", "local_vx", "local_vy", "local_vz")
 
 
-class SRL_Bot_ConcurrentLatent_Agent(SRL_Bot_Concurrent_Agent):
+class SRL_Bot_ConcurrentLatent_Agent(LatentPPOUpdateMixin, SRL_Bot_Concurrent_Agent):
     """PPO agent using explicit state estimates plus a learned causal latent."""
 
     deployable_obs_dim = 133
@@ -63,6 +64,27 @@ class SRL_Bot_ConcurrentLatent_Agent(SRL_Bot_Concurrent_Agent):
             lr=float(config.get("latent_learning_rate", 1e-3)),
             eps=1e-8,
         )
+        self.latent_ppo_update_encoder = bool(config.get("latent_ppo_update_encoder", True))
+        self.latent_ppo_learning_rate = float(config.get("latent_ppo_learning_rate", 1e-4))
+        self.latent_ppo_aux_loss_coef = float(config.get("latent_ppo_aux_loss_coef", 1.0))
+        self.latent_ppo_grad_diagnostics_every = int(config.get("latent_ppo_grad_diagnostics_every", 25))
+        if (not np.isfinite(self.latent_ppo_learning_rate) or self.latent_ppo_learning_rate <= 0
+                or not np.isfinite(self.latent_ppo_aux_loss_coef) or self.latent_ppo_aux_loss_coef < 0
+                or self.latent_ppo_grad_diagnostics_every < 1):
+            raise ValueError("Invalid joint latent PPO learning rate, loss coefficient or diagnostic interval")
+        if self.latent_ppo_update_encoder:
+            if self.is_rnn or self.multi_gpu:
+                raise NotImplementedError("Joint latent PPO currently supports feed-forward single-GPU training")
+            actor_parameters = {id(p) for group in self.optimizer.param_groups for p in group["params"]}
+            if any(id(p) in actor_parameters for p in self.concurrent_estimator.parameters()):
+                raise RuntimeError("Actor and encoder optimizers must not share parameters")
+            for group in self.concurrent_estimator_optimizer.param_groups:
+                group["lr"] = self.latent_ppo_learning_rate
+        self._joint_rollout = None
+        self._collecting_joint_rollout = False
+        self._joint_metrics = {}
+        self._joint_gradient_probed = False
+        self._joint_need_initial_probe = True
         self.estimator_mini_epochs = int(config.get("latent_mini_epochs", 2))
         self.estimator_minibatch_size = int(
             config.get("latent_minibatch_size", 8192)
@@ -133,6 +155,11 @@ class SRL_Bot_ConcurrentLatent_Agent(SRL_Bot_Concurrent_Agent):
                 self.use_contact_auxiliary,
             )
         )
+        print("Latent PPO updates encoder={}; encoder Adam lr={} grad_clip={}; "
+              "auxiliary loss multiplier={}".format(
+                  self.latent_ppo_update_encoder,
+                  self.concurrent_estimator_optimizer.param_groups[0]["lr"],
+                  self.estimator_grad_norm, self.latent_ppo_aux_loss_coef))
 
     @property
     def est_only_active(self):
@@ -240,8 +267,8 @@ class SRL_Bot_ConcurrentLatent_Agent(SRL_Bot_Concurrent_Agent):
         self._update_history(deployable, reset_ids)
         self._update_mirrored_history(mirrored_deployable, reset_ids)
 
-        # Encoder updates are performed after the PPO epoch from sampled
-        # histories, so rollout inference must not retain a horizon-long graph.
+        # Rollout features never retain a graph. Joint mode recomputes them
+        # from raw histories inside each PPO minibatch.
         with torch.no_grad():
             output = self.concurrent_estimator(self.estimator_history)
             mirrored_output = self.concurrent_estimator(self.mirrored_estimator_history)
@@ -286,8 +313,14 @@ class SRL_Bot_ConcurrentLatent_Agent(SRL_Bot_Concurrent_Agent):
         self.pending_decoder_history = self.estimator_history.detach().clone()
         self.pending_decoder_explicit_target = truth.detach().clone()
         self.pending_decoder_mirrored_history = self.mirrored_estimator_history.detach().clone()
+        if self.latent_ppo_update_encoder and self._collecting_joint_rollout:
+            self._joint_rollout.record(
+                self.estimator_history, self.mirrored_estimator_history, truth,
+                self.episode_uses_estimator, com_cop_target, contact_target,
+            )
         return actor_observation, mirrored_actor_observation, estimate, truth
 
+    @torch.no_grad()
     def play_steps(self):
         if self.est_only_active and not self._est_only_announced:
             print("Latent late EST-only enabled: new episodes use 100% estimates; "
@@ -301,7 +334,68 @@ class SRL_Bot_ConcurrentLatent_Agent(SRL_Bot_Concurrent_Agent):
         self.latent_decoder_next_targets = []
         self.latent_decoder_mirrored_history = []
         self.latent_decoder_mirrored_next_targets = []
-        return super().play_steps()
+        if self.latent_ppo_update_encoder:
+            if self._joint_rollout is None:
+                self._joint_rollout = LatentPPORollout(
+                    self.horizon_length, self.num_actors * self.num_agents,
+                    self.concurrent_estimator.history_len, self.estimator_input_dim,
+                    self.ppo_device,
+                )
+                storage_gib = sum(value.numel() * value.element_size()
+                                  for value in self._joint_rollout.data.values()) / (1024.0 ** 3)
+                print("Latent PPO raw-history buffer: {:.2f} GiB".format(storage_gib))
+            self._joint_rollout.step = 0
+            self._joint_metrics = {}
+            self._joint_gradient_probed = False
+        self._collecting_joint_rollout = self.latent_ppo_update_encoder
+        try:
+            batch = super().play_steps()
+        finally:
+            self._collecting_joint_rollout = False
+        if self.latent_ppo_update_encoder:
+            batch.update(self._joint_rollout.flattened())
+        return batch
+
+    def env_step(self, actions):
+        observation, rewards, dones, infos = super().env_step(actions)
+        if self.latent_ppo_update_encoder and self._collecting_joint_rollout:
+            self._joint_rollout.record_next(
+                observation["obs"][:, :self.estimator_input_dim],
+                observation["obs_mirrored"][:, :self.estimator_input_dim], dones,
+            )
+        return observation, rewards, dones, infos
+
+    def prepare_dataset(self, batch_dict):
+        super().prepare_dataset(batch_dict)
+        if self.latent_ppo_update_encoder:
+            values = dict(self.dataset.values_dict)
+            values.update({key: value for key, value in batch_dict.items() if key.startswith("latent_")})
+            # Parent train_epoch updates mu/sigma for its rolling KL estimate.
+            # Joint PPO additionally retains immutable rollout-policy references.
+            values["latent_old_mu"] = batch_dict["mus"].clone()
+            values["latent_old_sigma"] = batch_dict["sigmas"].clone()
+            self.dataset.update_values_dict(values)
+            self.latent_diagnostics = {}
+            if int(self.epoch_num) % self.latent_diagnostics_every == 0:
+                count = min(self.latent_diagnostics_samples, values["latent_history"].shape[0])
+                ids = torch.linspace(0, values["latent_history"].shape[0] - 1,
+                                     count, device=self.ppo_device).long()
+                if self.use_next_observation_loss:
+                    valid_ids = ids[values["latent_next_valid"][ids]]
+                else:
+                    valid_ids = ids[:0]
+                use_next = valid_ids.numel() > 0
+                if use_next:
+                    ids = valid_ids
+                self.latent_diagnostics = self.concurrent_estimator.diagnostic_metrics(
+                    values["latent_history"][ids], values["latent_truth"][ids],
+                    next_target=values["latent_next_frame"][ids] if use_next else None,
+                )
+
+    def calc_gradients(self, input_dict):
+        if self.latent_ppo_update_encoder:
+            return self._calc_joint_latent_gradients(input_dict)
+        return super().calc_gradients(input_dict)
 
     def _weighted_sum(self, losses):
         total = torch.zeros((), device=self.ppo_device)
@@ -310,6 +404,8 @@ class SRL_Bot_ConcurrentLatent_Agent(SRL_Bot_Concurrent_Agent):
         return total
 
     def _train_concurrent_estimator(self):
+        if self.latent_ppo_update_encoder:
+            return self._finish_joint_latent_epoch()
         history = torch.cat(self.estimator_training_history, dim=0)
         explicit_targets = torch.cat(self.estimator_training_targets, dim=0)
         mirrored_history = torch.cat(self.latent_training_mirrored_history, dim=0)
@@ -420,11 +516,38 @@ class SRL_Bot_ConcurrentLatent_Agent(SRL_Bot_Concurrent_Agent):
         }
         return self.latent_metrics.get("explicit", 0.0)
 
+    @torch.no_grad()
+    def _finish_joint_latent_epoch(self):
+        # Called by Concurrent.train_epoch AFTER all PPO minibatches. Do not
+        # perform a second encoder optimization pass or change stats mid-PPO.
+        self.latent_metrics = {key: float(np.mean(values)) for key, values in self._joint_metrics.items()}
+        history = torch.cat(self.estimator_training_history)
+        truth = torch.cat(self.estimator_training_targets)
+        mirror = torch.cat(self.latent_training_mirrored_history)
+        next_target = torch.cat(self.latent_decoder_next_targets) if self.latent_decoder_next_targets else None
+        mirrored_next = (torch.cat(self.latent_decoder_mirrored_next_targets)
+                         if self.latent_decoder_mirrored_next_targets else None)
+        if self.update_estimator_normalization:
+            com = torch.cat(self.latent_training_com_cop)
+            self.concurrent_estimator.update_normalization(
+                torch.cat((history, mirror)), torch.cat((truth, truth * self._mirror_sign)),
+                next_target=(torch.cat((next_target, mirrored_next))
+                             if self.use_next_observation_loss and next_target is not None else None),
+                com_cop_target=(torch.cat((com, com * com.new_tensor([1., -1., 1.])))
+                                if self.use_com_cop_auxiliary else None),
+            )
+        # Preserve actor RMS buffers. The inherited symmetry teacher calls
+        # model.eval() before the actor forward, so the old PPO path does not
+        # fit them here either. Only encoder/label moments advance between epochs.
+        self.concurrent_estimator.eval()
+        return self.latent_metrics.get("explicit", 0.0)
+
     def _write_concurrent_metrics(self):
         super()._write_concurrent_metrics()
         frame = self.frame // self.num_agents
         for name, value in self.latent_metrics.items():
-            self.writer.add_scalar("concurrent_latent/{}_loss".format(name), value, frame)
+            suffix = "" if name.endswith("grad_norm") or name in ("latent_std_mean", "explicit_mse", "next_observation_mse") else "_loss"
+            self.writer.add_scalar("concurrent_latent/" + name + suffix, value, frame)
         self.writer.add_scalar("concurrent_latent/est_only_active", float(self.est_only_active), frame)
         for name, value in self.latent_diagnostics.items():
             self.writer.add_scalar("latent_diagnostics/pre_update/" + name, value, frame)
@@ -442,10 +565,17 @@ class SRL_Bot_ConcurrentLatent_Agent(SRL_Bot_Concurrent_Agent):
             "stage_start_epoch": self.latent_stage_start_epoch,
             "task_training_stage": self.concurrent_task_training_stage,
         }
+        state["concurrent_latent_training"] = {
+            "version": 1, "ppo_update_encoder": self.latent_ppo_update_encoder,
+            "optimizer_layout": "separate_actor_and_single_encoder_adam",
+        }
         return state
 
     def set_full_state_weights(self, weights, set_epoch=True):
         translated = dict(weights)
+        layout = weights.get("concurrent_latent_training", {}).get("optimizer_layout")
+        if layout not in (None, "separate_actor_and_single_encoder_adam"):
+            raise ValueError("Incompatible latent optimizer layout: {}".format(layout))
         if "concurrent_latent_model" not in translated:
             raise KeyError("checkpoint does not contain concurrent_latent_model")
         restored = ConcurrentLatentEncoder.from_checkpoint(
@@ -461,8 +591,15 @@ class SRL_Bot_ConcurrentLatent_Agent(SRL_Bot_Concurrent_Agent):
         translated["concurrent_estimator_config"] = translated.get(
             "concurrent_latent_config", {}
         )
-        if translated["concurrent_estimator_optimizer"] is None:
-            translated.pop("concurrent_estimator_optimizer")
+        saved_mode = bool(weights.get("concurrent_latent_training", {}).get("ppo_update_encoder", False))
+        if saved_mode != self.latent_ppo_update_encoder:
+            translated.pop("concurrent_estimator_optimizer", None)
+            self.concurrent_estimator_optimizer.state.clear()
+            print("Latent PPO mode changed {} -> {}; resetting encoder Adam state explicitly. "
+                  "Actor/critic weights and optimizer layouts are unchanged.".format(
+                      saved_mode, self.latent_ppo_update_encoder))
+        if translated.get("concurrent_estimator_optimizer") is None:
+            translated.pop("concurrent_estimator_optimizer", None)
         schedule = weights.get("concurrent_latent_schedule", {})
         same_stage = schedule.get("task_training_stage") == self.concurrent_task_training_stage
         self.latent_stage_start_epoch = (
@@ -470,7 +607,11 @@ class SRL_Bot_ConcurrentLatent_Agent(SRL_Bot_Concurrent_Agent):
             else int(weights.get("epoch", self.epoch_num) if set_epoch else self.epoch_num)
         )
         result = super().set_full_state_weights(translated, set_epoch=set_epoch)
+        learning_rate = self.latent_ppo_learning_rate if self.latent_ppo_update_encoder else float(self.config.get("latent_learning_rate", 1e-3))
+        for group in self.concurrent_estimator_optimizer.param_groups:
+            group["lr"] = learning_rate
         self._est_only_announced = False
+        self._joint_need_initial_probe = True
         return result
 
 

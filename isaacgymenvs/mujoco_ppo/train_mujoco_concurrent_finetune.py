@@ -20,6 +20,7 @@ from mujoco_ppo.models_concurrent import ConcurrentModelConfig, load_concurrent_
 from mujoco_ppo.srl_mujoco_concurrent_env import (
     ConcurrentWalkEnvConfig,
     SRLMujocoConcurrentEnv,
+    validate_episode_action_scale_range,
 )
 from mujoco_ppo.srl_mujoco_v2_env import quat_to_euler_xyz
 
@@ -33,7 +34,11 @@ class ConcurrentPPOConfig(v2_train.V2PPOConfig):
     target_ang_vel_z: float = 0.0
     dof_vel_obs_scale: float = 0.1
     preserve_xml_damping: bool = False
+    observation_delay_enable: bool = False
+    imu_observation_delay_ms_range: Tuple[float, float] = (0.0, 5.0)
+    joint_observation_delay_ms_range: Tuple[float, float] = (0.0, 0.0)
     action_scale: float = 1.0
+    episode_action_scale_range: Tuple[float, float] | None = None
     mixed_task_enable: bool = False
     mixed_task_inplace_fraction: float = 0.5
     mixed_task_action_scale: float = 0.5
@@ -285,9 +290,15 @@ def make_env_config(cfg, *, evaluation=False):
     if not np.isfinite(cfg.action_scale) or not 0.0 < cfg.action_scale <= 1.0:
         raise ValueError("action_scale must be finite and in (0, 1]")
     values["action_scale"] = float(cfg.action_scale)
+    values["episode_action_scale_range"] = validate_episode_action_scale_range(
+        cfg.episode_action_scale_range
+    )
     values["target_vel_x"] = float(cfg.target_vel_x)
     values["target_ang_vel_z"] = float(cfg.target_ang_vel_z)
     for name in (
+        "observation_delay_enable",
+        "imu_observation_delay_ms_range",
+        "joint_observation_delay_ms_range",
         "initial_pose_randomization_enable",
         "initial_pose_root_height_range",
         "initial_pose_ground_clearance",
@@ -376,6 +387,7 @@ def _training_task_labels(cfg):
     if (not np.isfinite(cfg.mixed_task_action_scale)
             or not 0.0 < cfg.mixed_task_action_scale <= 1.0):
         raise ValueError("mixed_task_action_scale must be finite and in (0, 1]")
+    validate_episode_action_scale_range(cfg.episode_action_scale_range)
     inplace_count = min(count - 1, max(1, int(np.floor(count * fraction + 0.5))))
     return ("inplace",) * inplace_count + ("stage3",) * (count - inplace_count)
 
@@ -386,7 +398,10 @@ def _task_config(cfg, task):
     result = copy.deepcopy(cfg)
     result.mixed_task_enable = False
     result.action_scale = float(cfg.mixed_task_action_scale)
-    result.inplace_action_scale_range = (result.action_scale, result.action_scale)
+    result.inplace_action_scale_range = (
+        validate_episode_action_scale_range(cfg.episode_action_scale_range)
+        or (result.action_scale, result.action_scale)
+    )
     if task == "stage3":
         result.inplace_startup_task_enable = False
         result.task_training_stage = 3
@@ -947,12 +962,20 @@ def train(cfg):
         raise ValueError("cvar_weight and failure_weight must be >= 1")
     envs, task_labels = _make_training_envs(cfg)
     if cfg.mixed_task_enable:
+        scale_description = (
+            f"fixed_action_scale={cfg.mixed_task_action_scale:g}"
+            if cfg.episode_action_scale_range is None else
+            f"episode_action_scale_range={cfg.episode_action_scale_range}"
+        )
         print(
             f"Mixed tasks: inplace={task_labels.count('inplace')} "
             f"stage3={task_labels.count('stage3')} "
-            f"fixed_action_scale={cfg.mixed_task_action_scale:g}"
+            f"{scale_description}"
         )
     print(f"Joint velocity observation scale: {envs[0].cfg.dof_vel_obs_scale:g}")
+    print(f"Observation delay: enabled={cfg.observation_delay_enable} "
+          f"IMU_ms={cfg.imu_observation_delay_ms_range} "
+          f"joint_ms={cfg.joint_observation_delay_ms_range} (per episode)")
     motor_damping = envs[0].model.dof_damping[envs[0].srl_dof_indices]
     print(
         "Motor passive damping: {} ({})".format(
@@ -1742,6 +1765,9 @@ def _load_config(path):
         "inplace_startup_post_unload_height_range",
         "inplace_startup_height_command_interval_range",
         "inplace_action_scale_range",
+        "episode_action_scale_range",
+        "imu_observation_delay_ms_range",
+        "joint_observation_delay_ms_range",
     ):
         if key in values and values[key] is not None:
             values[key] = tuple(values[key])

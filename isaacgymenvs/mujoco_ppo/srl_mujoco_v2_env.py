@@ -428,8 +428,11 @@ class SRLMujocoV2Env:
         self.potential = self._compute_potential()
         self.prev_potential = self.potential
 
+        self._reset_observation_sensors()
         initial_clean_obs = self._get_clean_single_frame_obs()
-        initial_actor_obs = self._add_actor_obs_noise(initial_clean_obs)
+        initial_actor_obs = self._add_actor_obs_noise(
+            self._get_sensor_observation_frame(initial_clean_obs)
+        )
         self.obs_history.clear()
         self.clean_obs_history.clear()
         for _ in range(self.cfg.frame_stack):
@@ -501,6 +504,7 @@ class SRLMujocoV2Env:
                 self.data.ctrl[:] = torques / self.gear_ratio
 
             mujoco.mj_step(self.model, self.data)
+            self._after_physics_step()
             left_force, right_force = self._get_foot_contact_forces()
             left_foot_force_max = max(left_foot_force_max, left_force)
             right_foot_force_max = max(right_foot_force_max, right_force)
@@ -514,7 +518,7 @@ class SRLMujocoV2Env:
         self.phase_counter = (self.phase_counter + 1) % max(int(self.cfg.gait_period), 1)
 
         clean_frame = self._get_clean_single_frame_obs()
-        actor_frame = self._add_actor_obs_noise(clean_frame)
+        actor_frame = self._add_actor_obs_noise(self._get_sensor_observation_frame(clean_frame))
         self.clean_obs_history.append(clean_frame)
         self.obs_history.append(actor_frame)
         clean_obs = self._get_stacked_obs(self.clean_obs_history)
@@ -632,6 +636,15 @@ class SRLMujocoV2Env:
         self.horizontal_force_pulse_remaining_steps = duration_steps
         self.horizontal_force_pulse_last_duration_steps = duration_steps
         self.horizontal_force_pulse_event_count += 1
+
+    def _reset_observation_sensors(self):
+        pass
+
+    def _after_physics_step(self):
+        pass
+
+    def _get_sensor_observation_frame(self, clean_frame):
+        return clean_frame
 
     def _before_physics_step(self, physics_step):
         del physics_step

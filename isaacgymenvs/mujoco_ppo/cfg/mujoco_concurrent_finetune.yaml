@@ -43,6 +43,8 @@ training:
   mixed_task_enable: false
   mixed_task_inplace_fraction: 0.5
   mixed_task_action_scale: 0.5
+  # Optional per-episode scale for both task groups; null keeps legacy behavior.
+  episode_action_scale_range: null
 
 estimator:
   estimator_history_len: 10
@@ -95,6 +97,11 @@ control:
   # False keeps the historical concurrent behavior: all six motor damping
   # values are overwritten with 1.0. True preserves the values from the XML.
   preserve_xml_damping: false
+  # Sensor-side delay; independent per-episode IMU/joint draws, in milliseconds.
+  # Fractional delays interpolate physics-rate samples; supervision stays current.
+  observation_delay_enable: false
+  imu_observation_delay_ms_range: [0.0, 5.0]
+  joint_observation_delay_ms_range: [0.0, 0.0]
   action_filter_enable: true
   action_filter_cutoff_hz: 10.0
   action_filter_jointwise_enable: true

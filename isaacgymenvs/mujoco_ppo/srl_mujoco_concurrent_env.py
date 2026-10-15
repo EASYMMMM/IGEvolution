@@ -8,6 +8,7 @@ import mujoco
 import numpy as np
 
 from mujoco_ppo.srl_mujoco_v3_env import SRLMujocoV3Env, V3WalkEnvConfig
+from mujoco_ppo.observation_delay import SensorObservationDelay
 
 
 class JointwiseSecondOrderLowPass:
@@ -64,11 +65,27 @@ class JointwiseSecondOrderLowPass:
         self.y1[:] = np.asarray(value, dtype=np.float32)
 
 
+def validate_episode_action_scale_range(value):
+    if value is None:
+        return None
+    try:
+        low, high = map(float, value)
+    except (TypeError, ValueError) as error:
+        raise ValueError("episode_action_scale_range must contain two numbers") from error
+    if not np.isfinite([low, high]).all() or not 0.0 < low <= high <= 1.0:
+        raise ValueError("episode_action_scale_range must satisfy 0 < low <= high <= 1")
+    return low, high
+
+
 @dataclass
 class ConcurrentWalkEnvConfig(V3WalkEnvConfig):
     """Concurrent-only extensions to the shared V3 walking environment."""
 
     preserve_xml_damping: bool = False
+    observation_delay_enable: bool = False
+    imu_observation_delay_ms_range: tuple[float, float] = (0.0, 5.0)
+    joint_observation_delay_ms_range: tuple[float, float] = (0.0, 0.0)
+    episode_action_scale_range: tuple[float, float] | None = None
     initial_pose_randomization_enable: bool = False
     initial_pose_root_height_range: tuple[float, float] = (0.85, 1.14)
     initial_pose_ground_clearance: float = 0.005
@@ -135,6 +152,13 @@ class SRLMujocoConcurrentEnv(SRLMujocoV3Env):
     concurrent_actor_obs_dim = 137
 
     def __init__(self, cfg: ConcurrentWalkEnvConfig, estimator_history_len: int = 10):
+        self.observation_delay = SensorObservationDelay(
+            cfg.observation_delay_enable, cfg.imu_observation_delay_ms_range,
+            cfg.joint_observation_delay_ms_range,
+        )
+        cfg.episode_action_scale_range = validate_episode_action_scale_range(
+            cfg.episode_action_scale_range
+        )
         xml_motor_damping = None
         if cfg.preserve_xml_damping:
             xml_model = mujoco.MjModel.from_xml_path(cfg.xml_path)
@@ -334,7 +358,11 @@ class SRLMujocoConcurrentEnv(SRLMujocoV3Env):
 
     def _reset_randomized_params(self):
         super()._reset_randomized_params()
-        if self.cfg.inplace_startup_task_enable:
+        if self.cfg.episode_action_scale_range is not None:
+            self.inplace_action_scale = float(
+                self.rng.uniform(*self.cfg.episode_action_scale_range)
+            )
+        elif self.cfg.inplace_startup_task_enable:
             self.inplace_action_scale = float(
                 self.rng.uniform(*self.cfg.inplace_action_scale_range)
             )
@@ -510,8 +538,11 @@ class SRLMujocoConcurrentEnv(SRLMujocoV3Env):
         return True
 
     def _rebuild_initial_observation(self):
+        self._reset_observation_sensors()
         initial_clean_obs = self._get_clean_single_frame_obs()
-        initial_actor_obs = self._add_actor_obs_noise(initial_clean_obs)
+        initial_actor_obs = self._add_actor_obs_noise(
+            self._get_sensor_observation_frame(initial_clean_obs)
+        )
         self.obs_history.clear()
         self.clean_obs_history.clear()
         for _ in range(self.cfg.frame_stack):
@@ -992,9 +1023,31 @@ class SRLMujocoConcurrentEnv(SRLMujocoV3Env):
             self.inplace_startup_next_height_change
         )
         result["inplace_action_scale"] = float(self.inplace_action_scale)
+        result["observation_delay_enabled"] = self.observation_delay.enabled
+        result["imu_observation_delay_ms"] = self.observation_delay.imu_ms
+        result["joint_observation_delay_ms"] = self.observation_delay.joint_ms
         return result
 
+    def _reset_observation_sensors(self):
+        self.observation_delay.history.clear()
+        self._after_physics_step()
+
+    def _after_physics_step(self):
+        if not self.observation_delay.active:
+            return
+        self.observation_delay.capture(
+            self.data.time, self.data.qpos[3:7], self.data.qvel[3:6],
+            self._get_srl_qpos(), self._get_srl_qvel(),
+        )
+
+    def _get_sensor_observation_frame(self, clean_frame):
+        return self.observation_delay.apply(
+            clean_frame, self.data.time, self.cfg.target_yaw,
+            self.default_dof_pos, self.cfg.dof_vel_obs_scale, self.cfg.clip_obs,
+        )
+
     def reset(self, seed=None):
+        self.observation_delay.begin_episode(seed)
         actor_obs, info = super().reset(seed=seed)
         if self._randomize_initial_pose():
             self._reset_startup_tether()
