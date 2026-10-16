@@ -102,6 +102,13 @@ control:
   observation_delay_enable: false
   imu_observation_delay_ms_range: [0.0, 5.0]
   joint_observation_delay_ms_range: [0.0, 0.0]
+  # Opt-in correlated ages instead of two independent episode delays.
+  # Quantile probabilities: [0, .50, .95, .99, 1]. These are broadened training
+  # envelopes, not a fitted joint distribution from the three measured quantiles.
+  observation_delay_mode: independent
+  observation_delay_common_ms_quantiles: [0.0, 2.2, 4.5, 5.5, 6.0]
+  observation_delay_skew_ms_quantiles: [0.0, 0.35, 0.9, 1.4, 1.6]
+  observation_delay_resample_per_observation: false
   action_filter_enable: true
   action_filter_cutoff_hz: 10.0
   action_filter_jointwise_enable: true

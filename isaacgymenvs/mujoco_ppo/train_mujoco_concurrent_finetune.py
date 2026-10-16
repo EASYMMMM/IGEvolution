@@ -23,6 +23,7 @@ from mujoco_ppo.srl_mujoco_concurrent_env import (
     validate_episode_action_scale_range,
 )
 from mujoco_ppo.srl_mujoco_v2_env import quat_to_euler_xyz
+from mujoco_ppo.observation_delay import DEFAULT_COMMON_MS_QUANTILES, DEFAULT_SKEW_MS_QUANTILES
 
 
 PRIVILEGED_MIRROR_SIGNS = np.array([1.0, 1.0, -1.0, 1.0], dtype=np.float32)
@@ -37,6 +38,10 @@ class ConcurrentPPOConfig(v2_train.V2PPOConfig):
     observation_delay_enable: bool = False
     imu_observation_delay_ms_range: Tuple[float, float] = (0.0, 5.0)
     joint_observation_delay_ms_range: Tuple[float, float] = (0.0, 0.0)
+    observation_delay_mode: str = "independent"
+    observation_delay_common_ms_quantiles: tuple = DEFAULT_COMMON_MS_QUANTILES
+    observation_delay_skew_ms_quantiles: tuple = DEFAULT_SKEW_MS_QUANTILES
+    observation_delay_resample_per_observation: bool = False
     action_scale: float = 1.0
     episode_action_scale_range: Tuple[float, float] | None = None
     mixed_task_enable: bool = False
@@ -299,6 +304,10 @@ def make_env_config(cfg, *, evaluation=False):
         "observation_delay_enable",
         "imu_observation_delay_ms_range",
         "joint_observation_delay_ms_range",
+        "observation_delay_mode",
+        "observation_delay_common_ms_quantiles",
+        "observation_delay_skew_ms_quantiles",
+        "observation_delay_resample_per_observation",
         "initial_pose_randomization_enable",
         "initial_pose_root_height_range",
         "initial_pose_ground_clearance",
@@ -973,9 +982,15 @@ def train(cfg):
             f"{scale_description}"
         )
     print(f"Joint velocity observation scale: {envs[0].cfg.dof_vel_obs_scale:g}")
-    print(f"Observation delay: enabled={cfg.observation_delay_enable} "
-          f"IMU_ms={cfg.imu_observation_delay_ms_range} "
-          f"joint_ms={cfg.joint_observation_delay_ms_range} (per episode)")
+    if cfg.observation_delay_mode == "correlated":
+        print(f"Observation delay: enabled={cfg.observation_delay_enable} mode=correlated "
+              f"common_ms_quantiles={cfg.observation_delay_common_ms_quantiles} "
+              f"absolute_skew_ms_quantiles={cfg.observation_delay_skew_ms_quantiles} "
+              f"resample_per_observation={cfg.observation_delay_resample_per_observation}")
+    else:
+        print(f"Observation delay: enabled={cfg.observation_delay_enable} mode=independent "
+              f"IMU_ms={cfg.imu_observation_delay_ms_range} "
+              f"joint_ms={cfg.joint_observation_delay_ms_range} (per episode)")
     motor_damping = envs[0].model.dof_damping[envs[0].srl_dof_indices]
     print(
         "Motor passive damping: {} ({})".format(
@@ -1768,6 +1783,8 @@ def _load_config(path):
         "episode_action_scale_range",
         "imu_observation_delay_ms_range",
         "joint_observation_delay_ms_range",
+        "observation_delay_common_ms_quantiles",
+        "observation_delay_skew_ms_quantiles",
     ):
         if key in values and values[key] is not None:
             values[key] = tuple(values[key])

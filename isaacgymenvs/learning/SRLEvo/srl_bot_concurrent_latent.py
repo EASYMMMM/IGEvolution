@@ -13,6 +13,7 @@ from isaacgymenvs.learning.SRLEvo.srl_bot_concurrent import (
 )
 from rl_games.algos_torch import torch_ext
 from isaacgymenvs.learning.SRLEvo.latent_ppo import LatentPPORollout, LatentPPOUpdateMixin
+from isaacgymenvs.learning.SRLEvo.latent_ppo_diagnostics import LatentPPONumerics
 
 
 LATENT_TARGET_NAMES = ("root_height", "local_vx", "local_vy", "local_vz")
@@ -85,6 +86,18 @@ class SRL_Bot_ConcurrentLatent_Agent(LatentPPOUpdateMixin, SRL_Bot_Concurrent_Ag
         self._joint_metrics = {}
         self._joint_gradient_probed = False
         self._joint_need_initial_probe = True
+        self._joint_numerics = None
+        if bool(config.get("latent_ppo_numerics_enable", False)):
+            if not self.latent_ppo_update_encoder:
+                raise ValueError("Latent PPO numerical diagnostics require latent_ppo_update_encoder=True")
+            diagnostic_output = config.get("latent_ppo_numerics_output", "")
+            if not diagnostic_output and getattr(self, "nn_dir", None):
+                diagnostic_output = Path(self.nn_dir).parent / "latent_ppo_numerics.jsonl"
+            self._joint_numerics = LatentPPONumerics(
+                self, every=int(config.get("latent_ppo_numerics_every", 10)),
+                samples=int(config.get("latent_ppo_numerics_samples", 1024)),
+                tolerance=float(config.get("latent_ppo_numerics_tolerance", 1e-4)),
+                output=diagnostic_output)
         self.estimator_mini_epochs = int(config.get("latent_mini_epochs", 2))
         self.estimator_minibatch_size = int(
             config.get("latent_minibatch_size", 8192)
@@ -317,6 +330,7 @@ class SRL_Bot_ConcurrentLatent_Agent(LatentPPOUpdateMixin, SRL_Bot_Concurrent_Ag
             self._joint_rollout.record(
                 self.estimator_history, self.mirrored_estimator_history, truth,
                 self.episode_uses_estimator, com_cop_target, contact_target,
+                explicit_prediction=estimate,
             )
         return actor_observation, mirrored_actor_observation, estimate, truth
 
@@ -340,6 +354,7 @@ class SRL_Bot_ConcurrentLatent_Agent(LatentPPOUpdateMixin, SRL_Bot_Concurrent_Ag
                     self.horizon_length, self.num_actors * self.num_agents,
                     self.concurrent_estimator.history_len, self.estimator_input_dim,
                     self.ppo_device,
+                    store_explicit_predictions=self._joint_numerics is not None,
                 )
                 storage_gib = sum(value.numel() * value.element_size()
                                   for value in self._joint_rollout.data.values()) / (1024.0 ** 3)
@@ -375,6 +390,8 @@ class SRL_Bot_ConcurrentLatent_Agent(LatentPPOUpdateMixin, SRL_Bot_Concurrent_Ag
             values["latent_old_mu"] = batch_dict["mus"].clone()
             values["latent_old_sigma"] = batch_dict["sigmas"].clone()
             self.dataset.update_values_dict(values)
+            if self._joint_numerics is not None:
+                self._joint_numerics.prepare(values)
             self.latent_diagnostics = {}
             if int(self.epoch_num) % self.latent_diagnostics_every == 0:
                 count = min(self.latent_diagnostics_samples, values["latent_history"].shape[0])
@@ -546,6 +563,9 @@ class SRL_Bot_ConcurrentLatent_Agent(LatentPPOUpdateMixin, SRL_Bot_Concurrent_Ag
         super()._write_concurrent_metrics()
         frame = self.frame // self.num_agents
         for name, value in self.latent_metrics.items():
+            if name.startswith("numerics/"):
+                self.writer.add_scalar("latent_numerics/" + name[len("numerics/"):], value, frame)
+                continue
             suffix = "" if name.endswith("grad_norm") or name in ("latent_std_mean", "explicit_mse", "next_observation_mse") else "_loss"
             self.writer.add_scalar("concurrent_latent/" + name + suffix, value, frame)
         self.writer.add_scalar("concurrent_latent/est_only_active", float(self.est_only_active), frame)

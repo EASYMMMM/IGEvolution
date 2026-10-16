@@ -8,7 +8,9 @@ import mujoco
 import numpy as np
 
 from mujoco_ppo.srl_mujoco_v3_env import SRLMujocoV3Env, V3WalkEnvConfig
-from mujoco_ppo.observation_delay import SensorObservationDelay
+from mujoco_ppo.observation_delay import (
+    SensorObservationDelay, DEFAULT_COMMON_MS_QUANTILES, DEFAULT_SKEW_MS_QUANTILES,
+)
 
 
 class JointwiseSecondOrderLowPass:
@@ -85,6 +87,10 @@ class ConcurrentWalkEnvConfig(V3WalkEnvConfig):
     observation_delay_enable: bool = False
     imu_observation_delay_ms_range: tuple[float, float] = (0.0, 5.0)
     joint_observation_delay_ms_range: tuple[float, float] = (0.0, 0.0)
+    observation_delay_mode: str = "independent"
+    observation_delay_common_ms_quantiles: tuple = DEFAULT_COMMON_MS_QUANTILES
+    observation_delay_skew_ms_quantiles: tuple = DEFAULT_SKEW_MS_QUANTILES
+    observation_delay_resample_per_observation: bool = False
     episode_action_scale_range: tuple[float, float] | None = None
     initial_pose_randomization_enable: bool = False
     initial_pose_root_height_range: tuple[float, float] = (0.85, 1.14)
@@ -155,6 +161,10 @@ class SRLMujocoConcurrentEnv(SRLMujocoV3Env):
         self.observation_delay = SensorObservationDelay(
             cfg.observation_delay_enable, cfg.imu_observation_delay_ms_range,
             cfg.joint_observation_delay_ms_range,
+            mode=cfg.observation_delay_mode,
+            common_ms_quantiles=cfg.observation_delay_common_ms_quantiles,
+            skew_ms_quantiles=cfg.observation_delay_skew_ms_quantiles,
+            resample_per_observation=cfg.observation_delay_resample_per_observation,
         )
         cfg.episode_action_scale_range = validate_episode_action_scale_range(
             cfg.episode_action_scale_range
@@ -1026,6 +1036,8 @@ class SRLMujocoConcurrentEnv(SRLMujocoV3Env):
         result["observation_delay_enabled"] = self.observation_delay.enabled
         result["imu_observation_delay_ms"] = self.observation_delay.imu_ms
         result["joint_observation_delay_ms"] = self.observation_delay.joint_ms
+        result["observation_delay_mode"] = self.observation_delay.mode
+        result["observation_delay_signed_skew_ms"] = self.observation_delay.joint_ms - self.observation_delay.imu_ms
         return result
 
     def _reset_observation_sensors(self):

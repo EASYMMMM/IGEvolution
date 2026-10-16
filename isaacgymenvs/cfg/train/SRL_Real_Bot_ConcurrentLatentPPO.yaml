@@ -27,6 +27,15 @@ params:
     latent_ppo_aux_loss_coef: 1.0
     latent_ppo_grad_diagnostics_every: 25
 
+    # Opt-in probes only: preserve losses, AMP, optimizer and scheduler behavior.
+    # First epoch and every N epochs: pre-update replay + first minibatch audit.
+    latent_ppo_numerics_enable: False
+    latent_ppo_numerics_every: 10
+    latent_ppo_numerics_samples: 1024
+    latent_ppo_numerics_tolerance: 1e-4
+    # Empty: write <run>/latent_ppo_numerics.jsonl alongside nn/ and summaries/.
+    latent_ppo_numerics_output: ""
+
     # Model v2: decoder uses explicit(4) + latent(16), with no observation bypass.
     latent_use_next_observation_loss: True
     latent_explicit_loss_coef: 1.0

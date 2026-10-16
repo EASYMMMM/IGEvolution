@@ -4,12 +4,13 @@ from contextlib import contextmanager
 
 import torch
 from rl_games.algos_torch import torch_ext
+from isaacgymenvs.learning.SRLEvo.latent_ppo_diagnostics import measured_optimizer_step
 
 
 class LatentPPORollout:
     """Env-major storage flattens without another horizon-sized history copy."""
 
-    def __init__(self, horizon, num_envs, history_len, input_dim, device):
+    def __init__(self, horizon, num_envs, history_len, input_dim, device, store_explicit_predictions=False):
         prefix = (num_envs, horizon)
         specs = {
             "history": ((history_len, input_dim), torch.float32),
@@ -22,13 +23,15 @@ class LatentPPORollout:
             "mirrored_next_frame": ((input_dim,), torch.float32),
             "next_valid": ((), torch.bool),
         }
+        if store_explicit_predictions:
+            specs["explicit_prediction"] = ((4,), torch.float32)
         self.horizon = horizon
         self.data = {key: torch.zeros(prefix + shape, dtype=dtype, device=device)
                      for key, (shape, dtype) in specs.items()}
         self.step = 0
 
     @torch.no_grad()
-    def record(self, history, mirrored_history, truth, use_estimator, com_cop, contacts):
+    def record(self, history, mirrored_history, truth, use_estimator, com_cop, contacts, explicit_prediction=None):
         if self.step >= self.horizon:
             raise RuntimeError("Latent rollout exceeds PPO horizon")
         for key, value in (("history", history), ("mirrored_history", mirrored_history),
@@ -39,6 +42,10 @@ class LatentPPORollout:
                 raise RuntimeError("Latent rollout shape mismatch for {}: {} != {}".format(
                     key, target.shape, value.shape))
             target.copy_(value)
+        if "explicit_prediction" in self.data:
+            if explicit_prediction is None or explicit_prediction.shape != truth.shape:
+                raise RuntimeError("Numerical diagnostics require rollout explicit predictions")
+            self.data["explicit_prediction"][:, self.step].copy_(explicit_prediction)
         self.data["next_valid"][:, self.step] = False
         self.step += 1
 
@@ -158,11 +165,15 @@ class LatentPPOUpdateMixin:
         self.optimizer.zero_grad(set_to_none=True)
         self.concurrent_estimator_optimizer.zero_grad(set_to_none=True)
         self.concurrent_estimator.train()
+        # Never seed the training forward's FP16 weight cache under no_grad.
+        # Separate scopes alone are insufficient if the caller has an outer
+        # autocast scope; disabling the teacher cache also covers that case.
+        with torch.no_grad(), torch.cuda.amp.autocast(
+                enabled=self.mixed_precision, cache_enabled=False):
+            mirrored_obs, _ = self._joint_actor_observation(batch, mirrored=True)
+            mirrored_mu = self._joint_forward(mirrored_obs, is_train=False)["mus"]
         with torch.cuda.amp.autocast(enabled=self.mixed_precision):
             actor_obs, output = self._joint_actor_observation(batch)
-            with torch.no_grad():
-                mirrored_obs, _ = self._joint_actor_observation(batch, mirrored=True)
-                mirrored_mu = self._joint_forward(mirrored_obs, is_train=False)["mus"]
             result = self._joint_forward(actor_obs, batch["actions"])
             neglogp, mu, sigma = result["prev_neglogp"], result["mus"], result["sigmas"]
             a_loss = self.actor_loss_func(batch["old_logp_actions"], neglogp,
@@ -182,6 +193,12 @@ class LatentPPOUpdateMixin:
             loss = (policy_loss + self.latent_ppo_aux_loss_coef * aux_loss
                     if self.latent_ppo_aux_loss_coef != 0.0 else policy_loss)
 
+        numerical_state = None
+        if self._joint_numerics is not None:
+            numerical_state = self._joint_numerics.begin_update(
+                batch, actor_obs, result, a_loss,
+                (self.a_sym_loss_coef or 0.0) * sym_loss, policy_loss,
+                self.latent_ppo_aux_loss_coef * aux_loss)
         probe = (not self._joint_gradient_probed and
                  (self._joint_need_initial_probe or
                   int(self.epoch_num) % self.latent_ppo_grad_diagnostics_every == 0))
@@ -202,12 +219,20 @@ class LatentPPOUpdateMixin:
         # shared parameters before the other loss has contributed its gradients.
         self.scaler.unscale_(self.optimizer)
         self.scaler.unscale_(self.concurrent_estimator_optimizer)
+        if numerical_state is not None:
+            self._joint_numerics.after_unscale(numerical_state)
         if self.truncate_grads:
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_norm)
         torch.nn.utils.clip_grad_norm_(self.concurrent_estimator.parameters(), self.estimator_grad_norm)
-        self.scaler.step(self.optimizer)
-        self.scaler.step(self.concurrent_estimator_optimizer)
+        if numerical_state is None:
+            self.scaler.step(self.optimizer)
+            self.scaler.step(self.concurrent_estimator_optimizer)
+        else:
+            actor_stepped = measured_optimizer_step(self.scaler, self.optimizer)
+            encoder_stepped = measured_optimizer_step(self.scaler, self.concurrent_estimator_optimizer)
         self.scaler.update()
+        if numerical_state is not None:
+            self._joint_numerics.finish_update(numerical_state, actor_stepped, encoder_stepped)
 
         with torch.no_grad():
             kl = torch_ext.policy_kl(mu.detach(), sigma.detach(), batch["latent_old_mu"],
@@ -227,4 +252,4 @@ class LatentPPOUpdateMixin:
                              b_loss.detach(), sym_loss.detach())
 
     def _joint_metric(self, name, value):
-        self._joint_metrics.setdefault(name, []).append(float(value.detach()))
+        self._joint_metrics.setdefault(name, []).append(float(value.detach()) if torch.is_tensor(value) else float(value))
