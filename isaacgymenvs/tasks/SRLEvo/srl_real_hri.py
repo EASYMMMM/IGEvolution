@@ -233,6 +233,23 @@ class SRL_Real_HRI(SRL_Real_HRI_Base):
         target_ang_vel_z = torch.where(is_standing_phase, zero_cmd, walk_ang_vel_z)
         target_yaw = torch.where(is_standing_phase, stand_yaw, walk_yaw)
 
+        if self.srl_teacher_command_clamp:
+            target_vel_x = torch.clamp(
+                target_vel_x,
+                min=float(self.srl_teacher_vel_x_range[0]),
+                max=float(self.srl_teacher_vel_x_range[1]),
+            )
+            target_ang_vel_z = torch.clamp(
+                target_ang_vel_z,
+                min=float(self.srl_teacher_ang_vel_z_range[0]),
+                max=float(self.srl_teacher_ang_vel_z_range[1]),
+            )
+            self.target_pelvis_height[env_ids_flat] = torch.clamp(
+                self.target_pelvis_height[env_ids_flat],
+                min=float(self.srl_teacher_pelvis_height_range[0]),
+                max=float(self.srl_teacher_pelvis_height_range[1]),
+            )
+
         self._standing_phase_state[env_ids_flat] = is_standing_phase
         self._prev_is_standing_phase[env_ids_flat] = is_standing_phase
         self.target_vel_x[env_ids_flat] = target_vel_x

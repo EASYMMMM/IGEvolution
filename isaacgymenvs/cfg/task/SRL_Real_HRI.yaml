@@ -12,7 +12,9 @@ env:
   enableDebugVis: False
   
   pdControl: True
-  forceControl: True
+  # Real Bot V2 teacher was trained with SRL position targets. Keep the HRI
+  # SRL execution path identical; forceControl remains available for legacy runs.
+  forceControl: False
   powerScale: 1.0
   controlFrequencyInv: 3  
   stateInit: "Default"  # Default, Random, Hybrid
@@ -23,6 +25,10 @@ env:
   numStateHistSteps: 5
 
   action_scale: 1.0
+  srl_action_filter_enable: True
+  srl_action_filter_cutoff_hz: 10.0
+  srl_action_filter_order: 2
+  soft_joint_limit_margin: 0.0
 
   # Minimal omni-walk migration: match the humanoid solo-training observation convention.
   localRootObs: True
@@ -42,7 +48,7 @@ env:
   motion_file: "amp_humanoid_walk_175.npy"
 
   asset:
-    assetFileName: "mjcf/srl_real_hri/srl_real_hri_HXYK_175_mesh.xml"
+    assetFileName: "mjcf/srl_real_hri/srl_real_hri_v2_HXYK_175_mesh.xml"
 
   plane:
     staticFriction: 1.0
@@ -57,10 +63,14 @@ env:
   srl_policy_obs_remove_ids: [0, 1, 2, 3]  # root_h and local_root_vel
   srl_obs_frame_stack: 5  
   srl_command_num: 3
-  teacher_srl_obs_num: 30
+  # Teacher uses the exact Real Bot V2 policy interface: (30 - 4) * 5 + 3 = 133.
+  teacher_srl_full_obs_num: 30
+  teacher_srl_policy_obs_remove_ids: [0, 1, 2, 3]
+  teacher_srl_expected_obs_size: 133
   humanoid_actions_num: 28
   srl_actions_num: 6
-  srl_free_actions_num: 2
+  # 3 virtual-damping slides + 2 passive attachment hinges.
+  srl_free_actions_num: 5
  
   gait_period: 54.0
   foot_clearance: 0.2
@@ -80,30 +90,42 @@ env:
   progress_reward_scale: 1
   dof_acc_cost_scale: 0.5
   dof_vel_cost_scale: 1
-  dof_pos_cost_scale: 0.05
+  dof_pos_cost_scale: 0.2
   no_fly_penalty_scale: 10.0
   gait_similarity_penalty_scale: 10
   pelvis_height_reward_scale: 5.0
   orientation_reward_scale: 3.0
   tracking_ang_vel_reward_scale: 2.0
   vel_tracking_reward_scale: 6.0
-  clearance_penalty_scale: 10
+  clearance_penalty_scale: 50
   lateral_distance_penalty_scale: 30
-  actions_rate_scale: 0.1
-  actions_smoothness_scale: 0.1
+  actions_rate_scale: 0.3
+  actions_smoothness_scale: 0.6
   contact_force_cost_scale: 0.0
   srl_motor_cost_scale: 0.0
 
-  srl_max_effort: 300     
+  default_srl_joint_angles: [0, -0.55, -0.3, 0, -0.55, -0.3]
+  srl_max_effort: 350
+  srl_effort_limits: [90, 90, 350, 90, 90, 350]
+
+  # Clamp HRI trajectory-derived commands to the Real Bot V2 teacher support.
+  srl_teacher_command_clamp: True
+  srl_teacher_vel_x_range: [0.0, 1.4]
+  srl_teacher_ang_vel_z_range: [-0.87, 0.87]
+  srl_teacher_pelvis_height_range: [0.80, 1.05]
+
   srl_motor_opt:
-    peak_start_ratio: 0.65   # 从 65% 额定扭矩开始惩罚“接近峰值”
-    peak_window_tau_s: 0.30  # 峰值窗口衰减时间常数（秒）
-    peak_cost_scale: 1.0    # near-peak 惩罚权重（先别太大）
-    thermal_tau_s: 1.5       # 热 EMA 时间常数（秒）
-    thermal_cost_scale: 0.05 # 过热惩罚权重（通常比 peak 小）
-    power_cost_scale: 0.00  # 如果你想省电再开（比如 0.01）
-    omega_ref: 14.0         # 你的 SRL velocity fill(14.0) 对齐
-    rated_ratio: 0.28      # 额定扭矩比率（用于热计算）
+    rated_nm: [40, 40, 100, 40, 40, 100]
+    peak_nm: [120, 120, 400, 120, 120, 400]
+    rated_w: [420, 420, 1050, 420, 420, 1050]
+    peak_start_ratio: 0.85
+    thermal_start: 0.8
+    power_start_ratio: 0.8
+    peak_window_tau_s: 0.30
+    thermal_tau_s: 4.0
+    peak_cost_scale: 0.3
+    thermal_cost_scale: 1.0
+    power_cost_scale: 0.1
 
   torque_threshold: 50  # 力矩惩罚施加阈值
   upper_reward_w: 1 

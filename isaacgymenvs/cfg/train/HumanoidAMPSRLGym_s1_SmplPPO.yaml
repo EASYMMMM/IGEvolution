@@ -71,8 +71,8 @@ params:
     entropy_coef: 0.01
     truncate_grads: False
     e_clip: 0.2
-    horizon_length: 64 # 16
-    minibatch_size: 65536
+    horizon_length: 32 # 16
+    minibatch_size: 32768
     #minibatch_size: 512
     mini_epochs: 5
     critic_coef: 5

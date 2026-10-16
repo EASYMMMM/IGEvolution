@@ -1,0 +1,63 @@
+/home/joemeng/SRL/.miniconda3/envs/srlgym/lib/python3.8/site-packages/hydra/_internal/hydra.py:119: UserWarning: Future Hydra versions will no longer change working directory at job runtime by default.
+See https://hydra.cc/docs/1.2/upgrades/1.1_to_1.2/changes_to_job_working_dir/ for more information.
+  ret = run_job(
+Importing module 'gym_38' (/home/joemeng/SRL/isaacgym/python/isaacgym/_bindings/linux-x86_64/gym_38.so)
+Setting GYM_USD_PLUG_INFO_PATH to /home/joemeng/SRL/isaacgym/python/isaacgym/_bindings/linux-x86_64/usd/plugInfo.json
+Gym has been unmaintained since 2022 and does not support NumPy 2.0 amongst other critical functionality.
+Please upgrade to Gymnasium, the maintained drop-in replacement of Gym, or contact the authors of your software and request that they upgrade.
+See the migration guide at https://gymnasium.farama.org/introduction/migration_guide/ for additional information.
+PyTorch version 2.3.0a0+git63d5e92
+Device count 1
+/home/joemeng/SRL/isaacgym/python/isaacgym/_bindings/src/gymtorch
+Using /home/joemeng/.cache/torch_extensions/py38_cu128 as PyTorch extensions root...
+Creating extension directory /home/joemeng/.cache/torch_extensions/py38_cu128/gymtorch...
+Emitting ninja build file /home/joemeng/.cache/torch_extensions/py38_cu128/gymtorch/build.ninja...
+Building extension module gymtorch...
+Allowing ninja to set a default number of workers... (overridable by setting the environment variable MAX_JOBS=N)
+[1/2] c++ -MMD -MF gymtorch.o.d -DTORCH_EXTENSION_NAME=gymtorch -DTORCH_API_INCLUDE_EXTENSION_H -DPYBIND11_COMPILER_TYPE=\"_gcc\" -DPYBIND11_STDLIB=\"_libstdcpp\" -DPYBIND11_BUILD_ABI=\"_cxxabi1013\" -isystem /home/joemeng/SRL/.miniconda3/envs/srlgym/lib/python3.8/site-packages/torch/include -isystem /home/joemeng/SRL/.miniconda3/envs/srlgym/lib/python3.8/site-packages/torch/include/torch/csrc/api/include -isystem /home/joemeng/SRL/.miniconda3/envs/srlgym/lib/python3.8/site-packages/torch/include/TH -isystem /home/joemeng/SRL/.miniconda3/envs/srlgym/lib/python3.8/site-packages/torch/include/THC -isystem /home/joemeng/SRL/.miniconda3/envs/srlgym/include/python3.8 -D_GLIBCXX_USE_CXX11_ABI=1 -fPIC -std=c++17 -DTORCH_MAJOR=2 -DTORCH_MINOR=3 -c /home/joemeng/SRL/isaacgym/python/isaacgym/_bindings/src/gymtorch/gymtorch.cpp -o gymtorch.o 
+FAILED: [code=1] gymtorch.o 
+c++ -MMD -MF gymtorch.o.d -DTORCH_EXTENSION_NAME=gymtorch -DTORCH_API_INCLUDE_EXTENSION_H -DPYBIND11_COMPILER_TYPE=\"_gcc\" -DPYBIND11_STDLIB=\"_libstdcpp\" -DPYBIND11_BUILD_ABI=\"_cxxabi1013\" -isystem /home/joemeng/SRL/.miniconda3/envs/srlgym/lib/python3.8/site-packages/torch/include -isystem /home/joemeng/SRL/.miniconda3/envs/srlgym/lib/python3.8/site-packages/torch/include/torch/csrc/api/include -isystem /home/joemeng/SRL/.miniconda3/envs/srlgym/lib/python3.8/site-packages/torch/include/TH -isystem /home/joemeng/SRL/.miniconda3/envs/srlgym/lib/python3.8/site-packages/torch/include/THC -isystem /home/joemeng/SRL/.miniconda3/envs/srlgym/include/python3.8 -D_GLIBCXX_USE_CXX11_ABI=1 -fPIC -std=c++17 -DTORCH_MAJOR=2 -DTORCH_MINOR=3 -c /home/joemeng/SRL/isaacgym/python/isaacgym/_bindings/src/gymtorch/gymtorch.cpp -o gymtorch.o 
+In file included from /home/joemeng/SRL/.miniconda3/envs/srlgym/lib/python3.8/site-packages/torch/include/torch/csrc/python_headers.h:12,
+                 from /home/joemeng/SRL/.miniconda3/envs/srlgym/lib/python3.8/site-packages/torch/include/torch/csrc/Device.h:4,
+                 from /home/joemeng/SRL/.miniconda3/envs/srlgym/lib/python3.8/site-packages/torch/include/torch/csrc/api/include/torch/python.h:8,
+                 from /home/joemeng/SRL/.miniconda3/envs/srlgym/lib/python3.8/site-packages/torch/include/torch/extension.h:9,
+                 from /home/joemeng/SRL/isaacgym/python/isaacgym/_bindings/src/gymtorch/gymtorch.cpp:17:
+/home/joemeng/SRL/.miniconda3/envs/srlgym/include/python3.8/Python.h:44:10: fatal error: crypt.h: 没有那个文件或目录
+   44 | #include <crypt.h>
+      |          ^~~~~~~~~
+compilation terminated.
+ninja: build stopped: subcommand failed.
+Error executing job with overrides: ['task=HumanoidAMPSRLGym_s1_Smpl', 'experiment=Humanoid_175_Pretrain_s2_smp', 'task.env.stateInit=Hybrid', 'wandb_project=Humanoid_Pretrain', 'wandb_activate=True', 'max_iterations=4500', 'task.env.episodeLength=4000', 'sim_device=cuda:0', 'rl_device=cuda:0', 'num_envs=4096', 'headless=True', 'seed=28808', 'task.env.train_stage=3', 'checkpoint=/home/joemeng/SRL/IGEvolution/isaacgymenvs/runs/Humanoid_175_Pretrain_s1_smp_13-20-08-10/nn/Humanoid_175_Pretrain_s1_smp_13-20-08-14.pth', 'task.env.motion_file=smp_humanoid_walk_175.npy']
+Traceback (most recent call last):
+  File "/home/joemeng/SRL/.miniconda3/envs/srlgym/lib/python3.8/site-packages/torch/utils/cpp_extension.py", line 2107, in _run_ninja_build
+    subprocess.run(
+  File "/home/joemeng/SRL/.miniconda3/envs/srlgym/lib/python3.8/subprocess.py", line 516, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['ninja', '-v']' returned non-zero exit status 1.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "SRL_Evo_train.py", line 81, in launch_rlg_hydra
+    from isaacgymenvs.utils.rlgames_utils import multi_gpu_get_rank
+  File "/home/joemeng/SRL/IGEvolution/isaacgymenvs/utils/rlgames_utils.py", line 40, in <module>
+    from isaacgymenvs.tasks import isaacgym_task_map
+  File "/home/joemeng/SRL/IGEvolution/isaacgymenvs/tasks/__init__.py", line 29, in <module>
+    from .ant import Ant
+  File "/home/joemeng/SRL/IGEvolution/isaacgymenvs/tasks/ant.py", line 33, in <module>
+    from isaacgym import gymtorch
+  File "/home/joemeng/SRL/isaacgym/python/isaacgym/gymtorch.py", line 109, in <module>
+    _import_gymtorch()
+  File "/home/joemeng/SRL/isaacgym/python/isaacgym/gymtorch.py", line 45, in _import_gymtorch
+    gt = torch.utils.cpp_extension.load(name="gymtorch", sources=sources, extra_cflags=cflags, verbose=True)
+  File "/home/joemeng/SRL/.miniconda3/envs/srlgym/lib/python3.8/site-packages/torch/utils/cpp_extension.py", line 1309, in load
+    return _jit_compile(
+  File "/home/joemeng/SRL/.miniconda3/envs/srlgym/lib/python3.8/site-packages/torch/utils/cpp_extension.py", line 1719, in _jit_compile
+    _write_ninja_file_and_build_library(
+  File "/home/joemeng/SRL/.miniconda3/envs/srlgym/lib/python3.8/site-packages/torch/utils/cpp_extension.py", line 1832, in _write_ninja_file_and_build_library
+    _run_ninja_build(
+  File "/home/joemeng/SRL/.miniconda3/envs/srlgym/lib/python3.8/site-packages/torch/utils/cpp_extension.py", line 2123, in _run_ninja_build
+    raise RuntimeError(message) from e
+RuntimeError: Error building extension 'gymtorch'
+
+Set the environment variable HYDRA_FULL_ERROR=1 for a complete stack trace.

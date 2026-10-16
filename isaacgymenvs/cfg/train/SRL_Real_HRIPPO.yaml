@@ -113,6 +113,7 @@ params:
     train_humanoid_freq: 10
     dagger_loss_coef: 0.0  # 0.5
     dagger_anneal_k: 1e-4  # 0.0001
+    dagger_min_coef: 0.0
 
     # project settings
     start_frame: 0  # 训练帧数对齐

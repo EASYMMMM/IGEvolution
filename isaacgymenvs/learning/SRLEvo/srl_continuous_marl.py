@@ -31,6 +31,7 @@ from rl_games.algos_torch.self_play_manager import SelfPlayManager
 import torch.distributed as dist
 from rl_games.common.diagnostics import DefaultDiagnostics, PpoDiagnostics
 import gym
+import copy
 from .mp_util import WandbWriter
 from collections import deque
 from .srl_network_builder import CentralCritic
@@ -65,6 +66,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         self.dagger_loss_coef = config.get('dagger_loss_coef',0)
         self.dagger_loss_coef_init = self.dagger_loss_coef
         self.dagger_anneal_k = config.get('dagger_anneal_k', 5e-5)  # 衰减速率
+        self.dagger_min_coef = config.get('dagger_min_coef', 0.0)
         self.clip_actions = config.get('clip_actions', True)
         self.network_path = self.nn_dir 
         
@@ -81,16 +83,27 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         net_config['normalize_input'] = self.normalize_srl_input
         self.model_srl = self.network.build(net_config,role='srl')
         self.model_srl.to(self.ppo_device)
-        # teacher model
-        self.network.network_builder.params['space']['continuous']['sigma_init']['val']=0
-        self.network.network_builder.params['mlp']['units']=[512,256,128]
-        self.network.network_builder.params['mlp']['activation']='elu'
-        net_config['input_shape'] = self.vec_env.env.get_teacher_srl_obs_size()
-        net_config['priv_obs_num_srl'] = (self.vec_env.env.get_teacher_srl_obs_size(),)
-        net_config['obs_num_srl'] = (self.vec_env.env.get_teacher_srl_obs_size(),)
-        net_config['actions_num_srl'] = self.vec_env.env.get_teacher_srl_action_size()
-        self.model_teacher_srl = self.network.build(net_config,role='srl')
+        # Build the frozen Real Bot teacher without leaking its architecture
+        # back into the student/central-critic builder configuration.
+        teacher_obs_size = self.vec_env.env.get_teacher_srl_obs_size()
+        teacher_action_size = self.vec_env.env.get_teacher_srl_action_size()
+        original_builder_params = copy.deepcopy(self.network.network_builder.params)
+        teacher_net_config = copy.deepcopy(net_config)
+        try:
+            self.network.network_builder.params['space']['continuous']['sigma_init']['val'] = 0
+            self.network.network_builder.params['mlp']['units'] = [512, 256, 128]
+            self.network.network_builder.params['mlp']['activation'] = 'elu'
+            teacher_net_config['input_shape'] = (teacher_obs_size,)
+            teacher_net_config['priv_obs_num_srl'] = (teacher_obs_size,)
+            teacher_net_config['obs_num_srl'] = (teacher_obs_size,)
+            teacher_net_config['actions_num_srl'] = teacher_action_size
+            self.model_teacher_srl = self.network.build(teacher_net_config, role='srl')
+        finally:
+            self.network.network_builder.params = original_builder_params
         self.model_teacher_srl.to(self.ppo_device)
+        self.model_teacher_srl.eval()
+        for teacher_param in self.model_teacher_srl.parameters():
+            teacher_param.requires_grad_(False)
 
         self.states = None
 
@@ -197,7 +210,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
 
         obs_shape = self.experience_buffer_srl.tensor_dict['obses'].shape
         self.experience_buffer_srl.tensor_dict['teacher_actions'] = torch.zeros(
-            obs_shape[0], obs_shape[1], 6, 
+            obs_shape[0], obs_shape[1], self.vec_env.env.get_teacher_srl_action_size(),
             device=self.ppo_device,
             dtype=self.experience_buffer_srl.tensor_dict['obses'].dtype
         )
@@ -831,7 +844,10 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             if self._srl_teacher_checkpoint:
                 # Dagger loss Annealing
                 # β(t) = β₀ * exp(-k * t)
-                self.dagger_loss_coef = max(0.01, self.dagger_loss_coef_init * np.exp(-self.dagger_anneal_k * self.update_counter))
+                self.dagger_loss_coef = max(
+                    self.dagger_min_coef,
+                    self.dagger_loss_coef_init * np.exp(-self.dagger_anneal_k * self.update_counter),
+                )
                 teacher_actions_batch = input_dict['teacher_actions']  # [batch, 6]
                 student_actions_trim = mu                    # [batch, 6]
                 dagger_loss = torch.mean((student_actions_trim - teacher_actions_batch) ** 2)
@@ -1290,10 +1306,73 @@ class SRL_MultiAgent(common_agent.CommonAgent):
                 self.central_critic_opt.load_state_dict(checkpoint['central_critic_opt'])
 
     def _load_srl_teacher_checkpoint(self, fn,):
-        # restore nn of humanoid & srl
         print('=> loading srl teacher checkpoint from {}'.format(fn))
         checkpoint = my_load_checkpoint(fn,map_location=self.device)
-        self.model_teacher_srl.load_state_dict(checkpoint['model'], strict=False)
+        if 'model' not in checkpoint:
+            raise KeyError(f"Teacher checkpoint {fn} does not contain a 'model' state dict.")
+
+        checkpoint_state = checkpoint['model']
+        target_state = self.model_teacher_srl.state_dict()
+        teacher_obs_size = self.vec_env.env.get_teacher_srl_obs_size()
+        teacher_action_size = self.vec_env.env.get_teacher_srl_action_size()
+
+        actor_input_keys = [
+            key for key in checkpoint_state
+            if key.endswith('actor_mlp.0.weight')
+        ]
+        if not actor_input_keys:
+            raise RuntimeError("Teacher checkpoint has no actor_mlp.0.weight tensor.")
+        checkpoint_obs_size = int(checkpoint_state[actor_input_keys[0]].shape[1])
+        if checkpoint_obs_size != teacher_obs_size:
+            raise RuntimeError(
+                f"Teacher observation mismatch: checkpoint expects {checkpoint_obs_size}, "
+                f"but Real HRI provides {teacher_obs_size}."
+            )
+
+        mu_keys = [key for key in checkpoint_state if key.endswith('mu.weight')]
+        if not mu_keys:
+            raise RuntimeError("Teacher checkpoint has no policy output (mu.weight) tensor.")
+        checkpoint_action_size = int(checkpoint_state[mu_keys[0]].shape[0])
+        if checkpoint_action_size != teacher_action_size:
+            raise RuntimeError(
+                f"Teacher action mismatch: checkpoint outputs {checkpoint_action_size}, "
+                f"but Real HRI expects {teacher_action_size}."
+            )
+
+        shape_mismatches = []
+        for key in checkpoint_state.keys() & target_state.keys():
+            if checkpoint_state[key].shape != target_state[key].shape:
+                shape_mismatches.append(
+                    f"{key}: checkpoint={tuple(checkpoint_state[key].shape)}, "
+                    f"model={tuple(target_state[key].shape)}"
+                )
+        if shape_mismatches:
+            raise RuntimeError(
+                "Teacher checkpoint contains incompatible tensors:\n  "
+                + "\n  ".join(shape_mismatches)
+            )
+
+        load_result = self.model_teacher_srl.load_state_dict(checkpoint_state, strict=False)
+        required_prefixes = (
+            'a2c_network.actor_mlp.',
+            'a2c_network.mu.',
+            'running_mean_std.',
+        )
+        missing_required = [
+            key for key in load_result.missing_keys
+            if key.startswith(required_prefixes)
+        ]
+        if missing_required:
+            raise RuntimeError(
+                "Teacher checkpoint is missing policy/normalization tensors: "
+                + ", ".join(missing_required)
+            )
+        if load_result.missing_keys or load_result.unexpected_keys:
+            print(
+                "Teacher checkpoint loaded with non-policy differences: "
+                f"missing={load_result.missing_keys}, unexpected={load_result.unexpected_keys}"
+            )
+        self.model_teacher_srl.eval()
 
     def save(self, fn):
         state = self.get_full_state_weights()
