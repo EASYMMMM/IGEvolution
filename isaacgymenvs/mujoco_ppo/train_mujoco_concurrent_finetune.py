@@ -160,6 +160,8 @@ class ConcurrentPPOConfig(v2_train.V2PPOConfig):
     dof_pos_cost_scale: float = 0.2
     no_fly_penalty_scale: float = 10.0
     vel_tracking_reward_scale: float = 6.0
+    tracking_vx_error_penalty_scale: float = 0.0
+    tracking_vy_error_penalty_scale: float = 0.0
     tracking_ang_vel_reward_scale: float = 2.0
     gait_similarity_penalty_scale: float = 10.0
     pelvis_height_reward_scale: float = 5.0
@@ -349,6 +351,7 @@ def make_env_config(cfg, *, evaluation=False):
         "alive_reward_scale", "progress_reward_scale", "torques_cost_scale",
         "dof_acc_cost_scale", "dof_vel_cost_scale", "dof_pos_cost_scale",
         "no_fly_penalty_scale", "vel_tracking_reward_scale",
+        "tracking_vx_error_penalty_scale", "tracking_vy_error_penalty_scale",
         "tracking_ang_vel_reward_scale", "gait_similarity_penalty_scale",
         "pelvis_height_reward_scale", "orientation_reward_scale",
         "clearance_penalty_scale", "lateral_distance_penalty_scale",
@@ -506,6 +509,8 @@ _REWARD_COMPONENTS = (
     ("alive", "reward_alive", "alive_reward_scale", 1.0),
     ("progress", "reward_progress", "progress_reward_scale", 1.0),
     ("velocity", "reward_vel_tracking", "vel_tracking_reward_scale", 1.0),
+    ("tracking_vx_error", "penalty_tracking_vx_error", "tracking_vx_error_penalty_scale", -1.0),
+    ("tracking_vy_error", "penalty_tracking_vy_error", "tracking_vy_error_penalty_scale", -1.0),
     ("angular_velocity", "reward_ang_vel_tracking", "tracking_ang_vel_reward_scale", 1.0),
     ("orientation", "reward_orientation", "orientation_reward_scale", 1.0),
     ("pelvis_height", "reward_pelvis_height", "pelvis_height_reward_scale", 1.0),
@@ -559,6 +564,7 @@ def evaluate_policy_condition(policy, cfg, dr_progress, use_estimate, seeds=None
     support_fractions, foot_force_ratios = [], []
     foot_force_exceeded, horizontal_force_active = [], []
     reward_components = defaultdict(list)
+    tracking_errors = defaultdict(list)
     for seed in seeds:
         env = make_env(cfg, evaluation=True)
         if support_mode == "none":
@@ -621,6 +627,8 @@ def evaluate_policy_condition(policy, cfg, dr_progress, use_estimate, seeds=None
             )
             for name, value in _weighted_reward_components(info, env.cfg).items():
                 reward_components[name].append(value)
+            for axis in ("vx", "vy"):
+                tracking_errors[axis].append(float(info[f"tracking_{axis}_error"]))
             if terminated or truncated:
                 break
         lengths.append(step + 1)
@@ -640,6 +648,10 @@ def evaluate_policy_condition(policy, cfg, dr_progress, use_estimate, seeds=None
         "estimator_mae_vx": float(mae[1]),
         "estimator_mae_vy": float(mae[2]),
         "estimator_mae_vz": float(mae[3]),
+        "tracking_vx_error_mean": float(np.mean(tracking_errors["vx"])),
+        "tracking_vx_abs_error_mean": float(np.mean(np.abs(tracking_errors["vx"]))),
+        "tracking_vy_error_mean": float(np.mean(tracking_errors["vy"])),
+        "tracking_vy_abs_error_mean": float(np.mean(np.abs(tracking_errors["vy"]))),
         "foot_separation_mean": float(np.mean(separations)),
         "foot_separation_min": float(np.min(separations)),
         "narrow_step_fraction": float(
@@ -1231,6 +1243,7 @@ def train(cfg):
         horizontal_force_active = []
         dr_scenarios = []
         rollout_reward_components = defaultdict(list)
+        rollout_tracking_errors = defaultdict(list)
         task_rollout_metrics = {
             task: defaultdict(list) for task in task_episode_windows
         }
@@ -1256,6 +1269,9 @@ def train(cfg):
                     task_metrics["vx_abs_error"].append(abs(
                         float(info["vel_x"]) - float(info["target_vel_x"])
                     ))
+                    task_metrics["vx_error"].append(float(info["tracking_vx_error"]))
+                    task_metrics["vy_error"].append(float(info["tracking_vy_error"]))
+                    task_metrics["vy_abs_error"].append(abs(float(info["tracking_vy_error"])))
                     task_metrics["wz_abs_error"].append(abs(
                         float(info["wz"]) - float(info["target_ang_vel_z"])
                     ))
@@ -1285,6 +1301,10 @@ def train(cfg):
             for env, info in zip(envs, next_infos):
                 for name, value in _weighted_reward_components(info, env.cfg).items():
                     rollout_reward_components[name].append(value)
+                for axis in ("vx", "vy"):
+                    rollout_tracking_errors[axis].append(
+                        float(info[f"tracking_{axis}_error"])
+                    )
             base_roll.extend(
                 float(quat_to_euler_xyz(env.data.qpos[3:7])[2]) for env in envs
             )
@@ -1611,6 +1631,9 @@ def train(cfg):
             f"reward_weighted/{name}": float(np.mean(values))
             for name, values in rollout_reward_components.items()
         })
+        for axis, values in rollout_tracking_errors.items():
+            metrics[f"tracking/{axis}_error_mean"] = float(np.mean(values))
+            metrics[f"tracking/{axis}_abs_error_mean"] = float(np.mean(np.abs(values)))
         if cfg.mixed_task_enable:
             for task, samples in task_rollout_metrics.items():
                 prefix = f"mixed_task/{task}"
@@ -1635,6 +1658,16 @@ def train(cfg):
             f"{metrics['concurrent/estimated_episode_length']:.0f}"
         )
         print(f"[update {update:04d}] reward={metrics['train/reward_mean']:.3f} mse={estimator_mse:.5f} p={target_estimator_fraction:.2f} est_frac={metrics['concurrent/estimated_env_fraction']:.2f} {length_text} actor_on={int(actor_enabled)} lr={metrics['ppo/actor_learning_rate_used']:.2e}->{metrics['ppo/actor_learning_rate']:.2e} kl={metrics['ppo/kl']:.5f} epochs={completed_update_epochs} dr={progress:.2f} support={support_probability:.2f}/{metrics['startup_support/active_env_step_fraction']:.2f} push={horizontal_force_progress:.2f} impact={metrics['robustness/foot_force_exceed_fraction']:.3f} hard={difficulty_stats['cvar_env_count']}/{difficulty_stats['failed_env_count']} wmax={difficulty_stats['weight_max']:.2f} wobble={wobble_progress:.2f} lateral={lateral_progress:.2f} sep={metrics['gait/foot_separation_mean']:.3f}/{metrics['gait/foot_separation_min']:.3f}")
+        if cfg.tracking_vx_error_penalty_scale or cfg.tracking_vy_error_penalty_scale:
+            print(
+                f"[tracking] vx_bias={metrics['tracking/vx_error_mean']:+.3f} "
+                f"vx_mae={metrics['tracking/vx_abs_error_mean']:.3f} "
+                f"vy_mae={metrics['tracking/vy_abs_error_mean']:.3f} "
+                f"penalty(vx/vy)="
+                f"{-metrics['reward_weighted/tracking_vx_error']:.3f}/"
+                f"{-metrics['reward_weighted/tracking_vy_error']:.3f} "
+                f"no_support_steps={metrics['inplace_startup/no_support_step_fraction']:.2f}"
+            )
         if cfg.mixed_task_enable:
             for task in task_episode_windows:
                 prefix = f"mixed_task/{task}"

@@ -126,6 +126,8 @@ class ConcurrentWalkEnvConfig(V3WalkEnvConfig):
     inplace_position_drift_deadband: float = 0.075
     inplace_position_drift_huber_delta: float = 0.25
     inplace_position_drift_penalty_cap: float = 1.0
+    tracking_vx_error_penalty_scale: float = 0.0
+    tracking_vy_error_penalty_scale: float = 0.0
     foot_lateral_velocity_penalty_scale: float = 0.0
     foot_lateral_velocity_deadband: float = 0.25
     foot_lateral_channel_penalty_scale: float = 0.0
@@ -158,6 +160,12 @@ class SRLMujocoConcurrentEnv(SRLMujocoV3Env):
     concurrent_actor_obs_dim = 137
 
     def __init__(self, cfg: ConcurrentWalkEnvConfig, estimator_history_len: int = 10):
+        for name in (
+            "tracking_vx_error_penalty_scale", "tracking_vy_error_penalty_scale",
+        ):
+            value = float(getattr(cfg, name))
+            if not np.isfinite(value) or value < 0.0:
+                raise ValueError(f"{name} must be finite and non-negative")
         self.observation_delay = SensorObservationDelay(
             cfg.observation_delay_enable, cfg.imu_observation_delay_ms_range,
             cfg.joint_observation_delay_ms_range,
@@ -915,6 +923,11 @@ class SRLMujocoConcurrentEnv(SRLMujocoV3Env):
 
     def _compute_reward(self, obs, action):
         reward, terminated, truncated, info = super()._compute_reward(obs, action)
+        # Reward inputs are the current clean frame, before sensor delay/noise.
+        vx_error = float(obs[1]) - float(self.cfg.target_vel_x)
+        vy_error = float(obs[2])
+        vx_error_penalty = vx_error * vx_error
+        vy_error_penalty = vy_error * vy_error
         metrics = self._foot_lateral_metrics()
         hip_x_velocity = self._get_srl_qvel()[[0, 3]]
         hip_x_excess = np.maximum(
@@ -954,7 +967,9 @@ class SRLMujocoConcurrentEnv(SRLMujocoV3Env):
         if not self.cfg.inplace_startup_task_enable:
             position_drift_penalty = 0.0
         reward -= (
-            self.cfg.foot_lateral_velocity_penalty_scale
+            self.cfg.tracking_vx_error_penalty_scale * vx_error_penalty
+            + self.cfg.tracking_vy_error_penalty_scale * vy_error_penalty
+            + self.cfg.foot_lateral_velocity_penalty_scale
             * metrics["velocity_penalty"]
             + self.cfg.foot_lateral_channel_penalty_scale
             * metrics["channel_penalty"]
@@ -965,6 +980,10 @@ class SRLMujocoConcurrentEnv(SRLMujocoV3Env):
         )
         info.update({
             "reward_total": float(reward),
+            "tracking_vx_error": vx_error,
+            "tracking_vy_error": vy_error,
+            "penalty_tracking_vx_error": vx_error_penalty,
+            "penalty_tracking_vy_error": vy_error_penalty,
             "left_foot_lateral_speed": metrics["lateral_speeds"][0],
             "right_foot_lateral_speed": metrics["lateral_speeds"][1],
             "penalty_foot_lateral_velocity": metrics["velocity_penalty"],

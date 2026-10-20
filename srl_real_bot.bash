@@ -233,3 +233,11 @@ python SRL_Evo_train.py \
   train.params.config.concurrent_bootstrap_reset_on_restore=True train.params.config.concurrent_bootstrap_reset_probability=0.5 \
   train.params.config.concurrent_bootstrap_clear_metrics_on_reset=True train.params.config.latent_est_only_after_epochs=-1
 
+
+
+# new stage3 10.19
+python SRL_Evo_train.py   task=SRL_Real_Bot_ConcurrentLatent   train=SRL_Real_Bot_ConcurrentLatentPPO   checkpoint=runs/SRL_Real_Bot_latent_joint_s2_5hz_seed45_17-00-07-31/nn/SRL_Real_Bot_latent_joint_s2_5hz_seed45.pth \
+  experiment=SRL_Real_Bot_latent_joint_s3_5hz_seed45   wandb_project=SRL_Real   wandb_activate=True   headless=True   seed=45   num_envs=16384   max_iterations=2500   sim_device=cuda:0   rl_device=cuda:0  \ 
+  task.env.task_training_stage=3   task.task.randomize=False   task.task.vel_pertubation=False   task.env.vel_tracking_reward_scale=6.0   task.env.pelvis_height_reward_scale=5.0   task.env.orientation_reward_scale=7.0   task.env.progress_reward_scale=0.0   task.env.alive_reward_scale=0.0   task.env.srl_motor_cost_scale=0.0 \
+  task.env.asset.assetFileName=mjcf/srl_real/srl_real_bot_v2.xml   task.env.forceControl=False   task.env.pdControl=True   task.env.srl_action_filter_enable=True   task.env.srl_action_filter_cutoff_hz=5.0   task.env.srl_action_filter_order=2   task.env.stable_gait_reward.enable=True \
+  'task.env.default_joint_angles=[0,-0.55,-0.3,0,-0.55,-0.3]'   'task.env.srl_effort_limits=[90,90,350,90,90,350]'   train.params.config.critic_coef=0   train.params.config.save_frequency=100   train.params.config.latent_use_mirror_consistency=False   train.params.config.latent_ppo_update_encoder=True   train.params.config.latent_est_only_after_epochs=-1

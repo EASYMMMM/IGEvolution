@@ -163,7 +163,7 @@ task:
   # their original command and support scheduling unless explicitly enabled.
   inplace_startup_task_enable: false
   # [persistent 0.2 mg residual, complete unload to zero, no startup support]
-  inplace_startup_scenario_probabilities: [0.45, 0.45, 0.10]
+  inplace_startup_scenario_probabilities: [0.10, 0.40, 0.50]
   inplace_startup_initial_height_range: [0.9, 0.98]
   inplace_startup_residual_fraction: 0.2
   inplace_startup_height_hold_time_range: [1.0, 2.0]
@@ -198,7 +198,11 @@ reward:
   dof_vel_cost_scale: 1.0
   dof_pos_cost_scale: 0.2
   no_fly_penalty_scale: 10.0
-  vel_tracking_reward_scale: 6.0
+  vel_tracking_reward_scale: 8.0
+  # Current true body-frame velocity errors, applied to both task groups.
+  # Set both penalty scales to zero to recover the previous reward formula.
+  tracking_vx_error_penalty_scale: 10.0
+  tracking_vy_error_penalty_scale: 10.0
   tracking_ang_vel_reward_scale: 2.0
   gait_similarity_penalty_scale: 10.0
   pelvis_height_reward_scale: 5.0
