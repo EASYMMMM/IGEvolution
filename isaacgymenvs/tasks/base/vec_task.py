@@ -398,9 +398,8 @@ class VecTask(Env):
         # fill time out buffer: set to 1 if we reached the max episode length AND the reset buffer is 1. Timeout == 1 makes sense only if the reset buffer is 1.
         self.timeout_buf = (self.progress_buf >= self.max_episode_length - 1) & (self.reset_buf != 0)
 
-        # randomize observations
-        if self.dr_randomizations.get('observations', None):
-            self.obs_buf = self.dr_randomizations['observations']['noise_lambda'](self.obs_buf)
+        # Tasks may replace stacked-observation DR with sensor-frame noise.
+        self._apply_observation_noise()
 
         self.extras["time_outs"] = self.timeout_buf.to(self.rl_device)
 
@@ -411,6 +410,10 @@ class VecTask(Env):
             self.obs_dict["states"] = self.get_state()
 
         return self.obs_dict, self.rew_buf.to(self.rl_device), self.reset_buf.to(self.rl_device), self.extras
+
+    def _apply_observation_noise(self):
+        if self.dr_randomizations.get('observations', None):
+            self.obs_buf = self.dr_randomizations['observations']['noise_lambda'](self.obs_buf)
 
     def zero_actions(self) -> torch.Tensor:
         """Returns a buffer with zero actions.

@@ -5,6 +5,17 @@ defaults:
 name: SRL_Real_Bot_ConcurrentLatent
 
 env:
+  # legacy (or gaussian): original VecTask stacked-observation DR, unchanged.
+  # uniform: sensor-only noise before history insertion; replaces legacy noise.
+  # none: no observation noise; action/dynamics DR and kicks remain independent.
+  # Uniform noise follows task.task.randomize, with full bounds from the start.
+  sensor_noise_mode: legacy
+  sensor_noise_scale: 1.0
+  sensor_noise_orientation_max: 0.05  # rad, Euler-error observation
+  sensor_noise_ang_vel_max: 0.2  # rad/s, body frame
+  sensor_noise_dof_pos_max: 0.01  # rad, before position observation scale
+  sensor_noise_dof_vel_max: 0.5  # rad/s, before velocity observation scale
+
   # Inherit the original Concurrent gait coefficients without overrides.
   # Stage 1/2: False. Stage 3/4: task.env.stable_gait_reward.enable=True.
   # Additional placement and slip penalties remain opt-in CLI experiments.
@@ -35,6 +46,18 @@ env:
     stance_slip_scale: 0.0
     stance_slip_deadband: 0.05
     stance_slip_grace_steps: 2
+    # Experimental: rolling full-period fore-aft bias, not instantaneous foot gap.
+    # Independent of slip and width penalties. Set scale=0 for diagnostics only.
+    inplace_fore_aft_enable: False
+    inplace_fore_aft_scale: 5.0
+    inplace_fore_aft_deadband: 0.03  # m
+    inplace_fore_aft_max_penalty: 0.1  # final weighted per-step cap
+    inplace_fore_aft_vx_threshold: 0.05  # m/s, commanded
+    inplace_fore_aft_wz_threshold: 0.05  # rad/s, commanded
+    inplace_fore_aft_max_speed: 0.25  # m/s, actual horizontal speed
+    inplace_fore_aft_pitch_threshold: 0.15  # rad
+    inplace_fore_aft_pitch_rate_threshold: 0.6  # rad/s
+    inplace_fore_aft_yaw_error_threshold: 0.15  # rad
   # Raw task observation: 133 deployable + 4 simulator truth + 16 label slots.
   # The agent replaces the final 20 values with explicit(4) + latent(16).
   latent_contact_force_threshold: 5.0

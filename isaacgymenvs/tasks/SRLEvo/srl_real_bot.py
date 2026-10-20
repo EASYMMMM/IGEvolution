@@ -548,8 +548,9 @@ class SRL_Real_Bot(VecTask):
     def compute_observations(self, env_ids=None):
         obs, obs_mirrored, potentials, prev_potentials = self._compute_srl_obs(env_ids)
         full_obs = obs
-        policy_obs = torch.index_select(full_obs, dim=1, index=self.srl_policy_obs_ids)
-        policy_obs_mirrored = torch.index_select(obs_mirrored, dim=1, index=self.srl_policy_obs_ids)
+        policy_obs, policy_obs_mirrored = self._build_policy_observation_frames(
+            full_obs, obs_mirrored,
+        )
 
         if env_ids is None:
             # roll stack
@@ -652,6 +653,12 @@ class SRL_Real_Bot(VecTask):
             self.prev_potentials[env_ids] = prev_potentials
 
     
+    def _build_policy_observation_frames(self, full_obs, obs_mirrored):
+        return (
+            torch.index_select(full_obs, dim=1, index=self.srl_policy_obs_ids),
+            torch.index_select(obs_mirrored, dim=1, index=self.srl_policy_obs_ids),
+        )
+
     def _compute_srl_obs(self, env_ids=None):
         if (env_ids is None):
             root_states = self.srl_root_states

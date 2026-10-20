@@ -42,6 +42,11 @@ class ConcurrentPPOConfig(v2_train.V2PPOConfig):
     observation_delay_common_ms_quantiles: tuple = DEFAULT_COMMON_MS_QUANTILES
     observation_delay_skew_ms_quantiles: tuple = DEFAULT_SKEW_MS_QUANTILES
     observation_delay_resample_per_observation: bool = False
+    sensor_uniform_noise_enable: bool = False
+    sensor_noise_orientation_max: float = 0.05
+    sensor_noise_ang_vel_max: float = 0.2
+    sensor_noise_dof_pos_max: float = 0.01
+    sensor_noise_dof_vel_max: float = 0.5
     action_scale: float = 1.0
     episode_action_scale_range: Tuple[float, float] | None = None
     mixed_task_enable: bool = False
@@ -310,6 +315,11 @@ def make_env_config(cfg, *, evaluation=False):
         "observation_delay_common_ms_quantiles",
         "observation_delay_skew_ms_quantiles",
         "observation_delay_resample_per_observation",
+        "sensor_uniform_noise_enable",
+        "sensor_noise_orientation_max",
+        "sensor_noise_ang_vel_max",
+        "sensor_noise_dof_pos_max",
+        "sensor_noise_dof_vel_max",
         "initial_pose_randomization_enable",
         "initial_pose_root_height_range",
         "initial_pose_ground_clearance",
@@ -1012,6 +1022,15 @@ def train(cfg):
     )
     policy, metadata = make_policy(cfg, envs[0])
     print("Loaded checkpoint:", metadata)
+    if cfg.sensor_uniform_noise_enable:
+        print(
+            "Observation noise: sensor_uniform (replaces legacy Gaussian); "
+            f"full-DR bounds: orientation=+/-{cfg.sensor_noise_orientation_max:g} rad, "
+            f"body_angular_velocity=+/-{cfg.sensor_noise_ang_vel_max:g} rad/s, "
+            f"joint_position=+/-{cfg.sensor_noise_dof_pos_max:g} rad, "
+            f"joint_velocity=+/-{cfg.sensor_noise_dof_vel_max:g} rad/s; "
+            "amplitudes follow DR progress"
+        )
     print("Concurrent layout: estimator 10x26 -> 256 -> 128 -> 64 -> 4; actor 137 -> 512 -> 256 -> 128 -> 6; critic 153 -> 512 -> 256 -> 128 -> 1")
     if cfg.init_log_std is not None:
         policy.log_std.data.fill_(float(cfg.init_log_std))

@@ -91,6 +91,11 @@ class ConcurrentWalkEnvConfig(V3WalkEnvConfig):
     observation_delay_common_ms_quantiles: tuple = DEFAULT_COMMON_MS_QUANTILES
     observation_delay_skew_ms_quantiles: tuple = DEFAULT_SKEW_MS_QUANTILES
     observation_delay_resample_per_observation: bool = False
+    sensor_uniform_noise_enable: bool = False
+    sensor_noise_orientation_max: float = 0.05  # rad, per Euler-error component
+    sensor_noise_ang_vel_max: float = 0.2  # rad/s, per body axis
+    sensor_noise_dof_pos_max: float = 0.01  # rad, per joint
+    sensor_noise_dof_vel_max: float = 0.5  # rad/s, before observation scaling
     episode_action_scale_range: tuple[float, float] | None = None
     initial_pose_randomization_enable: bool = False
     initial_pose_root_height_range: tuple[float, float] = (0.85, 1.14)
@@ -166,6 +171,15 @@ class SRLMujocoConcurrentEnv(SRLMujocoV3Env):
             value = float(getattr(cfg, name))
             if not np.isfinite(value) or value < 0.0:
                 raise ValueError(f"{name} must be finite and non-negative")
+        for name in (
+            "sensor_noise_orientation_max", "sensor_noise_ang_vel_max",
+            "sensor_noise_dof_pos_max", "sensor_noise_dof_vel_max",
+        ):
+            if not np.isfinite(getattr(cfg, name)) or getattr(cfg, name) < 0:
+                raise ValueError(f"{name} must be finite and non-negative")
+        if not np.isfinite(cfg.dof_vel_obs_scale) or cfg.dof_vel_obs_scale <= 0:
+            raise ValueError("dof_vel_obs_scale must be finite and positive")
+        self.sensor_noise_rng = np.random.default_rng()
         self.observation_delay = SensorObservationDelay(
             cfg.observation_delay_enable, cfg.imu_observation_delay_ms_range,
             cfg.joint_observation_delay_ms_range,
@@ -403,6 +417,15 @@ class SRLMujocoConcurrentEnv(SRLMujocoV3Env):
             self.dr_sampled_params[f"action_filter_{label}_cutoff_hz_max"] = (
                 float(np.max(values))
             )
+        if self.cfg.sensor_uniform_noise_enable:
+            progress = self.episode_dr_progress if self.cfg.domain_randomization_enable else 0.0
+            self.dr_sampled_params["obs_noise_std"] = 0.0
+            self.dr_sampled_params["sensor_uniform_noise_enable"] = True
+            for name in (
+                "sensor_noise_orientation_max", "sensor_noise_ang_vel_max",
+                "sensor_noise_dof_pos_max", "sensor_noise_dof_vel_max",
+            ):
+                self.dr_sampled_params[name] = float(getattr(self.cfg, name)) * progress
 
     def _foot_ground_distances(self):
         return np.asarray(
@@ -1057,6 +1080,7 @@ class SRLMujocoConcurrentEnv(SRLMujocoV3Env):
         result["joint_observation_delay_ms"] = self.observation_delay.joint_ms
         result["observation_delay_mode"] = self.observation_delay.mode
         result["observation_delay_signed_skew_ms"] = self.observation_delay.joint_ms - self.observation_delay.imu_ms
+        result["sensor_uniform_noise_enabled"] = self.cfg.sensor_uniform_noise_enable
         return result
 
     def _reset_observation_sensors(self):
@@ -1077,7 +1101,33 @@ class SRLMujocoConcurrentEnv(SRLMujocoV3Env):
             self.default_dof_pos, self.cfg.dof_vel_obs_scale, self.cfg.clip_obs,
         )
 
+    def _add_actor_obs_noise(self, clean_obs):
+        if not self.cfg.sensor_uniform_noise_enable:
+            return super()._add_actor_obs_noise(clean_obs)
+        # This mode replaces, rather than stacks with, legacy whole-frame noise.
+        obs = np.asarray(clean_obs, dtype=np.float32).copy()
+        if not self.cfg.domain_randomization_enable:
+            return obs
+        progress = float(self.episode_dr_progress)
+        for section, maximum, scale in (
+            (slice(4, 7), self.cfg.sensor_noise_ang_vel_max, 1.0),
+            (slice(7, 10), self.cfg.sensor_noise_orientation_max, 1.0),
+            (slice(10, 16), self.cfg.sensor_noise_dof_pos_max, 1.0),
+            (slice(16, 22), self.cfg.sensor_noise_dof_vel_max, self.cfg.dof_vel_obs_scale),
+        ):
+            amplitude = float(maximum) * progress
+            if amplitude > 0:
+                physical_noise = self.sensor_noise_rng.uniform(
+                    -amplitude, amplitude, section.stop-section.start).astype(np.float32)
+                # s*qd + s*noise equals s*(qd + noise); amplitude is physical rad/s.
+                obs[section] += physical_noise * scale
+        return np.clip(obs, -self.cfg.clip_obs, self.cfg.clip_obs).astype(np.float32)
+
     def reset(self, seed=None):
+        if seed is not None:
+            # Sensor noise must not consume the dynamics/perturbation RNG stream.
+            self.sensor_noise_rng = np.random.default_rng(
+                np.random.SeedSequence([int(seed), 0x534E4F49]))
         self.observation_delay.begin_episode(seed)
         actor_obs, info = super().reset(seed=seed)
         if self._randomize_initial_pose():

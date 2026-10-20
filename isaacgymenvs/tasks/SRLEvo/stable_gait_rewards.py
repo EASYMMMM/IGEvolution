@@ -1,3 +1,5 @@
+import math
+
 import torch
 
 class StableGaitRewardMixin:
@@ -115,6 +117,22 @@ class StableGaitRewardMixin:
         self.stable_gait_stance_slip_grace_steps = int(
             gait_cfg.get("stance_slip_grace_steps", 2)
         )
+        self.stable_gait_inplace_fore_aft_enable = bool(
+            gait_cfg.get("inplace_fore_aft_enable", False)
+        )
+        for name, default in (
+            ("scale", 5.0), ("deadband", 0.03), ("max_penalty", 0.1),
+            ("vx_threshold", 0.05), ("wz_threshold", 0.05),
+            ("max_speed", 0.25), ("pitch_threshold", 0.15),
+            ("pitch_rate_threshold", 0.6), ("yaw_error_threshold", 0.15),
+        ):
+            key = "inplace_fore_aft_" + name
+            value = float(gait_cfg.get(key, default))
+            if not math.isfinite(value) or value < 0.0:
+                raise ValueError(key + " must be finite and nonnegative")
+            setattr(self, "stable_gait_" + key, value)
+        self._stable_gait_fore_aft_history = None
+        self._stable_gait_fore_aft_snapshot = None
         if self.stable_gait_landing_max_separation <= self.stable_gait_landing_min_separation:
             raise ValueError("landing_max_separation must exceed landing_min_separation")
         if self.stable_gait_landing_approach_height <= self.stable_gait_landing_contact_height:
@@ -149,6 +167,12 @@ class StableGaitRewardMixin:
 
         super().__init__(cfg, *args, **kwargs)
 
+    def reset_idx(self, env_ids):
+        super().reset_idx(env_ids)
+        if self._stable_gait_fore_aft_history is not None:
+            self._stable_gait_fore_aft_sum[env_ids] = 0.0
+            self._stable_gait_fore_aft_count[env_ids] = 0
+
     def compute_reward(self, actions):
         super().compute_reward(actions)
         if not self.stable_gait_reward_enable:
@@ -171,6 +195,8 @@ class StableGaitRewardMixin:
             + width_penalty
             + self.stable_gait_stance_slip_scale * penalties["stance_slip"]
         )
+        if self.stable_gait_inplace_fore_aft_enable:
+            total_penalty += penalties["inplace_fore_aft"]
 
         # Preserve the base task's exact terminal reward on fall frames.
         active = (self._terminate_buf == 0).to(total_penalty.dtype)
@@ -189,6 +215,81 @@ class StableGaitRewardMixin:
         ):
             value = penalties[name]
             self.extras["stable_gait/{}".format(name)] = value.mean()
+        if self.stable_gait_inplace_fore_aft_enable:
+            snapshot = self._stable_gait_fore_aft_snapshot
+            valid = snapshot["active"].to(active.dtype) * active
+            count = valid.sum().clamp_min(1.0)
+            self.extras["stable_gait/inplace_fore_aft_bias_abs_m"] = (
+                snapshot["bias_m"].abs() * valid
+            ).sum() / count
+            self.extras["stable_gait/inplace_fore_aft_active_fraction"] = valid.mean()
+            self.extras["stable_gait/inplace_fore_aft_eligible_fraction"] = (
+                snapshot["eligible"].to(active.dtype) * active
+            ).mean()
+            self.extras["stable_gait/inplace_fore_aft_penalty"] = (
+                penalties["inplace_fore_aft"] * active
+            ).mean()
+
+    @torch.no_grad()
+    def _compute_inplace_fore_aft_penalty(self, gap, recovery, root_vel):
+        """Rolling one-period mean signed foot gap, only in settled zero tasks."""
+        commands = torch.stack((
+            self.target_vel_x, self.target_ang_vel_z,
+            self.target_pelvis_height, self.target_yaw,
+        ), dim=1)
+        if self._stable_gait_fore_aft_history is None:
+            period = float(self.gait_period)
+            if not math.isfinite(period) or period < 1 or not period.is_integer():
+                raise ValueError("inplace fore-aft reward requires integer gait_period >= 1")
+            window = int(period)
+            self._stable_gait_fore_aft_history = gap.new_zeros((window, gap.numel()))
+            self._stable_gait_fore_aft_sum = torch.zeros_like(gap)
+            self._stable_gait_fore_aft_count = torch.zeros_like(gap, dtype=torch.long)
+            self._stable_gait_fore_aft_cursor = 0
+            self._stable_gait_fore_aft_commands = commands.clone()
+
+        cfg = "stable_gait_inplace_fore_aft_"
+        command_changed = (commands - self._stable_gait_fore_aft_commands).abs().amax(dim=1) > 1e-6
+        eligible = (
+            (self.target_vel_x.abs() <= getattr(self, cfg + "vx_threshold"))
+            & (self.target_ang_vel_z.abs() <= getattr(self, cfg + "wz_threshold"))
+            & ~recovery
+            & (self.full_obs_buf[:, 7].abs() <= getattr(self, cfg + "yaw_error_threshold"))
+            & (self.full_obs_buf[:, 8].abs() <= getattr(self, cfg + "pitch_threshold"))
+            & (self.full_obs_buf[:, 5].abs() <= getattr(self, cfg + "pitch_rate_threshold"))
+            & (root_vel[:, :2].square().sum(dim=1) <= getattr(self, cfg + "max_speed") ** 2)
+            & (self.progress_buf > 1)
+            & (self._terminate_buf == 0)
+        )
+        restart = ~eligible | command_changed
+        self._stable_gait_fore_aft_sum.masked_fill_(restart, 0.0)
+        self._stable_gait_fore_aft_count.masked_fill_(restart, 0)
+
+        history = self._stable_gait_fore_aft_history
+        window = history.shape[0]
+        cursor = self._stable_gait_fore_aft_cursor
+        full = self._stable_gait_fore_aft_count >= window
+        outgoing = torch.where(full, history[cursor], torch.zeros_like(gap))
+        incoming = torch.where(eligible, gap, torch.zeros_like(gap))
+        self._stable_gait_fore_aft_sum += incoming - outgoing
+        history[cursor].copy_(incoming)
+        self._stable_gait_fore_aft_count = torch.clamp(
+            self._stable_gait_fore_aft_count + eligible.long(), max=window,
+        )
+        self._stable_gait_fore_aft_cursor = (cursor + 1) % window
+        self._stable_gait_fore_aft_commands.copy_(commands)
+
+        active = eligible & (self._stable_gait_fore_aft_count == window)
+        bias = self._stable_gait_fore_aft_sum / window
+        excess = torch.clamp(bias.abs() - getattr(self, cfg + "deadband"), min=0.0)
+        penalty = torch.clamp(
+            getattr(self, cfg + "scale") * excess.square(),
+            max=getattr(self, cfg + "max_penalty"),
+        ) * active.to(gap.dtype)
+        self._stable_gait_fore_aft_snapshot = {
+            "bias_m": bias, "active": active, "eligible": eligible,
+        }
+        return penalty
 
     def _compute_stable_gait_penalties(self):
         roll = self.full_obs_buf[:, 9]
@@ -383,6 +484,15 @@ class StableGaitRewardMixin:
                 established_contact * slip_excess.square(), dim=1
             )
 
+        fore_aft_penalty = None
+        if self.stable_gait_inplace_fore_aft_enable:
+            feet_local_x = (
+                cos_yaw * feet_rel_pos[:, :, 0] + sin_yaw * feet_rel_pos[:, :, 1]
+            )
+            fore_aft_penalty = self._compute_inplace_fore_aft_penalty(
+                feet_local_x[:, 0] - feet_local_x[:, 1], recovery, root_vel,
+            )
+
         if self._stable_gait_eval_enabled:
             multiplier = self.stable_gait_foot_width_penalty_multiplier
             self._stable_gait_eval_snapshot = {
@@ -397,7 +507,7 @@ class StableGaitRewardMixin:
                 "slip_penalty": self.stable_gait_stance_slip_scale * stance_slip_penalty,
             }
 
-        return {
+        penalties = {
             "roll": roll_penalty,
             "hip_x_velocity": hip_x_velocity_penalty,
             "swing_lateral_velocity": swing_lateral_velocity_penalty,
@@ -409,3 +519,6 @@ class StableGaitRewardMixin:
             "contact_width": contact_width_penalty,
             "stance_slip": stance_slip_penalty,
         }
+        if fore_aft_penalty is not None:
+            penalties["inplace_fore_aft"] = fore_aft_penalty
+        return penalties
