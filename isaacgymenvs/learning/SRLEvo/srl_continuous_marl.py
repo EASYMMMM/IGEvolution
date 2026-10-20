@@ -76,19 +76,27 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         self.model = self.network.build(net_config,role='humanoid')
         self.model.to(self.ppo_device)
 
-        # srl model
-        self.network.network_builder.params['mlp']['units'] = params['network']['mlp']['srl_units']
-        net_config = self._build_net_config(params)
-        net_config['input_shape'] = self.obs_num_srl
-        net_config['normalize_input'] = self.normalize_srl_input
-        self.model_srl = self.network.build(net_config,role='srl')
+        # Build the SRL student with its original architecture without leaking
+        # those settings into the pretrained muscle-humanoid network.
+        original_builder_params = copy.deepcopy(self.network.network_builder.params)
+        srl_net_config = self._build_net_config(params)
+        srl_net_config['input_shape'] = self.obs_num_srl
+        srl_net_config['normalize_input'] = self.normalize_srl_input
+        try:
+            self.network.network_builder.params['mlp']['units'] = params['network']['mlp']['srl_units']
+            self.network.network_builder.params['mlp']['activation'] = params['network']['mlp'].get(
+                'srl_activation', 'elu'
+            )
+            self.model_srl = self.network.build(srl_net_config,role='srl')
+        finally:
+            self.network.network_builder.params = original_builder_params
         self.model_srl.to(self.ppo_device)
         # Build the frozen Real Bot teacher without leaking its architecture
         # back into the student/central-critic builder configuration.
         teacher_obs_size = self.vec_env.env.get_teacher_srl_obs_size()
         teacher_action_size = self.vec_env.env.get_teacher_srl_action_size()
         original_builder_params = copy.deepcopy(self.network.network_builder.params)
-        teacher_net_config = copy.deepcopy(net_config)
+        teacher_net_config = copy.deepcopy(srl_net_config)
         try:
             self.network.network_builder.params['space']['continuous']['sigma_init']['val'] = 0
             self.network.network_builder.params['mlp']['units'] = [512, 256, 128]
@@ -239,11 +247,48 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         return
     
     def _load_humanoid_network(self, fn):
-        # fn: save path
-        # fn = self._humanoid_checkpoint
         print('=> loading humanoid checkpoint from {}'.format(fn))
         checkpoint = my_load_checkpoint(fn,map_location=self.device)
+        if 'model' not in checkpoint:
+            raise KeyError(f"Humanoid checkpoint {fn} does not contain a 'model' state dict.")
+
+        checkpoint_state = checkpoint['model']
+        required_shapes = {
+            'running_mean_std.running_mean': (117,),
+            'a2c_network.actor_mlp.0.weight': (512, 117),
+            'a2c_network.actor_mlp.2.weight': (256, 512),
+            'a2c_network.mu.weight': (58, 256),
+            'a2c_network.sigma': (58,),
+            'a2c_network._disc_mlp.0.weight': (1024, 210),
+        }
+        for key, expected_shape in required_shapes.items():
+            if key not in checkpoint_state:
+                raise KeyError(f"Humanoid checkpoint is missing required tensor: {key}")
+            actual_shape = tuple(checkpoint_state[key].shape)
+            if actual_shape != expected_shape:
+                raise RuntimeError(
+                    f"Humanoid checkpoint tensor {key} has shape {actual_shape}; "
+                    f"expected {expected_shape}."
+                )
+
+        target_state = self.model.state_dict()
+        incompatible = [
+            f"{key}: checkpoint={tuple(checkpoint_state[key].shape)}, "
+            f"model={tuple(target_state[key].shape)}"
+            for key in checkpoint_state.keys() & target_state.keys()
+            if checkpoint_state[key].shape != target_state[key].shape
+        ]
+        if incompatible:
+            raise RuntimeError(
+                "Humanoid checkpoint is incompatible with the joint policy:\n  "
+                + "\n  ".join(incompatible)
+            )
+        amp_stats = checkpoint.get('amp_input_mean_std')
+        if amp_stats is None or tuple(amp_stats['running_mean'].shape) != (210,):
+            raise RuntimeError("Humanoid checkpoint must contain 210D AMP normalization statistics.")
+
         self.set_weights(checkpoint)
+        print('=> loaded 117D/58D muscle humanoid and 210D AMP statistics')
         return
 
     def set_eval(self):
@@ -1278,10 +1323,15 @@ class SRL_MultiAgent(common_agent.CommonAgent):
                     self.save(self.model_output_file)
                     print('MAX EPOCHS NUM!')
                     self.writer.close()
-                    avg_evaluate_rewards = sum(self.evaluate_humanoid_rewards) / len(self.evaluate_humanoid_rewards)
-                    avg_evaluate_amp_rewards = sum(self.evaluate_amp_rewards) / len(self.evaluate_amp_rewards)
-                    avg_evaluate_srl_rewards = sum(self.evaluate_srl_rewards) / len(self.evaluate_srl_rewards)
-                    avg_evaluate_ep_lengths = sum(self.evaluate_ep_length) / len(self.evaluate_ep_length)
+                    # Short smoke runs can finish before any environment completes
+                    # an episode. Keep checkpointing/termination valid in that case.
+                    def mean_or_zero(values):
+                        return sum(values) / len(values) if len(values) > 0 else 0.0
+
+                    avg_evaluate_rewards = mean_or_zero(self.evaluate_humanoid_rewards)
+                    avg_evaluate_amp_rewards = mean_or_zero(self.evaluate_amp_rewards)
+                    avg_evaluate_srl_rewards = mean_or_zero(self.evaluate_srl_rewards)
+                    avg_evaluate_ep_lengths = mean_or_zero(self.evaluate_ep_length)
                     evaluate_info = {
                                     "amp_rewards": avg_evaluate_amp_rewards,
                                     "srl_rewards": avg_evaluate_srl_rewards,
@@ -1549,7 +1599,10 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         self.writer.add_scalar('performance/update_time', train_info['update_time'], frame)
         self.writer.add_scalar('performance/play_time', train_info['play_time'], frame)
         
-        if self._train_humanoid:
+        # Humanoid updates can be intentionally skipped according to
+        # train_humanoid_freq. In that case the epoch only contains SRL
+        # metrics, so the humanoid/AMP loss keys are absent by design.
+        if self._train_humanoid and 'actor_loss' in train_info:
             self.writer.add_scalar('losses/a_loss', torch_ext.mean_list(train_info['actor_loss']).item(), frame)
             self.writer.add_scalar('losses/c_loss', torch_ext.mean_list(train_info['critic_loss']).item(), frame)
             self.writer.add_scalar('losses/bounds_loss', torch_ext.mean_list(train_info['b_loss']).item(), frame)

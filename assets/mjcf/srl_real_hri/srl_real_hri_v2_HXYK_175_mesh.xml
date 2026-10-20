@@ -23,7 +23,8 @@
         <geom contype="1" conaffinity="1" group="3" material="collision_mat"/>
       </default>
       <default class="smpl">
-        <geom type="mesh" contype="0" conaffinity="0" group="4" material="blue_mat"/>
+        <!-- Visual-only SMPL geometry must not alter the humanoid mass/inertia. -->
+        <geom type="mesh" contype="0" conaffinity="0" mass="0" density="0" group="4" material="blue_mat"/>
       </default>
     </default>
   </default>
@@ -342,14 +343,14 @@
     <motor name="right_hip_x" gear="125" joint="right_hip_x" />
     <motor name="right_hip_z" gear="125" joint="right_hip_z" />
     <motor name="right_hip_y" gear="125" joint="right_hip_y" />
-    <motor name="right_knee" gear="100" joint="right_knee" />
+    <motor name="right_knee" gear="200" joint="right_knee" />
     <motor name="right_ankle_x" gear="50" joint="right_ankle_x" />
     <motor name="right_ankle_y" gear="50" joint="right_ankle_y" />
     <motor name="right_ankle_z" gear="50" joint="right_ankle_z" />
     <motor name="left_hip_x" gear="125" joint="left_hip_x" />
     <motor name="left_hip_z" gear="125" joint="left_hip_z" />
     <motor name="left_hip_y" gear="125" joint="left_hip_y" />
-    <motor name="left_knee" gear="100" joint="left_knee" />
+    <motor name="left_knee" gear="200" joint="left_knee" />
     <motor name="left_ankle_x" gear="50" joint="left_ankle_x" />
     <motor name="left_ankle_y" gear="50" joint="left_ankle_y" />
     <motor name="left_ankle_z" gear="50" joint="left_ankle_z" />

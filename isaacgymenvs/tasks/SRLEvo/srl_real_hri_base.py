@@ -14,6 +14,7 @@ from ..base.vec_task import VecTask
 from isaacgymenvs.learning.SRLEvo.srl_models import ModelSRLContinuous 
 from isaacgymenvs.learning.SRLEvo.srl_network_builder import SRLBuilder 
 from isaacgymenvs.tasks.SRLEvo.traj_generator import SimpleCurveGenerator as TrajGenerator
+from isaacgymenvs.tasks.SRLEvo.muscle_model import TensorizedMuscleGroup
 
 DOF_BODY_IDS = [1, 2, 3, 4, 6, 7, 9, 10, 11, 12, 13, 14]
 DOF_OFFSETS = [0, 3, 6, 9, 10, 13, 14, 17, 18, 21, 24, 25, 28]
@@ -48,6 +49,11 @@ class SRL_Real_HRI_Base(VecTask):
         self._local_root_obs = self.cfg["env"]["localRootObs"]
         # Minimal omni-walk migration: keep train_stage aligned with humanoid solo training.
         self.train_stage = self.cfg["env"].get("train_stage", 2)  # 1: 站立, 2: 直线, 3: 曲线, 4: 混合
+        if self.train_stage not in (1, 2, 3, 4):
+            raise ValueError(
+                "Muscle HRI supports the same stages as HumanoidAMPMuscleFlat: "
+                "1 (stand), 2 (straight), 3 (curve), or 4 (mixed omni-walk)."
+            )
         # self._contact_bodies = self.cfg["env"]["contactBodies"]
         self._contact_bodies = self.cfg["env"]["contactBodies"]  
         self._termination_height = self.cfg["env"]["terminationHeight"]
@@ -56,7 +62,15 @@ class SRL_Real_HRI_Base(VecTask):
 
         # --- env  ---
         self.humanoid_obs_num = self.cfg["env"]["humanoid_obs_num"]
+        # Policy action count and physical DOF count are deliberately separate:
+        # the muscle policy emits 58 activations which drive 28 humanoid DOFs.
         self.humanoid_actions_num = self.cfg["env"]["humanoid_actions_num"]
+        self.humanoid_dof_num = self.cfg["env"].get("humanoid_dof_num", 28)
+        if self.humanoid_actions_num != 58 or self.humanoid_dof_num != 28:
+            raise ValueError(
+                "Muscle HRI requires 58 humanoid policy actions and 28 humanoid DOFs, "
+                f"got {self.humanoid_actions_num} actions and {self.humanoid_dof_num} DOFs."
+            )
         self.srl_obs_num = self.cfg["env"]["srl_obs_num"]
         self.srl_full_obs_num = self.srl_obs_num
         # Full obs keeps simulator-only state for reward/reset; policy obs removes fields unavailable on hardware.
@@ -259,6 +273,12 @@ class SRL_Real_HRI_Base(VecTask):
             (self.num_envs, self.num_actions), device=self.device, dtype=torch.float)
         self.raw_actions = torch.zeros(
             (self.num_envs, self.num_actions), device=self.device, dtype=torch.float)
+        # Keep the executed, filtered SRL command separate from self.actions.
+        # The standalone Real Bot environment keeps self.actions equal to the
+        # raw policy output, which is also what its observation history and
+        # smoothness rewards were trained with.
+        self.srl_filtered_actions = torch.zeros(
+            (self.num_envs, self.srl_actions_num), device=self.device, dtype=torch.float)
         self._dof_state = gymtorch.wrap_tensor(dof_state_tensor)
         self._dof_pos = self._dof_state.view(self.num_envs, self.num_dof, 2)[..., 0]
         self._dof_vel = self._dof_state.view(self.num_envs, self.num_dof, 2)[..., 1]
@@ -391,13 +411,13 @@ class SRL_Real_HRI_Base(VecTask):
         self._traj_sample_times = [0.5, 1.0, 1.5] # 轨迹参数
         self._num_traj_points = len(self._traj_sample_times)
         self._traj_obs_dim = self._num_traj_points * 2 
-        episode_duration = self.max_episode_length * 1.2 * self.control_dt
-        # Minimal omni-walk migration: reuse the same stage-conditioned trajectory labels as humanoid solo training.
+        episode_duration = self.max_episode_length * self.control_dt
+        # Keep trajectory generation identical to HumanoidAMPMuscleFlat.
         is_testing = (not headless) or force_render
         self._traj_gen = TrajGenerator(self.num_envs, self.device, self.control_dt, episode_duration,
-                                speed_mean=1.0,      
-                                turn_speed_max=0.5,
-                                num_turns=2,
+                                speed_mean=self.cfg["env"].get("speedMean", 1.0),
+                                turn_speed_max=self.cfg["env"].get("turnSpeedMax", 0.5),
+                                num_turns=self.cfg["env"].get("numTurns", 2),
                                 train_stage=self.train_stage,
                                 is_test=is_testing)
         
@@ -455,9 +475,9 @@ class SRL_Real_HRI_Base(VecTask):
 
     def create_sim(self):
         self.up_axis_idx = 2 # index of up axis: Y=1, Z=2
-        total_dof_nums = self.humanoid_actions_num + self.srl_free_actions_num + self.srl_actions_num
+        total_dof_nums = self.humanoid_dof_num + self.srl_free_actions_num + self.srl_actions_num
         self.torques = torch.zeros(self.num_envs, total_dof_nums, dtype=torch.float, device=self.device, requires_grad=False)
-        self.humanoid_torques = torch.zeros(self.num_envs, self.humanoid_actions_num, dtype=torch.float, device=self.device, requires_grad=False)
+        self.humanoid_torques = torch.zeros(self.num_envs, self.humanoid_dof_num, dtype=torch.float, device=self.device, requires_grad=False)
         self.p_gains = torch.zeros(total_dof_nums, dtype=torch.float, device=self.device, requires_grad=False)
         self.d_gains = torch.zeros(total_dof_nums, dtype=torch.float, device=self.device, requires_grad=False)
         self.torque_limits = torch.zeros(total_dof_nums, dtype=torch.float, device=self.device, requires_grad=False)
@@ -524,6 +544,9 @@ class SRL_Real_HRI_Base(VecTask):
 
     def reset_idx(self, env_ids):
         self._reset_actors(env_ids)
+        self.raw_actions[env_ids] = 0.0
+        self.actions[env_ids] = 0.0
+        self.srl_filtered_actions[env_ids] = 0.0
         for env_id in env_ids:
             self.srl_obs_buffer[env_id] = 0
             self.srl_obs_mirrored_buffer[env_id] = 0
@@ -664,12 +687,28 @@ class SRL_Real_HRI_Base(VecTask):
         self.num_dof    = self.gym.get_asset_dof_count(humanoid_asset)
         self.num_joints = self.gym.get_asset_joint_count(humanoid_asset)
 
-        expected_num_dof = self.humanoid_actions_num + self.srl_free_actions_num + self.srl_actions_num
+        expected_num_dof = self.humanoid_dof_num + self.srl_free_actions_num + self.srl_actions_num
         if self.num_dof != expected_num_dof:
             raise ValueError(
                 f"Real HRI asset has {self.num_dof} DOFs; expected {expected_num_dof} "
-                f"({self.humanoid_actions_num} humanoid + {self.srl_free_actions_num} passive + "
+                f"({self.humanoid_dof_num} humanoid + {self.srl_free_actions_num} passive + "
                 f"{self.srl_actions_num} SRL)."
+            )
+        expected_humanoid_dof_names = [
+            "abdomen_x", "abdomen_y", "abdomen_z",
+            "neck_x", "neck_y", "neck_z",
+            "right_shoulder_x", "right_shoulder_y", "right_shoulder_z", "right_elbow",
+            "left_shoulder_x", "left_shoulder_y", "left_shoulder_z", "left_elbow",
+            "right_hip_x", "right_hip_y", "right_hip_z", "right_knee",
+            "right_ankle_x", "right_ankle_y", "right_ankle_z",
+            "left_hip_x", "left_hip_y", "left_hip_z", "left_knee",
+            "left_ankle_x", "left_ankle_y", "left_ankle_z",
+        ]
+        actual_humanoid_dof_names = list(self._dof_names[:self.humanoid_dof_num])
+        if actual_humanoid_dof_names != expected_humanoid_dof_names:
+            raise ValueError(
+                "The first 28 Real HRI DOFs must match HumanoidAMPMuscleFlat. "
+                f"Expected {expected_humanoid_dof_names}, got {actual_humanoid_dof_names}."
             )
         expected_srl_dof_names = [
             "left_hip_x_joint", "left_hip_y_joint", "left_knee_joint",
@@ -688,7 +727,7 @@ class SRL_Real_HRI_Base(VecTask):
         assert self.torque_limits.shape[0] == self.num_dof
 
         start_pose   = gymapi.Transform()
-        start_pose.p = gymapi.Vec3(*get_axis_params(1.05, self.up_axis_idx))
+        start_pose.p = gymapi.Vec3(*get_axis_params(1.1, self.up_axis_idx))
         start_pose.r = gymapi.Quat(0.0, 0.0, 0.0, 1.0)
 
         self.start_rotation = torch.tensor([start_pose.r.x, start_pose.r.y, start_pose.r.z, start_pose.r.w], device=self.device)
@@ -718,6 +757,20 @@ class SRL_Real_HRI_Base(VecTask):
             dof_prop = self.gym.get_asset_dof_properties(humanoid_asset)
             if self._pd_control:
                 dof_prop["driveMode"] = gymapi.DOF_MODE_POS
+
+            # Match HumanoidAMPMuscleFlat exactly on the human plant. Muscle
+            # torques are supplied explicitly; PhysX position drives must not
+            # act on these 28 DOFs at the same time.
+            dof_prop[:self.humanoid_dof_num]["driveMode"] = gymapi.DOF_MODE_NONE
+            dof_prop[:self.humanoid_dof_num]["stiffness"].fill(0.0)
+            dof_prop[:self.humanoid_dof_num]["damping"] = np.maximum(
+                dof_prop[:self.humanoid_dof_num]["damping"], 2.0
+            )
+            invalid_humanoid_effort = np.logical_or(
+                dof_prop[:self.humanoid_dof_num]["effort"] < 1.0,
+                dof_prop[:self.humanoid_dof_num]["effort"] > 1e10,
+            )
+            dof_prop[:self.humanoid_dof_num]["effort"][invalid_humanoid_effort] = 300.0
 
             srl_start_id = self.get_srl_action_size()
             dof_prop[-srl_start_id:]["velocity"].fill(14.0)
@@ -749,7 +802,7 @@ class SRL_Real_HRI_Base(VecTask):
                 dof_prop[virtual_joint_idx]["driveMode"] = gymapi.DOF_MODE_POS
             self.gym.set_actor_dof_properties(env_ptr, handle, dof_prop)
 
-        dof_props = self.gym.get_asset_dof_properties(humanoid_asset)
+        dof_props = self.gym.get_actor_dof_properties(self.envs[0], self.humanoid_handles[0])
         for i in range(len(dof_props)):
             self.p_gains[i] = float(dof_props[i]['stiffness'])
             self.d_gains[i] = float(dof_props[i]['damping'])
@@ -772,8 +825,52 @@ class SRL_Real_HRI_Base(VecTask):
         
         self._srl_end_ids = self._build_srl_end_body_ids_tensor(env_ptr, handle)
 
-
         self._build_pd_action_offset_scale()
+
+        humanoid_damping = to_torch(
+            dof_prop["damping"][:self.humanoid_dof_num], device=self.device, dtype=torch.float
+        )
+        self.humanoid_motor_efforts = to_torch(
+            dof_prop["effort"][:self.humanoid_dof_num], device=self.device, dtype=torch.float
+        )
+        self.motor_efforts = self.humanoid_motor_efforts
+        self.max_motor_effort = float(torch.max(self.humanoid_motor_efforts).item())
+
+        sagittal_dofs = {
+            "right": [
+                self.gym.find_actor_dof_handle(env_ptr, handle, "right_hip_y"),
+                self.gym.find_actor_dof_handle(env_ptr, handle, "right_knee"),
+                self.gym.find_actor_dof_handle(env_ptr, handle, "right_ankle_y"),
+            ],
+            "left": [
+                self.gym.find_actor_dof_handle(env_ptr, handle, "left_hip_y"),
+                self.gym.find_actor_dof_handle(env_ptr, handle, "left_knee"),
+                self.gym.find_actor_dof_handle(env_ptr, handle, "left_ankle_y"),
+            ],
+        }
+        sagittal_ids = sagittal_dofs["right"] + sagittal_dofs["left"]
+        if any(idx < 0 or idx >= self.humanoid_dof_num for idx in sagittal_ids):
+            raise ValueError(f"Invalid humanoid sagittal DOF indices: {sagittal_dofs}")
+
+        self.muscle_actuator = TensorizedMuscleGroup(
+            num_envs=self.num_envs,
+            num_dofs=self.humanoid_dof_num,
+            device=self.device,
+            dt=self.cfg["sim"]["dt"],
+            control_freq_inv=self.control_freq_inv,
+            dof_lower=self.dof_limits_lower[:self.humanoid_dof_num],
+            dof_upper=self.dof_limits_upper[:self.humanoid_dof_num],
+            dof_damping=humanoid_damping,
+            dof_effort=self.humanoid_motor_efforts,
+            q_init=torch.zeros(self.humanoid_dof_num, device=self.device),
+            sagittal_dofs=sagittal_dofs,
+            use_biarticular=True,
+        )
+        if self.muscle_actuator.num_muscles != self.humanoid_actions_num:
+            raise ValueError(
+                f"Muscle actuator exposes {self.muscle_actuator.num_muscles} actions; "
+                f"the policy is configured for {self.humanoid_actions_num}."
+            )
 
         return
         
@@ -812,7 +909,7 @@ class SRL_Real_HRI_Base(VecTask):
                 # extend the action range to be a bit beyond the joint limits so that the motors
                 # don't lose their strength as they approach the joint limits
                 curr_scale = 0.7 * (curr_high - curr_low)
-                if dof_offset >= self.get_humanoid_action_size():  # srl
+                if dof_offset >= self.humanoid_dof_num:  # SRL attachment or actuated DOF
                     # FIXME: Limited Range (previous value: 0.45)
                     curr_scale = 0.45 * (curr_high - curr_low)
                 curr_low = curr_mid - curr_scale
@@ -822,7 +919,7 @@ class SRL_Real_HRI_Base(VecTask):
                 lim_high[dof_offset] =  curr_high
 
         self._pd_action_offset = 0.5 * (lim_high + lim_low)
-        self._pd_action_offset[self.get_humanoid_action_size()+self.get_srl_free_action_size():]=self.default_srl_joint_angles
+        self._pd_action_offset[self.humanoid_dof_num+self.get_srl_free_action_size():]=self.default_srl_joint_angles
         self._pd_action_offset = to_torch(self._pd_action_offset, device=self.device)
 
         self._pd_action_scale  = 0.5 * (lim_high - lim_low)
@@ -1278,6 +1375,8 @@ class SRL_Real_HRI_Base(VecTask):
                                               gymtorch.unwrap_tensor(self._dof_state),
                                               gymtorch.unwrap_tensor(env_ids_int32), len(env_ids_int32))
         self._reset_srl_action_filter(env_ids)
+        if hasattr(self, "muscle_actuator"):
+            self.muscle_actuator.a[env_ids] = 0.0
 
         self.progress_buf[env_ids] = 0
         self.reset_buf[env_ids] = 0
@@ -1288,36 +1387,70 @@ class SRL_Real_HRI_Base(VecTask):
     def pre_physics_step(self, actions):
         self.raw_actions = actions.to(self.device).clone()
         self.actions = self.raw_actions.clone()
-        # [humanoid_joint, free_joint, srl_joint]
-        total_action_num = self.humanoid_actions_num+self.srl_free_actions_num+self.srl_actions_num
-        _action = torch.zeros([self.num_envs, total_action_num ], device=self.device)
-        _action[:, :self.humanoid_actions_num] = self.raw_actions[:, :self.humanoid_actions_num]
-        _action[:, -self.srl_actions_num:] = self.raw_actions[:, -self.srl_actions_num:]
+        if self.raw_actions.shape[-1] != self.get_action_size():
+            raise ValueError(
+                f"Expected {self.get_action_size()} joint-policy actions "
+                f"({self.humanoid_actions_num} muscle + {self.srl_actions_num} SRL), "
+                f"got {self.raw_actions.shape[-1]}."
+            )
 
-        pd_tar = self._action_to_pd_targets(_action)
+        humanoid_actions = self.raw_actions[:, :self.humanoid_actions_num]
+        target_a = torch.clamp(0.5 * (humanoid_actions + 1.0), 0.0, 1.0)
+        humanoid_tau = self.muscle_actuator.forward(
+            q=self._dof_pos[:, :self.humanoid_dof_num],
+            dq=self._dof_vel[:, :self.humanoid_dof_num],
+            target_a=target_a,
+            disable_passive=True,
+        )
+        humanoid_tau = torch.nan_to_num(humanoid_tau, nan=0.0, posinf=0.0, neginf=0.0)
+        humanoid_tau = torch.clamp(
+            humanoid_tau, -self.humanoid_motor_efforts, self.humanoid_motor_efforts
+        ) * self.power_scale
+        self.humanoid_torques[:] = humanoid_tau
+
+        # SRL policy actions remain normalized joint-position targets. Build a
+        # DOF-aligned vector only for the SRL mapping; muscle actions must never
+        # pass through the PD target conversion.
+        dof_action = torch.zeros((self.num_envs, self.num_dof), device=self.device)
+        dof_action[:, -self.srl_actions_num:] = self.raw_actions[:, -self.srl_actions_num:]
+        pd_tar = self._action_to_pd_targets(dof_action)
         raw_srl_pd_target = pd_tar[:, -self.srl_actions_num:].clone()
+        filtered_srl_pd_target = raw_srl_pd_target
         if self.srl_action_filter_enable:
             filtered_srl_pd_target = self._apply_srl_pd_target_filter(raw_srl_pd_target)
-            pd_tar[:, -self.srl_actions_num:] = filtered_srl_pd_target
-            # Keep humanoid actions raw while exposing the executed SRL command to obs/reward history.
-            self.actions[:, -self.srl_actions_num:] = self._srl_pd_targets_to_action(filtered_srl_pd_target)
+            # Match the standalone Real Bot execution path: a second-order
+            # filter may overshoot even when all of its inputs are in range, so
+            # clamp the filtered target and feed the executed value back into
+            # the filter state.
+            filtered_srl_pd_target = torch.max(
+                torch.min(filtered_srl_pd_target, self._srl_pd_action_high),
+                self._srl_pd_action_low,
+            )
+            self.srl_lpf_y1[:] = filtered_srl_pd_target
+        pd_tar[:, -self.srl_actions_num:] = filtered_srl_pd_target
+        self.srl_filtered_actions[:] = self._srl_pd_targets_to_action(filtered_srl_pd_target)
         self.srl_pd_targets[:] = pd_tar[:, -self.srl_actions_num:]
 
+        self.torques.zero_()
+        self.torques[:, :self.humanoid_dof_num] = humanoid_tau
         if self._force_control:
-            torques = self.p_gains*(pd_tar - self._dof_pos) - self.d_gains*self._dof_vel
-            self.torques = torch.clip(torques, -self.torque_limits, self.torque_limits).view(self.torques.shape)
-            self.humanoid_torques = self.torques[:,:self.get_humanoid_action_size()].clone()
-            self.torques[:,:self.get_humanoid_action_size()+self.get_srl_free_action_size()] = 0.00
-            # --- virtual interaction force: F = -k*q - c*qdot, clamp to max ---
-            # q  = self._dof_pos[:, self.srl_virtual_damping_ids]
-            # qd = self._dof_vel[:, self.srl_virtual_damping_ids]
-            # Fv = - self.hri_virtual_stiffness * q - self.hri_virtual_damping * qd
-            # Fv = torch.clamp(Fv, -self.hri_virtual_force_max, self.hri_virtual_force_max)
-            # self.torques[:, self.srl_virtual_damping_ids] = Fv
-            self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(self.torques))
+            srl_pd_tau = (
+                self.p_gains[-self.srl_actions_num:]
+                * (pd_tar[:, -self.srl_actions_num:] - self._dof_pos[:, -self.srl_actions_num:])
+                - self.d_gains[-self.srl_actions_num:] * self._dof_vel[:, -self.srl_actions_num:]
+            )
+            self.torques[:, -self.srl_actions_num:] = torch.clamp(
+                srl_pd_tau,
+                -self.torque_limits[-self.srl_actions_num:],
+                self.torque_limits[-self.srl_actions_num:],
+            )
+
+        # One full force tensor carries muscle torques (and optional legacy SRL
+        # effort control). POS-mode SRL/virtual DOFs ignore their zero entries.
+        self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(self.torques))
         if self._pd_control:
             if self._force_control:
-                pd_tar[:,self.get_humanoid_action_size():] = 0.00
+                pd_tar[:, -self.srl_actions_num:] = 0.00
             pd_tar_tensor = gymtorch.unwrap_tensor(pd_tar)
             self.gym.set_dof_position_target_tensor(self.sim, pd_tar_tensor)
         return
@@ -1342,6 +1475,7 @@ class SRL_Real_HRI_Base(VecTask):
         self.extras["srl_rewards"] = self.srl_rew_buf.to(self.rl_device)
         self.extras["x_velocity"] = self.obs_buf[:,7]
         self.extras["srl_debug_actions"] = self.actions[0, -self.srl_actions_num:].to(self.rl_device)
+        self.extras["srl_debug_filtered_actions"] = self.srl_filtered_actions[0].to(self.rl_device)
         self.extras["srl_debug_pd_targets"] = self.srl_pd_targets[0].to(self.rl_device)
         self.extras["srl_debug_torques"] = self.srl_applied_torques[0].to(self.rl_device)
         self.extras["srl_debug_joint_pos"] = self._dof_pos[0, -self.srl_actions_num:].to(self.rl_device)
@@ -2365,15 +2499,19 @@ def compute_humanoid_reset(reset_buf, progress_buf, srl_obs_buf, contact_buf, co
         # contact_buf: shape[self.num_envs, self.num_bodies, 3](acquire_net_contact_force_tensor)
         masked_contact_buf = contact_buf.clone()
         masked_contact_buf[:, contact_body_ids, :] = 0
-        fall_contact = torch.any(masked_contact_buf > 0.1, dim=-1) # 在每个env中，判断是否有body发生碰撞
-        fall_contact = torch.any(fall_contact, dim=-1) # 找出发生碰撞的env
+        # The composite humanoid/SRL actor can have non-ground internal contact
+        # forces (for example on an SRL hip link). A contact alone must therefore
+        # not be treated as a fall. Keep the per-body contact result so that it
+        # can be paired with the height test for the same rigid body below.
+        fall_contact = torch.norm(masked_contact_buf, dim=-1) > 0.1
 
         body_height = rigid_body_pos[..., 2]
         fall_height = body_height < termination_height # 在每个env中，判断是否有body低于阈值高度
         fall_height[:, contact_body_ids] = False 
-        fall_height = torch.any(fall_height, dim=-1) # 找出低于阈值高度的env
-
-        has_fallen = torch.logical_or(fall_contact, fall_height)
+        # A body counts as fallen only when that same body is both low and in
+        # contact. This prevents high SRL links with internal contact forces from
+        # immediately resetting a newly spawned environment.
+        has_fallen = torch.any(torch.logical_and(fall_contact, fall_height), dim=-1)
 
         # srl fallen        
         srl_fallen = torch.where(srl_obs_buf[:, 0] < srl_termination_height, torch.ones_like(reset_buf), terminated)

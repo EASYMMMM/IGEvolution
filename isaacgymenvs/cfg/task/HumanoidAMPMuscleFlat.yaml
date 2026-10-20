@@ -16,11 +16,12 @@ env:
   pdControl: False
   powerScale: 1.0
   controlFrequencyInv: 3 # 0.005 * 3 = 0.015 s, approximately 66.7 Hz
-  stateInit: "Random"
+  stateInit: "Hybrid"
   hybridInitProb: 0.5
   numAMPObsSteps: 2
 
-  # 1: standing pretraining; 2: straight walking; 3: curved walking.
+  # 1: standing pretraining; 2: straight walking; 3: curved walking;
+  # 4: mixed standing / straight / left-turn / right-turn omni-walk.
   train_stage: 2
   speedMean: 1.0
   turnSpeedMax: 0.5

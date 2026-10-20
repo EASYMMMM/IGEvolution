@@ -31,6 +31,7 @@ SRL-Gym
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import csv
+import copy
 import os
 
 import torch 
@@ -72,6 +73,8 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
         self._humanoid_obs_masked = config.get('humanoid_obs_masked', False)
         self.normalize_srl_input = config.get('normalize_srl_input', False)
         self.srl_units = params['network']['mlp']['srl_units']
+        self.srl_activation = params['network']['mlp'].get('srl_activation', 'elu')
+        self._humanoid_checkpoint = config.get('humanoid_checkpoint', False)
         
         super().__init__(params)
         self.obs_log = []
@@ -87,8 +90,27 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
         self.priv_obs_num_srl = self.env.get_srl_priv_obs_size()
 
         self.play_deterministic = config.get('play_deterministic', False)
+
+        if self._humanoid_checkpoint:
+            self._load_humanoid_checkpoint(self._humanoid_checkpoint)
         
         return
+
+    def _load_humanoid_checkpoint(self, fn):
+        checkpoint = my_load_checkpoint(fn, map_location=self.device)
+        state = checkpoint.get('model')
+        if state is None:
+            raise KeyError(f"Humanoid checkpoint {fn} does not contain a 'model' state dict.")
+        input_weight = state.get('a2c_network.actor_mlp.0.weight')
+        output_weight = state.get('a2c_network.mu.weight')
+        if input_weight is None or tuple(input_weight.shape) != (512, 117):
+            raise RuntimeError("Player humanoid checkpoint must use a 117D input and 512-unit first layer.")
+        if output_weight is None or tuple(output_weight.shape) != (58, 256):
+            raise RuntimeError("Player humanoid checkpoint must output 58 muscle activations.")
+        self.model.load_state_dict(state)
+        if self._normalize_amp_input:
+            self._amp_input_mean_std.load_state_dict(checkpoint['amp_input_mean_std'])
+        print("=> loaded standalone muscle humanoid checkpoint '{}'".format(fn))
 
     def restore(self, fn):
         
@@ -116,10 +138,16 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
         self.model = self.network.build(config,role='humanoid')
         self.model.to(self.device)
         
-        self.network.network_builder.params['mlp']['units'] = self.srl_units
-        config['input_shape'] = self.env.get_srl_obs_size()
-        config['normalize_input'] = self.normalize_srl_input 
-        self.model_srl = self.network.build(config,role='srl')
+        original_builder_params = copy.deepcopy(self.network.network_builder.params)
+        srl_config = copy.deepcopy(config)
+        srl_config['input_shape'] = self.env.get_srl_obs_size()
+        srl_config['normalize_input'] = self.normalize_srl_input
+        try:
+            self.network.network_builder.params['mlp']['units'] = self.srl_units
+            self.network.network_builder.params['mlp']['activation'] = self.srl_activation
+            self.model_srl = self.network.build(srl_config,role='srl')
+        finally:
+            self.network.network_builder.params = original_builder_params
         self.model_srl.to(self.device)
 
         self.model.eval()
@@ -332,7 +360,7 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                             episode_data['done'].append(0)
 
                         # FIXME: 是否画图
-                        if done_count > 0: # if done_count > 0:
+                        if done_count > 1000: # if done_count > 0:
                             if 0 in done_indices:
                                 # 转为 numpy 数组，shape: [T, D]
                                 target_yaw = []

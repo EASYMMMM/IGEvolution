@@ -8,8 +8,7 @@ from gym import spaces
 from isaacgym import gymapi
 from isaacgym import gymtorch
 
-from isaacgymenvs.tasks.SRLEvo.srl_real_hri_base import SRL_Real_HRI_Base, dof_to_obs, compute_srl_reward
-from isaacgymenvs.tasks.amp.utils_amp import gym_util
+from isaacgymenvs.tasks.SRLEvo.srl_real_hri_base import SRL_Real_HRI_Base, compute_srl_reward
 from isaacgymenvs.tasks.amp.utils_amp.motion_lib import MotionLib
 
 from isaacgymenvs.utils.torch_jit_utils import quat_mul, to_torch, calc_heading_quat_inv, quat_to_tan_norm, my_quat_rotate, exp_map_to_quat
@@ -30,11 +29,11 @@ class SRL_Real_HRI(SRL_Real_HRI_Base):
         print("============================ ")
         print('HUMANOID AMP SRL TEST')
         print("============================ ")
-        # Minimal omni-walk migration: match the humanoid-only task layout before base init requests obs sizes.
+        # Match the pretrained HumanoidAMPMuscleFlat policy interface exactly:
+        # 111 proprioceptive values plus three future local XY targets.
         self._traj_sample_times = [0.5, 1.0, 1.5]
         self._num_traj_points = len(self._traj_sample_times)
-        self._traj_obs_dim = self._num_traj_points * 2 + 1 + 1 + 2 + 2
-        self._num_state_hist_steps = cfg["env"].get("numStateHistSteps", 5)
+        self._traj_obs_dim = self._num_traj_points * 2
         self._humanoid_state_obs_dim = 111
         self.cfg = cfg
 
@@ -46,12 +45,23 @@ class SRL_Real_HRI(SRL_Real_HRI_Base):
 
         self._reset_default_env_ids = []
         self._reset_ref_env_ids = []
+        self._max_traj_distance = float(cfg["env"].get("maxTrajectoryDistance", 3.0))
+        if self._max_traj_distance <= 0:
+            raise ValueError("maxTrajectoryDistance must be positive")
+        compliance_cfg = cfg["env"].get("compliance", {})
+        self._humanoid_reward_weights = tuple(
+            float(compliance_cfg.get(key, default)) for key, default in (
+                ("position_reward_weight", 1.0),
+                ("velocity_reward_weight", 1.0),
+                ("heading_reward_weight", 1.0),
+                ("activation_cost_weight", 0.0),
+            )
+        )
 
         super().__init__(config=self.cfg, rl_device=rl_device, sim_device=sim_device, graphics_device_id=graphics_device_id, headless=headless, virtual_screen_capture=virtual_screen_capture, force_render=force_render)
-
-        # Minimal omni-walk migration: base init reuses the old 6D traj command layout,
-        # so restore the humanoid-only omni command width here before networks/checkpoints use it.
-        self._traj_obs_dim = self._num_traj_points * 2 + 1 + 1 + 2 + 2
+        self.forward_vec_local = torch.tensor(
+            [1.0, 0.0, 0.0], device=self.device
+        ).repeat(self.num_envs, 1)
 
         motion_file = cfg['env'].get('motion_file', "amp_humanoid_backflip.npy")
         motion_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../assets/amp/motions/" + motion_file)
@@ -65,50 +75,27 @@ class SRL_Real_HRI(SRL_Real_HRI_Base):
         self._curr_amp_obs_buf = self._amp_obs_buf[:, 0] # s_t  torch.Size([num_envs, 105])
         self._hist_amp_obs_buf = self._amp_obs_buf[:, 1:] # s_t+1  torch.Size([num_envs, 1, 105])
 
-        # Minimal omni-walk migration: humanoid stacked-state buffer and standing-phase cache.
-        self._state_hist_obs_buf = torch.zeros(
-            (self.num_envs, self._num_state_hist_steps, self._humanoid_state_obs_dim),
-            device=self.device,
-            dtype=torch.float
-        )
-        self._pelvis_body_id = self.gym.find_actor_rigid_body_handle(
-            self.envs[0], self.humanoid_handles[0], "pelvis"
-        )
-        self._head_body_id = self.gym.find_actor_rigid_body_handle(
-            self.envs[0], self.humanoid_handles[0], "head"
-        )
-        self._left_foot_body_id = self.gym.find_actor_rigid_body_handle(
-            self.envs[0], self.humanoid_handles[0], "left_foot"
-        )
-        self._right_foot_body_id = self.gym.find_actor_rigid_body_handle(
-            self.envs[0], self.humanoid_handles[0], "right_foot"
-        )
+        # Standing caches are retained for SRL command generation, but they are
+        # not part of the 117D humanoid policy observation.
         self._stand_heading_dir = torch.zeros((self.num_envs, 2), device=self.device, dtype=torch.float)
         self._prev_is_standing_phase = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
         self._standing_phase_state = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
         self._stand_enter_thres = 0.01
         self._stand_exit_thres = 0.03
-        self._stand_pos_tol = 0.08
 
         self._amp_obs_demo_buf = None
 
         return
 
     def get_humanoid_obs_size(self):
-        # Minimal omni-walk migration: humanoid obs = stacked base state + single-frame omni command.
-        return self._humanoid_state_obs_dim * self._num_state_hist_steps + self._traj_obs_dim
-
-    def _update_hist_state_obs(self, env_ids=None):
-        if self._num_state_hist_steps <= 1:
-            return
-
-        if env_ids is None:
-            for i in reversed(range(self._num_state_hist_steps - 1)):
-                self._state_hist_obs_buf[:, i + 1] = self._state_hist_obs_buf[:, i]
-        else:
-            for i in reversed(range(self._num_state_hist_steps - 1)):
-                self._state_hist_obs_buf[env_ids, i + 1] = self._state_hist_obs_buf[env_ids, i]
-        return
+        obs_size = self._humanoid_state_obs_dim + self._traj_obs_dim
+        configured_size = int(self.cfg["env"].get("humanoid_obs_num", obs_size))
+        if configured_size != obs_size:
+            raise ValueError(
+                f"HumanoidAMPMuscleFlat checkpoint requires {obs_size}D observations, "
+                f"but env.humanoid_obs_num={configured_size}."
+            )
+        return obs_size
 
     def _calc_current_heading_xy(self, root_rot):
         num_envs = root_rot.shape[0]
@@ -119,19 +106,6 @@ class SRL_Real_HRI(SRL_Real_HRI_Base):
         forward_xy = forward_world[:, 0:2]
         forward_xy = torch.nn.functional.normalize(forward_xy, dim=-1, eps=1e-6)
         return forward_xy
-
-    def _update_standing_heading_cache(self, is_standing_phase, root_rot):
-        current_heading_xy = self._calc_current_heading_xy(root_rot)
-        entering_standing = torch.logical_and(
-            is_standing_phase,
-            torch.logical_not(self._prev_is_standing_phase)
-        )
-
-        if torch.any(entering_standing):
-            self._stand_heading_dir[entering_standing] = current_heading_xy[entering_standing]
-
-        self._prev_is_standing_phase[:] = is_standing_phase
-        return current_heading_xy
 
     def _reset_standing_heading(self, env_ids):
         if len(env_ids) == 0:
@@ -151,21 +125,6 @@ class SRL_Real_HRI(SRL_Real_HRI_Base):
         self._standing_phase_state[env_ids] = init_standing
         self._prev_is_standing_phase[env_ids] = init_standing
         return
-
-    def _update_standing_phase_state(self, target_dist):
-        enter_mask = target_dist < self._stand_enter_thres
-        exit_mask = target_dist > self._stand_exit_thres
-
-        self._standing_phase_state = torch.where(
-            enter_mask,
-            torch.ones_like(self._standing_phase_state),
-            torch.where(
-                exit_mask,
-                torch.zeros_like(self._standing_phase_state),
-                self._standing_phase_state
-            )
-        )
-        return self._standing_phase_state
 
     def _update_srl_task_commands(self, env_ids=None):
         if env_ids is None:
@@ -331,7 +290,7 @@ class SRL_Real_HRI(SRL_Real_HRI_Base):
 
     def _load_motion(self, motion_file):
         self._motion_lib = MotionLib(motion_file=motion_file, 
-                                     num_dofs=self.num_dof,
+                                     num_dofs=self.humanoid_dof_num,
                                      key_body_ids=self._key_body_ids.cpu().numpy(), 
                                      device=self.device)
         return
@@ -340,6 +299,12 @@ class SRL_Real_HRI(SRL_Real_HRI_Base):
         self._reset_default_env_ids = []
         self._reset_ref_env_ids = []
         self._reset_actors(env_ids)
+        # Match standalone Real Bot reset semantics. In particular, the first
+        # stacked observation of a new episode must not contain actions left by
+        # the preceding episode.
+        self.raw_actions[env_ids] = 0.0
+        self.actions[env_ids] = 0.0
+        self.srl_filtered_actions[env_ids] = 0.0
         for env_id in env_ids:
             self.srl_obs_buffer[env_id] = 0
             self.srl_obs_mirrored_buffer[env_id] = 0
@@ -363,124 +328,9 @@ class SRL_Real_HRI(SRL_Real_HRI_Base):
         return
 
     def _compute_humanoid_obs(self, env_ids=None):
-        base_obs_with_traj = super()._compute_humanoid_obs(env_ids)
-        base_obs = base_obs_with_traj[:, :-self._num_traj_points * 2]
-
-        if env_ids is None:
-            env_ids_flat = torch.arange(self.num_envs, device=self.device)
-            current_time = self.progress_buf * self.control_dt
-            root_pos = self._root_states[:, 0:3]
-            root_rot = self._root_states[:, 3:7]
-        else:
-            env_ids_flat = env_ids
-            current_time = self.progress_buf[env_ids] * self.control_dt
-            root_pos = self._root_states[env_ids, 0:3]
-            root_rot = self._root_states[env_ids, 3:7]
-
-        target_pos = self._traj_gen.get_position(env_ids_flat, current_time)
-        traj_points_world = self._traj_gen.get_observation_points(
-            env_ids_flat, current_time, self._traj_sample_times
-        )
-
-        # Minimal omni-walk migration: sync standing hysteresis inside obs to avoid one-step command/reward drift.
-        traj_delta = traj_points_world[:, 0, 0:2] - target_pos[:, 0:2]
-        target_dist_flat = torch.norm(traj_delta, dim=-1)
-
-        if env_ids is None:
-            prev_state = self._standing_phase_state
-            prev_is_standing = self._prev_is_standing_phase
-        else:
-            prev_state = self._standing_phase_state[env_ids_flat]
-            prev_is_standing = self._prev_is_standing_phase[env_ids_flat]
-
-        enter_mask = target_dist_flat < self._stand_enter_thres
-        exit_mask = target_dist_flat > self._stand_exit_thres
-        is_standing_phase = torch.where(
-            enter_mask,
-            torch.ones_like(prev_state),
-            torch.where(
-                exit_mask,
-                torch.zeros_like(prev_state),
-                prev_state
-            )
-        )
-
-        current_heading_xy = self._calc_current_heading_xy(root_rot)
-        entering_standing = torch.logical_and(
-            is_standing_phase,
-            torch.logical_not(prev_is_standing)
-        )
-        if torch.any(entering_standing):
-            self._stand_heading_dir[env_ids_flat[entering_standing]] = current_heading_xy[entering_standing]
-
-        self._standing_phase_state[env_ids_flat] = is_standing_phase
-        self._prev_is_standing_phase[env_ids_flat] = is_standing_phase
-        saved_heading_xy = self._stand_heading_dir[env_ids_flat]
-
-        heading_inv = calc_heading_quat_inv(root_rot)
-        num_samples = self._num_traj_points
-        heading_inv_expand = heading_inv.unsqueeze(1).expand(-1, num_samples, -1).reshape(-1, 4)
-        delta_pos = traj_points_world - root_pos.unsqueeze(1)
-        delta_pos_flat = delta_pos.reshape(-1, 3)
-        local_traj_points = my_quat_rotate(heading_inv_expand, delta_pos_flat)
-        local_traj_points = local_traj_points.view(root_pos.shape[0], num_samples, 3)
-        traj_obs = local_traj_points[..., 0:2].reshape(root_pos.shape[0], -1)
-
-        cmd_speed = target_dist_flat.unsqueeze(-1) / self._traj_sample_times[0]
-        standness = (self._stand_exit_thres - target_dist_flat.unsqueeze(-1)) / (
-            self._stand_exit_thres - self._stand_enter_thres + 1e-6
-        )
-        standness = torch.clamp(standness, 0.0, 1.0)
-
-        walk_dir = torch.nn.functional.normalize(traj_delta, dim=-1, eps=1e-6)
-        walk_yaw_cos = torch.sum(current_heading_xy * walk_dir, dim=-1, keepdim=True)
-        walk_yaw_sin = (
-            current_heading_xy[:, 0:1] * walk_dir[:, 1:2]
-            - current_heading_xy[:, 1:2] * walk_dir[:, 0:1]
-        )
-        stand_yaw_cos = torch.sum(current_heading_xy * saved_heading_xy, dim=-1, keepdim=True)
-        stand_yaw_sin = (
-            current_heading_xy[:, 0:1] * saved_heading_xy[:, 1:2]
-            - current_heading_xy[:, 1:2] * saved_heading_xy[:, 0:1]
-        )
-
-        cmd_obs = torch.cat([
-            traj_obs,
-            cmd_speed,
-            standness,
-            walk_yaw_cos,
-            walk_yaw_sin,
-            stand_yaw_cos,
-            stand_yaw_sin,
-        ], dim=-1)
-
-        # Minimal omni-walk migration: only stack humanoid state, keep command as single-frame.
-        if self._num_state_hist_steps > 1:
-            if env_ids is None:
-                self._update_hist_state_obs()
-                self._state_hist_obs_buf[:, 0] = base_obs
-
-                reset_mask = (self.progress_buf == 0)
-                if torch.any(reset_mask):
-                    self._state_hist_obs_buf[reset_mask] = base_obs[reset_mask].unsqueeze(1).repeat(
-                        1, self._num_state_hist_steps, 1
-                    )
-                hist_obs = self._state_hist_obs_buf.reshape(self.num_envs, -1)
-            else:
-                self._update_hist_state_obs(env_ids)
-                self._state_hist_obs_buf[env_ids, 0] = base_obs
-
-                reset_mask = (self.progress_buf[env_ids] == 0)
-                if torch.any(reset_mask):
-                    reset_env_ids = env_ids[reset_mask]
-                    self._state_hist_obs_buf[reset_env_ids] = base_obs[reset_mask].unsqueeze(1).repeat(
-                        1, self._num_state_hist_steps, 1
-                    )
-                hist_obs = self._state_hist_obs_buf[env_ids].reshape(len(env_ids), -1)
-        else:
-            hist_obs = base_obs
-
-        return torch.cat([hist_obs, cmd_obs], dim=-1)
+        # The base implementation already matches HumanoidAMPMuscleFlat:
+        # 111D body state (human DOFs only) + 6D local future trajectory.
+        return super()._compute_humanoid_obs(env_ids)
 
     def _compute_observations(self, env_ids=None):
         self._update_srl_task_commands(env_ids)
@@ -488,131 +338,88 @@ class SRL_Real_HRI(SRL_Real_HRI_Base):
         return
 
     def _compute_reward(self, actions):
+        """HumanoidAMPMuscleFlat task reward plus the unchanged SRL reward."""
         srl_end_body_pos = self._rigid_body_pos[:, self._srl_end_ids, :]
         to_target = self.targets - self._initial_root_states[:, 0:3]
         srl_root_pos = self.srl_root_states[:, 0:3]
         clearance_reward = self.compute_foot_clearance_reward()
 
         srl_peak_cost, srl_thermal_cost, srl_power_cost = self._compute_srl_motor_costs()
-        srl_motor_cost = (self.srl_peak_cost_scale * srl_peak_cost
-                          + self.srl_thermal_cost_scale * srl_thermal_cost
-                          + self.srl_power_cost_scale * srl_power_cost)
+        srl_motor_cost = (
+            self.srl_peak_cost_scale * srl_peak_cost
+            + self.srl_thermal_cost_scale * srl_thermal_cost
+            + self.srl_power_cost_scale * srl_power_cost
+        )
 
         env_ids = torch.arange(self.num_envs, device=self.device)
         current_time = self.progress_buf * self.control_dt
         target_pos = self._traj_gen.get_position(env_ids, current_time)
-        root_pos = self._root_states[:, 0:3]
-        root_rot = self._root_states[:, 3:7]
-        future_traj_points = self._traj_gen.get_observation_points(
+        future = self._traj_gen.get_observation_points(
             env_ids, current_time, self._traj_sample_times
         )
-        target_pos_05s = future_traj_points[:, 0, 0:2]
-        traj_delta = target_pos_05s - target_pos[:, 0:2]
-        target_dist = torch.norm(traj_delta, dim=-1)
-        implied_target_speed = target_dist / 0.5
+        nominal_velocity = (
+            future[:, 0, :2] - target_pos[:, :2]
+        ) / self._traj_sample_times[0]
 
-        is_standing_phase = self._update_standing_phase_state(target_dist)
-        pos_err_xy = target_pos[:, 0:2] - root_pos[:, 0:2]
-        dist_sq = torch.sum(pos_err_xy ** 2, dim=-1)
-        pos_reward = torch.exp(-2.0 * dist_sq)
+        position_error = target_pos[:, :2] - self._root_states[:, :2]
+        pos_reward = torch.exp(-2.0 * torch.sum(position_error ** 2, dim=-1))
+        velocity_error = nominal_velocity - self._root_states[:, 7:9]
+        vel_reward = torch.exp(-2.0 * torch.sum(velocity_error ** 2, dim=-1))
 
-        current_heading_xy = self._update_standing_heading_cache(is_standing_phase, root_rot)
-        walk_dir = torch.nn.functional.normalize(traj_delta, dim=-1, eps=1e-6)
-        root_vel_xy = self._root_states[:, 7:9]
-        current_vel_proj = torch.sum(root_vel_xy * walk_dir, dim=-1)
-        vel_reward = torch.exp(-2.0 * (current_vel_proj - implied_target_speed) ** 2)
-        walk_heading_alignment = torch.sum(current_heading_xy * walk_dir, dim=-1)
-        walk_heading_reward = torch.clamp(walk_heading_alignment, min=0.0, max=1.0)
-
-        saved_heading_xy = self._stand_heading_dir
-        stand_heading_dot = torch.sum(current_heading_xy * saved_heading_xy, dim=-1)
-        stand_heading_dot = torch.clamp(stand_heading_dot, min=-1.0, max=1.0)
-        stand_heading_cross = (
-            current_heading_xy[:, 0] * saved_heading_xy[:, 1]
-            - current_heading_xy[:, 1] * saved_heading_xy[:, 0]
+        speed = torch.linalg.vector_norm(nominal_velocity, dim=-1)
+        heading = nominal_velocity / speed[:, None].clamp_min(1e-6)
+        forward = my_quat_rotate(self._root_states[:, 3:7], self.forward_vec_local)
+        heading_reward = torch.clamp(
+            torch.sum(forward[:, :2] * heading, dim=-1), 0.0, 1.0
         )
-        stand_heading_err = torch.atan2(stand_heading_cross, stand_heading_dot)
-        stand_heading_penalty = stand_heading_err ** 2
-
-        stand_pos_err = torch.norm(pos_err_xy, dim=-1)
-        stand_pos_reward = torch.where(
-            stand_pos_err < self._stand_pos_tol,
-            torch.ones_like(stand_pos_err),
-            torch.exp(-20.0 * (stand_pos_err - self._stand_pos_tol) ** 2)
+        heading_reward = torch.where(
+            speed > 1e-6, heading_reward, torch.ones_like(heading_reward)
         )
 
-        root_vel_stand = self._root_states[:, 7:10]
-        stand_speed_xy = torch.norm(root_vel_stand[:, 0:2], dim=-1)
-        stand_vel_excess = torch.clamp(stand_speed_xy - 0.15, min=0.0)
-        stand_vel_reward = torch.exp(-8.0 * stand_vel_excess ** 2)
-
-        stand_yaw_rate = torch.abs(self._root_states[:, 12])
-        stand_yaw_rate_excess = torch.clamp(stand_yaw_rate - 0.20, min=0.0)
-        stand_yaw_rate_reward = torch.exp(-12.0 * stand_yaw_rate_excess ** 2)
-
-        dof_abs_err = torch.abs(self._dof_pos - self._initial_dof_pos)
-        joint_excess = torch.clamp(dof_abs_err - 0.20, min=0.0)
-        stand_joint_penalty = torch.sqrt(torch.mean(joint_excess ** 2, dim=-1) + 1e-8)
-
-        pelvis_pos = self._rigid_body_pos[:, self._pelvis_body_id, :]
-        head_pos = self._rigid_body_pos[:, self._head_body_id, :]
-        trunk_vec = head_pos - pelvis_pos
-        trunk_dir = trunk_vec / torch.norm(trunk_vec, dim=-1, keepdim=True).clamp(min=1e-6)
-        trunk_upright_cos = torch.clamp(trunk_dir[:, 2], min=-1.0, max=1.0)
-        stand_trunk_reward = torch.exp(-8.0 * (1.0 - trunk_upright_cos))
-
-        left_foot_pos = self._rigid_body_pos[:, self._left_foot_body_id, :]
-        right_foot_pos = self._rigid_body_pos[:, self._right_foot_body_id, :]
-        foot_delta_xy = left_foot_pos[:, 0:2] - right_foot_pos[:, 0:2]
-        foot_dist_xy = torch.norm(foot_delta_xy, dim=-1)
-        foot_dist_excess = torch.clamp(foot_dist_xy - (0.22 + 0.10), min=0.0)
-        stand_foot_spacing_reward = torch.exp(-10.0 * foot_dist_excess ** 2)
-
-        left_foot_height_excess = torch.clamp(left_foot_pos[:, 2] - (0.06 + 0.025), min=0.0)
-        right_foot_height_excess = torch.clamp(right_foot_pos[:, 2] - (0.06 + 0.025), min=0.0)
-        stand_foot_ground_reward = torch.exp(
-            -80.0 * (left_foot_height_excess ** 2 + right_foot_height_excess ** 2)
-        )
-
-        stand_reward = (
-            0.35 * stand_pos_reward
-            - 0.50 * stand_heading_penalty
-            + 0.15 * stand_vel_reward
-            + 0.15 * stand_yaw_rate_reward
-            + 0.20 * stand_trunk_reward
-            + 0.08 * stand_foot_spacing_reward
-            + 0.07 * stand_foot_ground_reward
-            - 0.70 * stand_joint_penalty
-        )
-        stand_reward = torch.clamp(stand_reward, min=0.0)
-
-        # Minimal omni-walk migration: keep the humanoid solo-training stage labels in MARL.
+        activation_cost = torch.mean(self.muscle_actuator.a ** 2, dim=-1)
+        wp, wv, wh, wa = self._humanoid_reward_weights
         if self.train_stage == 1:
-            self.rew_buf[:] = stand_reward
-            self.humanoid_task_rew_buf[:] = stand_reward
+            angular_penalty = self._root_states[:, 12] ** 2
+            joint_penalty = torch.sum(
+                (
+                    self._dof_pos[:, :self.humanoid_dof_num]
+                    - self._initial_dof_pos[:, :self.humanoid_dof_num]
+                ) ** 2,
+                dim=-1,
+            )
+            humanoid_reward = (
+                pos_reward
+                * vel_reward
+                * torch.exp(-angular_penalty - joint_penalty - wa * activation_cost)
+            )
             self.extras["amp_mask"] = torch.zeros(
                 self.num_envs, device=self.device, dtype=torch.float
             )
-        elif self.train_stage == 4:
-            walk_reward = pos_reward + vel_reward + walk_heading_reward
-            stand_reward_s4 = stand_reward * 3.0
-            humanoid_reward = torch.where(is_standing_phase, stand_reward_s4, walk_reward)
-            humanoid_task_reward = torch.where(is_standing_phase, stand_reward, walk_reward)
-            self.rew_buf[:] = humanoid_reward
-            self.humanoid_task_rew_buf[:] = humanoid_task_reward
-            self.extras["amp_mask"] = (~is_standing_phase).float()
         else:
-            walk_reward = pos_reward + vel_reward + walk_heading_reward
-            self.rew_buf[:] = walk_reward
-            self.humanoid_task_rew_buf[:] = walk_reward
+            humanoid_reward = (
+                wp * pos_reward + wv * vel_reward + wh * heading_reward
+                - wa * activation_cost
+            )
+            self.extras["amp_mask"] = torch.ones(
+                self.num_envs, device=self.device, dtype=torch.float
+            )
 
-        self.srl_rew_buf[:]  = compute_srl_reward(
+        self.rew_buf[:] = humanoid_reward
+        self.humanoid_task_rew_buf[:] = humanoid_reward
+        self.extras["humanoid_task_rewards"] = {
+            "position_mean": pos_reward.mean(),
+            "velocity_mean": vel_reward.mean(),
+            "heading_mean": heading_reward.mean(),
+            "activation_cost_mean": activation_cost.mean(),
+        }
+
+        self.srl_rew_buf[:] = compute_srl_reward(
             self.srl_full_obs_buf[:],
             clearance_reward,
             to_target,
             self.progress_buf,
             self.phase_buf,
-            self.actions[:,-self.srl_actions_num:],
+            self.actions[:, -self.srl_actions_num:],
             srl_end_body_pos,
             srl_root_pos,
             self.potentials,
@@ -654,9 +461,8 @@ class SRL_Real_HRI(SRL_Real_HRI_Base):
         target_pos = self._traj_gen.get_position(env_ids, current_time)
         root_pos = self._root_states[..., 0:3]
 
-        # Minimal omni-walk migration: use the same sensible trajectory-deviation reset scale as humanoid solo training.
         dist_sq = torch.sum((target_pos[..., 0:2] - root_pos[..., 0:2]) ** 2, dim=-1)
-        has_strayed = (dist_sq > (1.5 * 1.5)) & (self.progress_buf > 10)
+        has_strayed = (dist_sq > self._max_traj_distance ** 2) & (self.progress_buf > 10)
         strayed_tensor = has_strayed.to(dtype=torch.long)
         self.reset_buf = self.reset_buf | strayed_tensor
         self._terminate_buf = self._terminate_buf | strayed_tensor
@@ -686,6 +492,7 @@ class SRL_Real_HRI(SRL_Real_HRI_Base):
         self.reset_buf[env_ids] = 0
         self._terminate_buf[env_ids] = 0
         self._reset_srl_action_filter(env_ids)
+        self.muscle_actuator.a[env_ids] = 0.0
 
         return
     
@@ -717,6 +524,12 @@ class SRL_Real_HRI(SRL_Real_HRI_Base):
 
         root_pos, root_rot, dof_pos, root_vel, root_ang_vel, dof_vel, key_pos \
                = self._motion_lib.get_motion_state(motion_ids, motion_times)
+
+        # Match HumanoidAMPMuscleFlat reference-state placement in every
+        # sub-environment, including its measured-motion height offset.
+        root_pos[:, 0] = self._initial_root_states[env_ids, 0]
+        root_pos[:, 1] = self._initial_root_states[env_ids, 1]
+        # root_pos[:, 2] += 0.14
 
         self._set_env_state(env_ids=env_ids, 
                             root_pos=root_pos, 
@@ -785,10 +598,12 @@ class SRL_Real_HRI(SRL_Real_HRI_Base):
         self._root_states[env_ids, 7:10]  = root_vel
         self._root_states[env_ids, 10:13] = root_ang_vel
         
-        self._dof_pos[env_ids] = dof_pos
-        self._dof_vel[env_ids] = dof_vel
-        # MLY: SRL init
-        self._dof_pos[env_ids, -self.srl_actions_num:] = self._initial_dof_pos[env_ids,-self.srl_actions_num:]
+        # MotionLib now exposes the same 28 human DOFs as the standalone task.
+        # Attachment and SRL joints keep their configured joint-task defaults.
+        self._dof_pos[env_ids] = self._initial_dof_pos[env_ids]
+        self._dof_vel[env_ids] = self._initial_dof_vel[env_ids]
+        self._dof_pos[env_ids, :self.humanoid_dof_num] = dof_pos
+        self._dof_vel[env_ids, :self.humanoid_dof_num] = dof_vel
 
         env_ids_int32 = env_ids.to(dtype=torch.int32)
         self.gym.set_actor_root_state_tensor_indexed(self.sim, gymtorch.unwrap_tensor(self._root_states), 
@@ -810,11 +625,11 @@ class SRL_Real_HRI(SRL_Real_HRI_Base):
     def _compute_amp_observations(self, env_ids=None):
         key_body_pos = self._rigid_body_pos[:, self._key_body_ids, :]
         if (env_ids is None):
-            self._curr_amp_obs_buf[:] = build_amp_observations(self._root_states, self._dof_pos, self._dof_vel, key_body_pos,
+            self._curr_amp_obs_buf[:] = build_amp_observations(self._root_states, self._dof_pos[:, :self.humanoid_dof_num], self._dof_vel[:, :self.humanoid_dof_num], key_body_pos,
                                                                 self._local_root_obs)
         else:
-            self._curr_amp_obs_buf[env_ids] = build_amp_observations(self._root_states[env_ids], self._dof_pos[env_ids], 
-                                                                    self._dof_vel[env_ids], key_body_pos[env_ids],
+            self._curr_amp_obs_buf[env_ids] = build_amp_observations(self._root_states[env_ids], self._dof_pos[env_ids, :self.humanoid_dof_num],
+                                                                    self._dof_vel[env_ids, :self.humanoid_dof_num], key_body_pos[env_ids],
                                                                     self._local_root_obs)
         return
 

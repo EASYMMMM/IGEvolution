@@ -101,6 +101,6 @@ python SRL_Evo_train.py task=SRL_Real_Bot wandb_project=SRL_Real experiment=SRL_
        'task.env.default_joint_angles=[0 , -0.55,  -0.3, 0 , -0.55,  -0.3]'  'task.env.srl_effort_limits=[90, 90, 350, 90, 90, 350]'\
        task.env.forceControl=False  task.env.pdControl=True  task.env.srl_action_filter_enable=True
 # --- check ---
-python SRL_Evo_train.py task=SRL_Real_Bot test=True force_render=True task.env.cameraFollow=True num_envs=4 task.env.task_training_stage=3 task.task.randomize=True  task.task.vel_pertubation=True checkpoint=runs/SRL_Real_Bot_v2_s4_14-20-51-55/nn/SRL_Real_Bot_v2_s4.pth\
+python SRL_Evo_train.py task=SRL_Real_Bot test=True force_render=True task.env.cameraFollow=True num_envs=4 task.env.task_training_stage=3 task.task.randomize=True  task.task.vel_pertubation=True checkpoint=runs/SRL_Real_Bot_v2_s4_09-13-35-18/nn/SRL_Real_Bot_v2_s4.pth\
        task.env.asset.assetFileName="mjcf/srl_real/srl_real_bot_v2.xml"  'task.env.default_joint_angles=[0 , -0.55,  -0.3, 0 , -0.55,  -0.3]'  'task.env.srl_effort_limits=[90, 90, 350, 90, 90, 350]' task.env.forceControl=False  task.env.pdControl=True  task.env.srl_action_filter_enable=True
 

@@ -24,10 +24,11 @@ params:
         learn_sigma: False
 
     mlp:
-      # Minimal omni-walk migration: match the pretrained humanoid actor/critic MLP exactly.
-      units: [512, 512, 256]
+      # HumanoidAMPMuscleFlat checkpoint architecture.
+      units: [512, 256]
       srl_units: [1024, 512]
-      activation: elu
+      activation: relu
+      srl_activation: elu
       d2rl: False
 
       initializer:
@@ -99,10 +100,10 @@ params:
     disc_reward_w: 1.0
     teacher_reward_w: 1.0
 
-    actions_num_humanoid: 28
+    actions_num_humanoid: 58
     
     # training settings
-    humanoid_checkpoint: False
+    humanoid_checkpoint: "runs/HumanoidAMPMuscleFlat_P002_Finetune_11-17-46-29/nn/HumanoidAMPMuscleFlat_P002_Finetune_11-17-46-33.pth"
     hsrl_checkpoint: False
     srl_teacher_checkpoint: False
     mirror_loss: True

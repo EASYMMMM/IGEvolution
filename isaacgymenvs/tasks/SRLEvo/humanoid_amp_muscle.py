@@ -34,8 +34,11 @@ class HumanoidAMPMuscleFlat(HumanoidAMPMuscleBase):
                  virtual_screen_capture, force_render):
         self.cfg = cfg
         stage = cfg["env"].get("train_stage", 2)
-        if stage not in (1, 2, 3):
-            raise ValueError("HumanoidAMPMuscleFlat supports train_stage 1 (stand), 2 (straight), or 3 (curve)")
+        if stage not in (1, 2, 3, 4):
+            raise ValueError(
+                "HumanoidAMPMuscleFlat supports train_stage 1 (stand), 2 (straight), "
+                "3 (curve), or 4 (mixed omni-walk)"
+            )
         self._traj_sample_times = [0.5, 1.0, 1.5]
         self._num_traj_points = len(self._traj_sample_times)
         self._traj_obs_dim = self._num_traj_points * 2
@@ -615,7 +618,7 @@ class HumanoidAMPMuscleFlat(HumanoidAMPMuscleBase):
         # Place reference poses at each environment's own spawn position.
         root_pos[:, 0] = self._initial_root_states[env_ids, 0]
         root_pos[:, 1] = self._initial_root_states[env_ids, 1]
-        root_pos[:,2] += 0.14
+        # root_pos[:,2] += 0.14
         self._set_env_state(env_ids, root_pos, root_rot, dof_pos, root_vel, root_ang_vel, dof_vel)
         self._reset_ref_env_ids, self._reset_ref_motion_ids, self._reset_ref_motion_times = env_ids, motion_ids, motion_times
 
