@@ -1,0 +1,282 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mujoco model="humanoid_175_muscle_p002_visual">
+  <!--Original mclegs collision bodies and dynamics; SMPL meshes are visual only.-->
+  <statistic extent="2" center="0.000000 0.000000 1.066667" />
+  <option timestep="0.00555" />
+  <compiler angle="degree" meshdir="." inertiagrouprange="0 1" />
+  <default>
+    <motor ctrlrange="-1 1" ctrllimited="true" />
+    <default class="body">
+      <geom type="capsule" condim="1" friction="1.0 0.05 0.05" solimp=".9 .99 .003" solref=".015 1" />
+      <joint type="hinge" damping="0.1" stiffness="5" armature=".007" limited="true" solimplimit="0 .99 .01" />
+      <site size="0.042667" group="3" />
+      <default class="force-torque">
+        <site type="box" size="0.010667 0.010667 0.021333" rgba="1 0 0 1" />
+      </default>
+      <default class="touch">
+        <site type="capsule" rgba="0 0 1 .3" />
+      </default>
+      <default class="smpl_visual">
+        <geom type="mesh" contype="0" conaffinity="0" mass="0" density="0" group="2" material="smpl_mat" />
+      </default>
+    </default>
+  </default>
+  <asset>
+    <!--Only the SMPL meshes are reused; no reference SRL assets or bodies are imported.-->
+    <material name="smpl_mat" rgba="0.86 0.91 1 1" />
+    <mesh name="Pelvis_mesh" file="p002_visual_meshes/geom/Pelvis.stl" scale="1.17848729 1.12342303 1.05590344" />
+    <mesh name="L_Hip_mesh" file="p002_visual_meshes/geom/L_Hip.stl" scale="1.05113071 1.08316982 1.02657361" />
+    <mesh name="R_Hip_mesh" file="p002_visual_meshes/geom/R_Hip.stl" scale="1.05758706 1.10610248 1.02741706" />
+    <mesh name="Torso_mesh" file="p002_visual_meshes/geom/Torso.stl" scale="1.22127929 1.06210396 0.974187707" />
+    <mesh name="L_Knee_mesh" file="p002_visual_meshes/geom/L_Knee.stl" scale="1.04252301 1.06788117 1.04129165" />
+    <mesh name="R_Knee_mesh" file="p002_visual_meshes/geom/R_Knee.stl" scale="1.05537893 1.07507882 1.03963333" />
+    <mesh name="Spine_mesh" file="p002_visual_meshes/geom/Spine.stl" scale="1.18389306 0.982221689 0.943636372" />
+    <mesh name="L_Ankle_mesh" file="p002_visual_meshes/geom/L_Ankle.stl" scale="0.90401772 0.923474918 0.616792226" />
+    <mesh name="R_Ankle_mesh" file="p002_visual_meshes/geom/R_Ankle.stl" scale="0.879556367 0.98234391 0.58904541" />
+    <mesh name="Chest_mesh" file="p002_visual_meshes/geom/Chest.stl" scale="1.1910889 0.965259082 1.0113346" />
+    <mesh name="L_Toe_mesh" file="p002_visual_meshes/geom/L_Toe.stl" scale="0.90401772 0.923474918 0.616792226" />
+    <mesh name="R_Toe_mesh" file="p002_visual_meshes/geom/R_Toe.stl" scale="0.879556367 0.98234391 0.58904541" />
+    <mesh name="Neck_mesh" file="p002_visual_meshes/geom/Neck.stl" scale="1.03127259 0.932992814 0.993722454" />
+    <mesh name="L_Thorax_mesh" file="p002_visual_meshes/geom/L_Thorax.stl" scale="1.00545877 0.881658692 1.01307207" />
+    <mesh name="R_Thorax_mesh" file="p002_visual_meshes/geom/R_Thorax.stl" scale="1.02486629 0.911611954 1.01468251" />
+    <mesh name="Head_mesh" file="p002_visual_meshes/geom/Head.stl" scale="0.994407512 0.98761346 1.01745719" />
+    <mesh name="L_Shoulder_mesh" file="p002_visual_meshes/geom/L_Shoulder.stl" scale="0.96603148 1.02817336 0.97781164" />
+    <mesh name="R_Shoulder_mesh" file="p002_visual_meshes/geom/R_Shoulder.stl" scale="0.95332994 1.0315297 0.948397651" />
+    <mesh name="L_Elbow_mesh" file="p002_visual_meshes/geom/L_Elbow.stl" scale="0.985102515 1.024239 0.995880761" />
+    <mesh name="R_Elbow_mesh" file="p002_visual_meshes/geom/R_Elbow.stl" scale="0.994125677 1.03057487 0.996055257" />
+    <mesh name="L_Wrist_mesh" file="p002_visual_meshes/geom/L_Wrist.stl" scale="0.984298007 1.01806483 1.02309809" />
+    <mesh name="R_Wrist_mesh" file="p002_visual_meshes/geom/R_Wrist.stl" scale="0.985870895 1.04701477 1.0575449" />
+    <mesh name="L_Hand_mesh" file="p002_visual_meshes/geom/L_Hand.stl" scale="1.01510022 1.0310966 1.03551381" />
+    <mesh name="R_Hand_mesh" file="p002_visual_meshes/geom/R_Hand.stl" scale="1.02038669 1.03699745 1.02604636" />
+  </asset>
+  <worldbody>
+    <geom name="floor" type="plane" conaffinity="1" size="106.666667 106.666667 0.213333" />
+    <body name="pelvis" pos="0.000000 0.000000 1.066667" childclass="body">
+      <freejoint name="root" />
+      <site name="root" class="force-torque" />
+      <geom name="pelvis" type="sphere" pos="0.000000 0.000000 0.074667" size="0.096000" density="2226" rgba="0.4706 0.549 0.6863 0" />
+      <geom name="upper_waist" type="sphere" pos="0.000000 0.000000 0.218667" size="0.074667" density="2226" rgba="0.4706 0.549 0.6863 0" />
+      <site name="pelvis" class="touch" type="sphere" pos="0.000000 0.000000 0.074667" size="0.097067" />
+      <site name="upper_waist" class="touch" type="sphere" pos="0.000000 0.000000 0.218667" size="0.075733" />
+      <body name="torso" pos="0.000000 0.000000 0.251894">
+        <light name="top" pos="0.000000 0.000000 2.133333" mode="trackcom" />
+        <camera name="back" pos="-3.200000 0.000000 1.066667" xyaxes="0 -1 0 1 0 2" mode="trackcom" />
+        <camera name="side" pos="0.000000 -3.200000 1.066667" xyaxes="1 0 0 0 1 2" mode="trackcom" />
+        <joint name="abdomen_x" pos="0.000000 0.000000 0.000000" axis="1 0 0" range="-60 60" stiffness="600" damping="60" armature=".025" />
+        <joint name="abdomen_y" pos="0.000000 0.000000 0.000000" axis="0 1 0" range="-60 90" stiffness="600" damping="60" armature=".025" />
+        <joint name="abdomen_z" pos="0.000000 0.000000 0.000000" axis="0 0 1" range="-50 50" stiffness="600" damping="60" armature=".025" />
+        <geom name="torso" type="sphere" pos="0.000000 0.000000 0.128000" size="0.117333" density="1794" rgba="0.4706 0.549 0.6863 0" />
+        <site name="torso" class="touch" type="sphere" pos="0.000000 0.000000 0.128000" size="0.118400" />
+        <geom name="right_clavicle" fromto="-0.006413 -0.048829 0.244049 -0.017957 -0.136722 0.253459" size="0.048000" density="1100" rgba="0.4706 0.549 0.6863 0" />
+        <geom name="left_clavicle" fromto="-0.006413 0.048829 0.244049 -0.017957 0.136722 0.253459" size="0.048000" density="1100" rgba="0.4706 0.549 0.6863 0" />
+        <body name="head" pos="0.000000 0.000000 0.238820">
+          <joint name="neck_x" axis="1 0 0" range="-50 50" stiffness="50" damping="5" armature=".017" />
+          <joint name="neck_y" axis="0 1 0" range="-40 60" stiffness="50" damping="5" armature=".017" />
+          <joint name="neck_z" axis="0 0 1" range="-45 45" stiffness="50" damping="5" armature=".017" />
+          <geom name="head" type="sphere" pos="0.000000 0.000000 0.186667" size="0.101333" density="1081" rgba="0.4706 0.549 0.6863 0" />
+          <site name="head" class="touch" pos="0.000000 0.000000 0.186667" type="sphere" size="0.109867" />
+          <camera name="egocentric" pos="0.109867 0.000000 0.186667" xyaxes="0 -1 0 .1 0 1" fovy="80" />
+          <geom type="mesh" mesh="Head_mesh" class="smpl_visual" pos="0.00815391605 -0.000555140952 0.1165081" name="smpl_Head" contype="0" conaffinity="0" mass="0" density="0" group="2" />
+        </body>
+        <body name="right_upper_arm" pos="-0.025653 -0.195317 0.259733">
+          <joint name="right_shoulder_x" axis="1 0 0" range="-180 45" stiffness="200" damping="20" armature=".02" />
+          <joint name="right_shoulder_y" axis="0 1 0" range="-180 60" stiffness="200" damping="20" armature=".02" />
+          <joint name="right_shoulder_z" axis="0 0 1" range="-90 90" stiffness="200" damping="20" armature=".02" />
+          <geom name="right_upper_arm" fromto="0.000000 0.000000 -0.053333 0.000000 0.000000 -0.245333" size="0.048000" density="982" rgba="0.4706 0.549 0.6863 0" />
+          <site name="right_upper_arm" class="touch" pos="0.000000 0.000000 -0.149333" size="0.049067 0.106667" zaxis="0 0 1" />
+          <body name="right_lower_arm" pos="0.000000 0.000000 -0.293107">
+            <joint name="right_elbow" axis="0 1 0" range="-160 0" stiffness="150" damping="15" armature=".015" />
+            <geom name="right_lower_arm" fromto="0.000000 0.000000 -0.056000 0.000000 0.000000 -0.200000" size="0.042667" density="1056" rgba="0.4706 0.549 0.6863 0" />
+            <site name="right_lower_arm" class="touch" pos="0.000000 0.000000 -0.128000" size="0.043733 0.073067" zaxis="0 1 0" />
+            <body name="right_hand" pos="0.000000 0.000000 -0.276210">
+              <geom name="right_hand" type="sphere" size="0.042667" density="1865" rgba="0.4706 0.549 0.6863 0" />
+              <site name="right_hand" class="touch" type="sphere" size="0.043733" />
+              <geom type="mesh" mesh="R_Wrist_mesh" class="smpl_visual" quat="0.7071 0.7071 0 0" pos="-0.0453079137 0.0344832908 -8.5633764e-05" name="smpl_R_Wrist" contype="0" conaffinity="0" mass="0" density="0" group="2" />
+              <geom type="mesh" mesh="R_Hand_mesh" class="smpl_visual" quat="0.7071 0.7071 0 0" pos="-0.0456109242 0.0529636145 -0.0995651915" name="smpl_R_Hand" contype="0" conaffinity="0" mass="0" density="0" group="2" />
+            </body>
+            <geom type="mesh" mesh="R_Elbow_mesh" class="smpl_visual" quat="0.7071 0.7071 0 0" pos="-0.0395851436 0.0469656249 -0.0158438261" name="smpl_R_Elbow" contype="0" conaffinity="0" mass="0" density="0" group="2" />
+          </body>
+          <geom type="mesh" mesh="R_Shoulder_mesh" class="smpl_visual" quat="0.7071 0.7071 0 0" pos="-0.0124519112 0.0242852335 -0.0550571199" name="smpl_R_Shoulder" contype="0" conaffinity="0" mass="0" density="0" group="2" />
+        </body>
+        <body name="left_upper_arm" pos="-0.025653 0.195317 0.259733">
+          <joint name="left_shoulder_x" axis="1 0 0" range="-45 180" stiffness="200" damping="20" armature=".02" />
+          <joint name="left_shoulder_y" axis="0 1 0" range="-180 60" stiffness="200" damping="20" armature=".02" />
+          <joint name="left_shoulder_z" axis="0 0 1" range="-90 90" stiffness="200" damping="20" armature=".02" />
+          <geom name="left_upper_arm" fromto="0.000000 0.000000 -0.053333 0.000000 0.000000 -0.245333" size="0.048000" density="982" rgba="0.4706 0.549 0.6863 0" />
+          <site name="left_upper_arm" class="touch" pos="0.000000 0.000000 -0.149333" size="0.049067 0.106667" zaxis="0 0 1" />
+          <body name="left_lower_arm" pos="0.000000 0.000000 -0.293107">
+            <joint name="left_elbow" axis="0 1 0" range="-160 0" stiffness="150" damping="15" armature=".015" />
+            <geom name="left_lower_arm" fromto="0.000000 0.000000 -0.056000 0.000000 0.000000 -0.200000" size="0.042667" density="1056" rgba="0.4706 0.549 0.6863 0" />
+            <site name="left_lower_arm" class="touch" pos="0.000000 0.000000 -0.106667" size="0.043733 0.073067" zaxis="0 0 1" />
+            <body name="left_hand" pos="0.000000 0.000000 -0.276210">
+              <geom name="left_hand" type="sphere" size="0.042667" density="1865" rgba="0.4706 0.549 0.6863 0" />
+              <site name="left_hand" class="touch" type="sphere" size="0.043733" />
+              <geom type="mesh" mesh="L_Wrist_mesh" class="smpl_visual" quat="0.7071 -0.7071 0 0" pos="-0.0442682883 -0.0326844478 -0.00278177101" name="smpl_L_Wrist" contype="0" conaffinity="0" mass="0" density="0" group="2" />
+              <geom type="mesh" mesh="L_Hand_mesh" class="smpl_visual" quat="0.7071 -0.7071 0 0" pos="-0.046189016 -0.0515395637 -0.0997079443" name="smpl_L_Hand" contype="0" conaffinity="0" mass="0" density="0" group="2" />
+            </body>
+            <geom type="mesh" mesh="L_Elbow_mesh" class="smpl_visual" quat="0.7071 -0.7071 0 0" pos="-0.0392955705 -0.0495166843 -0.0246872072" name="smpl_L_Elbow" contype="0" conaffinity="0" mass="0" density="0" group="2" />
+          </body>
+          <geom type="mesh" mesh="L_Shoulder_mesh" class="smpl_visual" quat="0.7071 -0.7071 0 0" pos="-0.0189834112 -0.0237479491 -0.0651448906" name="smpl_L_Shoulder" contype="0" conaffinity="0" mass="0" density="0" group="2" />
+        </body>
+        <geom type="mesh" mesh="Chest_mesh" class="smpl_visual" pos="0.0023658407 0.0062203828 0.0506327718" name="smpl_Chest" contype="0" conaffinity="0" mass="0" density="0" group="2" />
+        <geom type="mesh" mesh="Neck_mesh" class="smpl_visual" pos="-0.0497918247 -0.00753593332 0.262655333" name="smpl_Neck" contype="0" conaffinity="0" mass="0" density="0" group="2" />
+        <geom type="mesh" mesh="R_Thorax_mesh" class="smpl_visual" pos="-0.0390054906 -0.0726619784 0.161015402" name="smpl_R_Thorax" contype="0" conaffinity="0" mass="0" density="0" group="2" />
+        <geom type="mesh" mesh="L_Thorax_mesh" class="smpl_visual" pos="-0.0321824944 0.0790647961 0.163355002" name="smpl_L_Thorax" contype="0" conaffinity="0" mass="0" density="0" group="2" />
+      </body>
+      <body name="right_thigh" pos="0.000000 -0.090546 0.000000">
+        <site name="right_hip" class="force-torque" />
+        <joint name="right_hip_x" axis="1 0 0" range="-60 15" stiffness="300" damping="30" armature=".02" />
+        <joint name="right_hip_y" axis="0 1 0" range="-140 60" stiffness="300" damping="30" armature=".02" />
+        <joint name="right_hip_z" axis="0 0 1" range="-60 35" stiffness="300" damping="30" armature=".02" />
+        <geom name="right_thigh" fromto="0.000000 0.000000 -0.064000 0.000000 0.000000 -0.424000" size="0.058667" density="1269" rgba="0.4706 0.549 0.6863 0" />
+        <site name="right_thigh" class="touch" pos="0.000000 0.000000 -0.224000" size="0.059733 0.321067" zaxis="0 0 -1" />
+        <body name="right_shin" pos="0.000000 0.000000 -0.489649">
+          <site name="right_knee" class="force-torque" pos="0.000000 0.000000 0.000000" />
+          <joint name="right_knee" pos="0.000000 0.000000 0.000000" axis="0 1 0" range="0 160" stiffness="300" damping="30" armature=".02" />
+          <geom name="right_shin" fromto="0.000000 0.000000 -0.048000 0.000000 0.000000 -0.378667" size="0.053333" density="1014" rgba="0.4706 0.549 0.6863 0" />
+          <site name="right_shin" class="touch" pos="0.000000 0.000000 -0.213333" size="0.054400 0.166400" zaxis="0 0 -1" />
+          <body name="right_foot" pos="0.000000 0.000000 -0.437195">
+            <site name="right_ankle" class="force-torque" />
+            <joint name="right_ankle_x" pos="0.000000 0.000000 0.000000" axis="1 0 0" range="-30 30" stiffness="200" damping="20" armature=".01" />
+            <joint name="right_ankle_y" pos="0.000000 0.000000 0.000000" axis="0 1 0" range="-55 55" stiffness="200" damping="20" armature=".01" />
+            <joint name="right_ankle_z" pos="0.000000 0.000000 0.000000" axis="0 0 1" range="-40 40" stiffness="200" damping="20" armature=".01" />
+            <geom name="right_foot" type="box" pos="0.018000 0.000000 -0.024000" size="0.064400 0.048000 0.029333" density="1141" rgba="0.4706 0.549 0.6863 0" />
+            <geom name="right_toe" type="box" pos="0.078000 0.000000 -0.0384" size="0.064400 0.048000 0.015" density="1141" rgba="0.4706 0.549 0.6863 0" />
+            <site name="right_foot" class="touch" type="box" pos="0.048000 0.000000 -0.024000" size="0.095467 0.058667 0.030400" />
+            <geom type="mesh" mesh="R_Ankle_mesh" class="smpl_visual" pos="-0.0316015727 0.0282680946 -0.00700256239" name="smpl_R_Ankle_p002" contype="0" conaffinity="0" mass="0" density="0" group="2" />
+            <geom type="mesh" mesh="R_Toe_mesh" class="smpl_visual" pos="0.0786068401 -0.00454219198 -0.043876805" name="smpl_R_Toe_p002" contype="0" conaffinity="0" mass="0" density="0" group="2" />
+          </body>
+          <geom type="mesh" mesh="R_Knee_mesh" class="smpl_visual" pos="-0.00742573135 -0.00561932021 0.00150741015" name="smpl_R_Knee" contype="0" conaffinity="0" mass="0" density="0" group="2" />
+        </body>
+        <geom type="mesh" mesh="R_Hip_mesh" class="smpl_visual" pos="-0.0102186072 0.0293439066 -0.0890264035" name="smpl_R_Hip" contype="0" conaffinity="0" mass="0" density="0" group="2" />
+      </body>
+      <body name="left_thigh" pos="0.000000 0.090546 0.000000">
+        <site name="left_hip" class="force-torque" />
+        <joint name="left_hip_x" axis="1 0 0" range="-15 60" stiffness="300" damping="30" armature=".02" />
+        <joint name="left_hip_y" axis="0 1 0" range="-140 60" stiffness="300" damping="30" armature=".02" />
+        <joint name="left_hip_z" axis="0 0 1" range="-35 60" stiffness="300" damping="30" armature=".02" />
+        <geom name="left_thigh" fromto="0.000000 0.000000 -0.064000 0.000000 0.000000 -0.424000" size="0.058667" density="1269" rgba="0.4706 0.549 0.6863 0" />
+        <site name="left_thigh" class="touch" pos="0.000000 0.000000 -0.224000" size="0.059733 0.321067" zaxis="0 0 -1" />
+        <body name="left_shin" pos="0.000000 0.000000 -0.489649">
+          <site name="left_knee" class="force-torque" pos="0.000000 0.000000 0.021333" />
+          <joint name="left_knee" pos="0.000000 0.000000 0.000000" axis="0 1 0" range="0 160" stiffness="300" damping="30" armature=".02" />
+          <geom name="left_shin" fromto="0.000000 0.000000 -0.048000 0.000000 0.000000 -0.378667" size="0.053333" density="1014" rgba="0.4706 0.549 0.6863 0" />
+          <site name="left_shin" class="touch" pos="0.000000 0.000000 -0.213333" size="0.054400 0.166400" zaxis="0 0 -1" />
+          <body name="left_foot" pos="0.000000 0.000000 -0.437195">
+            <site name="left_ankle" class="force-torque" />
+            <joint name="left_ankle_x" pos="0.000000 0.000000 0.000000" axis="1 0 0" range="-30 30" stiffness="200" damping="20" armature=".01" />
+            <joint name="left_ankle_y" pos="0.000000 0.000000 0.000000" axis="0 1 0" range="-55 55" stiffness="200" damping="20" armature=".01" />
+            <joint name="left_ankle_z" pos="0.000000 0.000000 0.000000" axis="0 0 1" range="-40 40" stiffness="200" damping="20" armature=".01" />
+            <geom name="left_foot" type="box" pos="0.018000 0.000000 -0.024000" size="0.064400 0.048000 0.029333" density="1141" rgba="0.4706 0.549 0.6863 0" />
+            <geom name="left_toe" type="box" pos="0.078000 0.000000 -0.0384" size="0.064400 0.048000 0.015" density="1141" rgba="0.4706 0.549 0.6863 0" />
+            <site name="left_foot" class="touch" type="box" pos="0.048000 0.000000 -0.024000" size="0.095467 0.058667 0.030400" />
+            <geom type="mesh" mesh="L_Ankle_mesh" class="smpl_visual" pos="-0.0289397253 -0.0285921124 -0.00853058444" name="smpl_L_Ankle_p002" contype="0" conaffinity="0" mass="0" density="0" group="2" />
+            <geom type="mesh" mesh="L_Toe_mesh" class="smpl_visual" pos="0.0774631604 0.012410174 -0.0452914011" name="smpl_L_Toe_p002" contype="0" conaffinity="0" mass="0" density="0" group="2" />
+          </body>
+          <geom type="mesh" mesh="L_Knee_mesh" class="smpl_visual" pos="-0.00343140055 0.00729175067 0.00447362576" name="smpl_L_Knee" contype="0" conaffinity="0" mass="0" density="0" group="2" />
+        </body>
+        <geom type="mesh" mesh="L_Hip_mesh" class="smpl_visual" pos="-0.0179715077 -0.0290690607 -0.0795492559" name="smpl_L_Hip" contype="0" conaffinity="0" mass="0" density="0" group="2" />
+      </body>
+      <body name="SRL" pos="-0.10 0 0.05" quat="0.0 0.0 0.0 1.0">
+        <!--geom name="board" pos="0 0 0" size="0.0005 0.1 0.1 " type="box" density='10'/-->
+        <body name="SRL_root" pos="0.03 0 0.00">
+          <!-- <joint armature="0.02" axis="0 1 0" damping="0" name="SRL_freejoint_y" pos="-0.225 0 0" range="-45 45" stiffness="0"/> -->
+          <!--geom density="10" name="SRL_geom_root" pos="0 0 0" size="0.02 0.095 0.095" type="box"/-->
+          <body name="SRL_right_leg1" pos="0.02 0.0475 0" quat="1.0 0.0 0.0 0.0">
+            <!--geom density="10" fromto="0 0 0 0.01 0 0" name="SRL_geom_right_leg1" size="0.01" type="capsule"/-->
+            <!-- <joint armature="0.02" axis="0 0 1" damping="30" name="SRL_joint_right_hipjoint_z" pos="0 0 0" range="0 40" stiffness="300"/> -->
+            <!-- <joint armature="0.02" axis="0 1 0" damping="30" name="SRL_joint_right_hipjoint_y" pos="0 0 0" range="-5 70" stiffness="300"/> -->
+            <body name="SRL_right_leg2" pos="0.01 0 0" quat="0.92388 0.0 0.38268 0.0">
+              <!--geom density="10" fromto="0 0 0 0.01 0 0" name="SRL_geom_right_leg2" size="0.01" type="capsule"/-->
+              <!-- <joint armature="0.02" axis="0 1 0" damping="30" name="SRL_joint_right_kneejoint" pos="0 0 0" range="-50 50" stiffness="300"/> -->
+              <body name="SRL_right_end" pos="0.01 0 0" quat="0.70711 0.0 -0.70711 0.0">
+                <!--geom density="10" friction="5.0 0.05 0.05" name="SRL_geom_right_end" pos="0 0 -0.045" size="0.01" type="sphere"/-->
+                <!-- <joint armature="0.02" axis="0 1 0" damping="30" name="SRL_joint_right_ankle" pos="0 0 0" range="-5 5" stiffness="300"/> -->
+              </body>
+            </body>
+          </body>
+          <body name="SRL_left_leg1" pos="0.02 -0.0475 0" quat="1.0 0.0 0.0 0.0">
+            <!--geom density="10" fromto="0 0 0 0.01 0 0" name="SRL_geom_left_leg1" size="0.01" type="capsule"/-->
+            <!-- <joint armature="0.02" axis="0 0 1" damping="30" name="SRL_joint_left_hip_z" pos="0 0 0" range="-40 0" stiffness="300"/> -->
+            <!-- <joint armature="0.02" axis="0 1 0" damping="30" name="SRL_joint_left_hip_y" pos="0 0 0" range="-5 70" stiffness="300"/> -->
+            <body name="SRL_left_leg2" pos="0.01 0 0" quat="0.92388 0.0 0.38268 0.0">
+              <!-- geom density="10" fromto="0 0 0 0.01 0 0" name="SRL_geom_left_leg2" size="0.01" type="capsule"/-->
+              <!-- <joint armature="0.02" axis="0 1 0" damping="30" name="SRL_joint_left_kneejoint" pos="0 0 0" range="-50 50" stiffness="300"/> -->
+              <body name="SRL_left_end" pos="0.01 0 0" quat="0.70711 0.0 -0.70711 0.0">
+                <!--geom density="10" friction="5.0 0.05 0.05" name="SRL_geom_left_end" pos="0 0 -0.045" size="0.01" type="sphere"/-->
+                <!-- <joint armature="0.02" axis="0 1 0" damping="30" name="SRL_joint_left_ankle" pos="0 0 0" range="-5 5" stiffness="300"/> -->
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+      <geom type="mesh" mesh="Pelvis_mesh" class="smpl_visual" name="smpl_Pelvis" contype="0" conaffinity="0" mass="0" density="0" group="2" pos="0.00 0.00023297203 -0.00764215573" />
+      <geom type="mesh" mesh="Torso_mesh" class="smpl_visual" euler="0 10 0" pos="-0.040 0.00176764403 0.117696363" name="smpl_Torso" contype="0" conaffinity="0" mass="0" density="0" group="2" />
+      <geom type="mesh" mesh="Spine_mesh" class="smpl_visual" euler="0 10 0" pos="0.015 0.0086737271 0.247859735" name="smpl_Spine" contype="0" conaffinity="0" mass="0" density="0" group="2" />
+    </body>
+  </worldbody>
+  <actuator>
+    <motor name="abdomen_x" gear="125" joint="abdomen_x" />
+    <motor name="abdomen_y" gear="125" joint="abdomen_y" />
+    <motor name="abdomen_z" gear="125" joint="abdomen_z" />
+    <motor name="neck_x" gear="20" joint="neck_x" />
+    <motor name="neck_y" gear="20" joint="neck_y" />
+    <motor name="neck_z" gear="20" joint="neck_z" />
+    <motor name="right_shoulder_x" gear="70" joint="right_shoulder_x" />
+    <motor name="right_shoulder_y" gear="70" joint="right_shoulder_y" />
+    <motor name="right_shoulder_z" gear="70" joint="right_shoulder_z" />
+    <motor name="right_elbow" gear="60" joint="right_elbow" />
+    <motor name="left_shoulder_x" gear="70" joint="left_shoulder_x" />
+    <motor name="left_shoulder_y" gear="70" joint="left_shoulder_y" />
+    <motor name="left_shoulder_z" gear="70" joint="left_shoulder_z" />
+    <motor name="left_elbow" gear="60" joint="left_elbow" />
+    <motor name="right_hip_x" gear="125" joint="right_hip_x" />
+    <motor name="right_hip_z" gear="125" joint="right_hip_z" />
+    <motor name="right_hip_y" gear="125" joint="right_hip_y" />
+    <motor name="right_knee" gear="200" joint="right_knee" />
+    <motor name="right_ankle_x" gear="50" joint="right_ankle_x" />
+    <motor name="right_ankle_y" gear="50" joint="right_ankle_y" />
+    <motor name="right_ankle_z" gear="50" joint="right_ankle_z" />
+    <motor name="left_hip_x" gear="125" joint="left_hip_x" />
+    <motor name="left_hip_z" gear="125" joint="left_hip_z" />
+    <motor name="left_hip_y" gear="125" joint="left_hip_y" />
+    <motor name="left_knee" gear="200" joint="left_knee" />
+    <motor name="left_ankle_x" gear="50" joint="left_ankle_x" />
+    <motor name="left_ankle_y" gear="50" joint="left_ankle_y" />
+    <motor name="left_ankle_z" gear="50" joint="left_ankle_z" />
+  </actuator>
+  <sensor>
+    <subtreelinvel name="pelvis_subtreelinvel" body="pelvis" />
+    <accelerometer name="root_accel" site="root" />
+    <velocimeter name="root_vel" site="root" />
+    <gyro name="root_gyro" site="root" />
+    <force name="left_ankle_force" site="left_ankle" />
+    <force name="right_ankle_force" site="right_ankle" />
+    <force name="left_knee_force" site="left_knee" />
+    <force name="right_knee_force" site="right_knee" />
+    <force name="left_hip_force" site="left_hip" />
+    <force name="right_hip_force" site="right_hip" />
+    <torque name="left_ankle_torque" site="left_ankle" />
+    <torque name="right_ankle_torque" site="right_ankle" />
+    <torque name="left_knee_torque" site="left_knee" />
+    <torque name="right_knee_torque" site="right_knee" />
+    <torque name="left_hip_torque" site="left_hip" />
+    <torque name="right_hip_torque" site="right_hip" />
+    <touch name="pelvis_touch" site="pelvis" />
+    <touch name="upper_waist_touch" site="upper_waist" />
+    <touch name="torso_touch" site="torso" />
+    <touch name="head_touch" site="head" />
+    <touch name="right_upper_arm_touch" site="right_upper_arm" />
+    <touch name="right_lower_arm_touch" site="right_lower_arm" />
+    <touch name="right_hand_touch" site="right_hand" />
+    <touch name="left_upper_arm_touch" site="left_upper_arm" />
+    <touch name="left_lower_arm_touch" site="left_lower_arm" />
+    <touch name="left_hand_touch" site="left_hand" />
+    <touch name="right_thigh_touch" site="right_thigh" />
+    <touch name="right_shin_touch" site="right_shin" />
+    <touch name="right_foot_touch" site="right_foot" />
+    <touch name="left_thigh_touch" site="left_thigh" />
+    <touch name="left_shin_touch" site="left_shin" />
+    <touch name="left_foot_touch" site="left_foot" />
+  </sensor>
+</mujoco>
