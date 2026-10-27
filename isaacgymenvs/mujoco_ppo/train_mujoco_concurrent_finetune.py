@@ -24,6 +24,8 @@ from mujoco_ppo.srl_mujoco_concurrent_env import (
 )
 from mujoco_ppo.srl_mujoco_v2_env import quat_to_euler_xyz
 from mujoco_ppo.observation_delay import DEFAULT_COMMON_MS_QUANTILES, DEFAULT_SKEW_MS_QUANTILES
+from mujoco_ppo.concurrent_vector_env import ConcurrentVectorEnv
+from mujoco_ppo.concurrent_training_curriculum import TASKS, TrainingBestTracker, allocate_tasks
 
 
 PRIVILEGED_MIRROR_SIGNS = np.array([1.0, 1.0, -1.0, 1.0], dtype=np.float32)
@@ -52,6 +54,19 @@ class ConcurrentPPOConfig(v2_train.V2PPOConfig):
     mixed_task_enable: bool = False
     mixed_task_inplace_fraction: float = 0.5
     mixed_task_action_scale: float = 0.5
+    mixed_task_stage3_initial_pose_randomization_enable: bool | None = None
+    three_task_enable: bool = False
+    three_task_fractions: Tuple[float, float, float] = (0.30, 0.35, 0.35)
+    unsupported_inplace_target_height: float = 1.0
+    unsupported_inplace_initial_height_range: Tuple[float, float] = (0.93, 1.05)
+    env_workers: int = 0
+    env_worker_threads: int = 1
+    env_worker_timeout: float = 120.0
+    best_training_window: int = 30
+    best_training_min_episodes: int = 10
+    best_training_max_age_updates: int = 100
+    three_task_gate_min_success: float = 0.8
+    three_task_gate_min_length: float = 4500.0
     initial_pose_randomization_enable: bool = False
     initial_pose_root_height_range: Tuple[float, float] = (0.85, 1.14)
     initial_pose_ground_clearance: float = 0.005
@@ -397,6 +412,10 @@ def make_env(cfg, *, evaluation=False):
 
 def _training_task_labels(cfg):
     count = int(cfg.num_envs)
+    if cfg.three_task_enable:
+        if not cfg.mixed_task_enable:
+            raise ValueError("three_task_enable requires mixed_task_enable=True")
+        return allocate_tasks(count, cfg.three_task_fractions)
     if not cfg.mixed_task_enable:
         return ("single",) * max(count, 1)
     fraction = float(cfg.mixed_task_inplace_fraction)
@@ -415,10 +434,28 @@ def _training_task_labels(cfg):
 
 
 def _task_config(cfg, task):
+    if task == "supported_startup":
+        result = _task_config(cfg, "inplace")
+        result.three_task_enable = False
+        result.inplace_startup_task_enable = True
+        result.startup_support_enable = True
+        result.initial_pose_randomization_enable = True
+        result.inplace_startup_scenario_probabilities = (0.0, 1.0, 0.0)
+        return result
+    if task == "unsupported_inplace":
+        result = _task_config(cfg, "stage3")
+        result.three_task_enable = False
+        result.task_training_stage = 0
+        result.target_vel_x = result.target_ang_vel_z = 0.0
+        result.target_height = float(cfg.unsupported_inplace_target_height)
+        result.initial_pose_randomization_enable = True
+        result.initial_pose_root_height_range = tuple(cfg.unsupported_inplace_initial_height_range)
+        return result
     if task not in ("inplace", "stage3"):
         raise ValueError(f"Unknown mixed task: {task}")
     result = copy.deepcopy(cfg)
     result.mixed_task_enable = False
+    result.three_task_enable = False
     result.action_scale = float(cfg.mixed_task_action_scale)
     result.inplace_action_scale_range = (
         validate_episode_action_scale_range(cfg.episode_action_scale_range)
@@ -426,6 +463,10 @@ def _task_config(cfg, task):
     )
     if task == "stage3":
         result.inplace_startup_task_enable = False
+        if cfg.mixed_task_stage3_initial_pose_randomization_enable is not None:
+            result.initial_pose_randomization_enable = bool(
+                cfg.mixed_task_stage3_initial_pose_randomization_enable
+            )
         result.task_training_stage = 3
         result.target_vel_x = 1.0
         result.target_ang_vel_z = 0.0
@@ -481,6 +522,11 @@ def _compose(policy, deployable_np, mirrored_np, history_np, target_np, modes_np
     history = numpy_to_torch_obs(history_np, device=device)
     target = numpy_to_torch_obs(target_np, device=device)
     modes = torch.as_tensor(modes_np, dtype=torch.bool, device=device)
+    if hasattr(policy, "compose_mirrored_actor_obs"):
+        actor_obs, mirrored, estimate = policy.compose_mirrored_actor_obs(
+            deployable, numpy_to_torch_obs(mirrored_np, device=device), history, target, modes,
+        )
+        return actor_obs, mirrored, history, target, estimate
     actor_obs, estimate = policy.compose_actor_obs(
         deployable, history, target, modes
     )
@@ -496,12 +542,12 @@ def _critic_value(policy, critic_np, device, normalize_value):
     return v3_train.critic_value(policy, critic_np, device, normalize_value)
 
 
-def _save(policy, optimizers, cfg, update, save_dir, bootstrap_index, name=None):
+def _save(policy, optimizers, cfg, update, save_dir, bootstrap_index, name=None, selection=None):
     os.makedirs(save_dir, exist_ok=True)
     path = os.path.join(
         save_dir, name or f"mujoco_concurrent_update_{update:05d}.pt"
     )
-    torch.save({
+    payload = {
         "update": int(update),
         "model_state_dict": policy.state_dict(),
         "concurrent_estimator": policy.estimator.state_dict(),
@@ -509,9 +555,16 @@ def _save(policy, optimizers, cfg, update, save_dir, bootstrap_index, name=None)
         "optimizer_state_dict": {key: value.state_dict() for key, value in optimizers.items()},
         "concurrent_bootstrap_state": {"level_index": int(bootstrap_index)},
         "config": asdict(cfg),
-        "actor_obs_dim": 137,
+        "actor_obs_dim": policy.cfg.actor_obs_dim,
         "critic_obs_dim": 153,
-    }, path)
+        "checkpoint_selection": selection,
+    }
+    if hasattr(policy, "latent_checkpoint_payload"):
+        payload.pop("concurrent_estimator")
+        payload.pop("concurrent_estimator_config")
+        payload.update(policy.latent_checkpoint_payload())
+        path = os.path.join(save_dir, os.path.basename(path).replace("mujoco_concurrent_", "mujoco_latent_"))
+    torch.save(payload, path)
     return path
 
 
@@ -685,6 +738,16 @@ def evaluate_policy_condition(policy, cfg, dr_progress, use_estimate, seeds=None
 
 
 def run_evaluation_suite(policy, cfg, current_dr_progress, seeds=None, _label_prefix=""):
+    if cfg.three_task_enable:
+        suite = {}
+        for task in TASKS:
+            suite[f"{task}/est"] = evaluate_policy_condition(
+                policy, _task_config(cfg, task), current_dr_progress, True,
+                seeds=seeds, support_mode=("unload_to_zero" if task == "supported_startup" else "none"),
+            )
+            result = suite[f"{task}/est"]
+            print(f"[DR eval {task}/est] len={result['length']:.0f} success={result['success']:.2f}")
+        return suite
     if cfg.mixed_task_enable:
         _training_task_labels(cfg)
         suite = run_evaluation_suite(
@@ -892,6 +955,8 @@ def _set_residual_support_probability(env, probability):
 
 
 def _dr_gate_condition(cfg):
+    if cfg.three_task_enable:
+        return "supported_startup"
     mode = cfg.dr_curriculum_support_mode
     if mode == "none":
         return "current_dr"
@@ -906,6 +971,12 @@ def _dr_gate_condition(cfg):
 
 
 def _dr_promotion_passes(cfg, suite):
+    if cfg.three_task_enable:
+        return all(
+            suite[f"{task}/est"]["success"] >= cfg.three_task_gate_min_success
+            and suite[f"{task}/est"]["length"] >= cfg.three_task_gate_min_length
+            for task in TASKS
+        )
     return all(
         suite[f"{condition}/gt"]["success"] >= cfg.dr_curriculum_gt_min_success
         and suite[f"{condition}/est"]["success"] >= cfg.dr_curriculum_est_min_success
@@ -916,6 +987,8 @@ def _dr_promotion_passes(cfg, suite):
 
 
 def _dr_gate_conditions(cfg):
+    if cfg.three_task_enable:
+        return TASKS
     conditions = (_dr_gate_condition(cfg),)
     if cfg.mixed_task_enable:
         _training_task_labels(cfg)
@@ -979,19 +1052,74 @@ def _adaptive_actor_learning_rate(cfg, current_lr, kl):
     return float(np.clip(learning_rate, min_lr, max_lr))
 
 
-def train(cfg):
+def _evaluation_due(cfg, update, level_index, level_start):
+    if not cfg.eval_during_training or update % cfg.eval_every_updates:
+        return False
+    if not cfg.three_task_enable:
+        return True
+    return (
+        cfg.domain_randomization_enable and cfg.dr_curriculum_enable
+        and level_index < len(cfg.dr_curriculum_levels) - 1
+        and update >= cfg.dr_curriculum_start_update
+        and update - level_start >= cfg.dr_curriculum_min_updates_per_level
+    )
+
+
+def _legacy_evaluation_scores(cfg, suite):
+    full_est = suite["full_dr/est"]
+    supported_est = suite.get("full_dr_support/est", full_est)
+    support_zero_est = suite.get("full_dr_support_zero/est", supported_est)
+    conditions = (full_est, supported_est, support_zero_est)
+    if cfg.mixed_task_enable:
+        conditions += (suite["stage3_full_dr/est"],)
+    stability = (
+        min(r["success"] for r in conditions) * 1e6
+        + min(r["length"] for r in conditions) * 100
+        + float(np.mean([r["return"] for r in conditions]))
+    )
+    eligible = all(r["success"] >= cfg.best_gait_min_success
+                   and r["length"] >= cfg.best_gait_min_length for r in conditions)
+    gait_conditions = (full_est, suite["stage3_full_dr/est"]) if cfg.mixed_task_enable else (full_est,)
+    return stability, eligible, float(np.mean([_gait_score(r) for r in gait_conditions]))
+
+
+def train(cfg, backend=None):
+    if backend is not None:
+        backend.validate(cfg)
+    if cfg.three_task_enable:
+        if not 0 <= cfg.three_task_gate_min_success <= 1 or cfg.three_task_gate_min_length <= 0:
+            raise ValueError("Invalid three-task promotion thresholds")
+        if cfg.domain_randomization_enable and not cfg.dr_curriculum_enable:
+            raise ValueError("Three-task DR training requires discrete dr_curriculum_enable=True")
+    if cfg.eval_every_updates < 1 or cfg.save_every < 1:
+        raise ValueError("Evaluation and save intervals must be positive")
+    np.random.seed(cfg.seed)
+    torch.manual_seed(cfg.seed)
+    labels = _training_task_labels(cfg)
+    configs = [make_env_config(cfg if task == "single" else _task_config(cfg, task)) for task in labels]
+    with ConcurrentVectorEnv(
+        configs, cfg.estimator_history_len, cfg.env_workers,
+        cfg.env_worker_threads, cfg.env_worker_timeout,
+    ) as batch:
+        return _train(cfg, batch, labels, backend=backend)
+
+
+def _train(cfg, env_batch, task_labels, backend=None):
     gate_condition = _dr_gate_condition(cfg)
     gate_conditions = _dr_gate_conditions(cfg)
     gate_description = " + ".join(gate_conditions)
-    print(f"DR promotion evaluation: {gate_description} (GT and EST)")
-    np.random.seed(cfg.seed)
-    torch.manual_seed(cfg.seed)
+    print(f"DR promotion evaluation: {gate_description} " + ("(EST only)" if cfg.three_task_enable else "(GT and EST)"))
     device = torch.device(cfg.device)
     if not 0.0 <= float(cfg.cvar_fraction) <= 1.0:
         raise ValueError("cvar_fraction must be in [0, 1]")
     if float(cfg.cvar_weight) < 1.0 or float(cfg.failure_weight) < 1.0:
         raise ValueError("cvar_weight and failure_weight must be >= 1")
-    envs, task_labels = _make_training_envs(cfg)
+    envs = env_batch.envs
+    # Episode-mode sampling must not consume a serial mixed environment's physics RNG.
+    mode_rng = (np.random.default_rng(np.random.SeedSequence([cfg.seed, 0x4D4F4445]))
+                if cfg.mixed_task_enable or cfg.three_task_enable or cfg.env_workers else None)
+    print(f"Environment sampling: workers={env_batch.workers} environments={len(envs)}")
+    print(f"Control backend: {cfg.control_backend}")
     if cfg.mixed_task_enable:
         scale_description = (
             f"fixed_action_scale={cfg.mixed_task_action_scale:g}"
@@ -999,8 +1127,7 @@ def train(cfg):
             f"episode_action_scale_range={cfg.episode_action_scale_range}"
         )
         print(
-            f"Mixed tasks: inplace={task_labels.count('inplace')} "
-            f"stage3={task_labels.count('stage3')} "
+            "Mixed tasks: " + " ".join(f"{task}={task_labels.count(task)}" for task in dict.fromkeys(task_labels)) + " "
             f"{scale_description}"
         )
     print(f"Joint velocity observation scale: {envs[0].cfg.dof_vel_obs_scale:g}")
@@ -1013,14 +1140,15 @@ def train(cfg):
         print(f"Observation delay: enabled={cfg.observation_delay_enable} mode=independent "
               f"IMU_ms={cfg.imu_observation_delay_ms_range} "
               f"joint_ms={cfg.joint_observation_delay_ms_range} (per episode)")
-    motor_damping = envs[0].model.dof_damping[envs[0].srl_dof_indices]
+    motor_damping = env_batch.metadata[0]["motor_damping"]
     print(
         "Motor passive damping: {} ({})".format(
             np.array2string(motor_damping, precision=6),
             "preserved from XML" if cfg.preserve_xml_damping else "uniform override",
         )
     )
-    policy, metadata = make_policy(cfg, envs[0])
+    policy, metadata = (make_policy(cfg, envs[0]) if backend is None
+                        else backend.make_policy(cfg, envs[0]))
     print("Loaded checkpoint:", metadata)
     if cfg.sensor_uniform_noise_enable:
         print(
@@ -1031,7 +1159,8 @@ def train(cfg):
             f"joint_velocity=+/-{cfg.sensor_noise_dof_vel_max:g} rad/s; "
             "amplitudes follow DR progress"
         )
-    print("Concurrent layout: estimator 10x26 -> 256 -> 128 -> 64 -> 4; actor 137 -> 512 -> 256 -> 128 -> 6; critic 153 -> 512 -> 256 -> 128 -> 1")
+    print("Concurrent layout: estimator 10x26 -> 256 -> 128 -> 64 -> 4; actor 137 -> 512 -> 256 -> 128 -> 6; critic 153 -> 512 -> 256 -> 128 -> 1"
+          if backend is None else backend.layout(policy, cfg))
     if cfg.init_log_std is not None:
         policy.log_std.data.fill_(float(cfg.init_log_std))
 
@@ -1042,6 +1171,8 @@ def train(cfg):
         "critic": torch.optim.Adam(critic_params, lr=cfg.critic_learning_rate),
         "estimator": torch.optim.Adam(policy.estimator.parameters(), lr=cfg.estimator_learning_rate),
     }
+    if backend is not None:
+        backend.setup(policy, cfg, optimizers)
     # Validate the schedule before the first expensive rollout.
     _adaptive_actor_learning_rate(
         cfg, optimizers["actor"].param_groups[0]["lr"],
@@ -1098,13 +1229,13 @@ def train(cfg):
     if cfg.startup_support_curriculum_ramp_updates < 0:
         raise ValueError("startup_support_curriculum_ramp_updates must be >= 0")
 
-    infos = []
     support_probability = _startup_support_probability(cfg, 0)
-    for index, env in enumerate(envs):
-        env.set_dr_progress(progress)
+    env_batch.set_dr_progress(progress)
+    for env in envs:
         _set_residual_support_probability(env, support_probability)
-        _, info = env.reset(seed=cfg.seed + index * 100003)
-        infos.append(info)
+    env_batch.sync_configs()
+    resets = env_batch.reset(seeds=[cfg.seed + i * 100003 for i in range(len(envs))])
+    infos = [resets[i][1] for i in range(len(envs))]
     episode_returns = np.zeros(len(envs))
     episode_lengths = np.zeros(len(envs), dtype=np.int64)
     max_bootstrap_probability = (
@@ -1117,27 +1248,32 @@ def train(cfg):
     minimum_ground_truth_envs = _actor_minimum_ground_truth_envs(cfg)
     if cfg.bootstrap_fixed_env_quota:
         modes = _initial_episode_modes(
-            len(envs), target_estimator_fraction, envs[0].rng,
+            len(envs), target_estimator_fraction, mode_rng if mode_rng is not None else envs[0].rng,
             minimum_ground_truth_envs,
         )
     else:
         modes = np.asarray(
-            [env.rng.random() < target_estimator_fraction for env in envs],
+            [(mode_rng if mode_rng is not None else env.rng).random() < target_estimator_fraction for env in envs],
             dtype=bool,
         )
     window = int(cfg.bootstrap_metric_window)
     gt_lengths, est_lengths = deque(maxlen=window), deque(maxlen=window)
     gt_returns, est_returns = deque(maxlen=window), deque(maxlen=window)
     task_episode_windows = {
-        task: deque(maxlen=window) for task in ("inplace", "stage3")
+        task: deque(maxlen=window) for task in dict.fromkeys(task_labels)
     } if cfg.mixed_task_enable else {}
-    run_name = f"mujoco_concurrent_{time.strftime('%m%d_%H%M%S')}"
+    run_name = f"{getattr(policy, 'checkpoint_prefix', 'mujoco_concurrent')}_{time.strftime('%m%d_%H%M%S')}"
     save_dir = os.path.join(cfg.save_dir, run_name)
     os.makedirs(save_dir, exist_ok=True)
     print(f"Saving checkpoints to: {save_dir}")
     wandb_run = v2_train.base_train.init_wandb(cfg, run_name)
     best_stability = -float("inf")
     best_gait = -float("inf")
+    best_training = {}
+    training_tracker = TrainingBestTracker(
+        cfg.best_training_window, cfg.best_training_min_episodes, cfg.best_training_max_age_updates,
+    ) if cfg.three_task_enable else None
+    last_progress = float(progress)
     training_history_path = os.path.join(save_dir, cfg.training_history_filename)
     evaluation_history_path = os.path.join(save_dir, cfg.evaluation_history_filename)
     wobble_targets = {
@@ -1154,6 +1290,7 @@ def train(cfg):
     foot_impact_penalty_target = float(cfg.foot_impact_penalty_scale)
 
     for update in range(1, cfg.total_updates + 1):
+        update_started = time.perf_counter()
         if cfg.domain_randomization_enable and cfg.dr_curriculum_enable:
             progress = dr_levels[dr_level_index]
         elif cfg.domain_randomization_enable:
@@ -1185,8 +1322,13 @@ def train(cfg):
                 (update - cfg.lateral_penalty_warmup_updates)
                 / max(cfg.lateral_penalty_ramp_updates, 1), 0.0, 1.0
             ))
+        if cfg.three_task_enable and not np.isclose(last_progress, progress):
+            training_tracker.reset()
+            for episodes in task_episode_windows.values():
+                episodes.clear()
+        last_progress = float(progress)
+        env_batch.set_dr_progress(float(progress))
         for env in envs:
-            env.set_dr_progress(float(progress))
             _set_residual_support_probability(env, support_probability)
             env.cfg.horizontal_force_perturbation_prob = (
                 horizontal_force_probability_target * horizontal_force_progress
@@ -1237,9 +1379,13 @@ def train(cfg):
                     - cfg.lateral_initial_hip_x_velocity_penalty_scale
                 )
             )
+        env_batch.sync_configs()
+        rollout_started = time.perf_counter()
+        environment_seconds = 0.0
         deployable, mirrored_np, history_np, target_np, critic_np = _arrays_from_infos(infos)
-        buffer = ConcurrentRolloutBuffer(
-            cfg.rollout_steps, len(envs), 137, 153, 6,
+        buffer_class = ConcurrentRolloutBuffer if backend is None else backend.buffer_class
+        buffer = buffer_class(
+            cfg.rollout_steps, len(envs), policy.cfg.actor_obs_dim, 153, 6,
             cfg.estimator_history_len, device,
         )
         rollout_rewards = []
@@ -1275,7 +1421,10 @@ def train(cfg):
                 actions, logprobs, values = policy.act(actor_obs, critic, cfg.action_clip)
                 if cfg.normalize_value:
                     values = policy.value_norm.denormalize(values)
-            results = [env.step(actions[i].cpu().numpy()) for i, env in enumerate(envs)]
+            action_values = actions.detach().cpu().numpy()
+            step_started = time.perf_counter()
+            results = env_batch.step(action_values)
+            environment_seconds += time.perf_counter() - step_started
             rewards = np.asarray([item[1] for item in results], dtype=np.float32)
             terminated = np.asarray([item[2] for item in results], dtype=np.float32)
             truncated = np.asarray([item[3] for item in results], dtype=np.float32)
@@ -1325,9 +1474,8 @@ def train(cfg):
                         float(info[f"tracking_{axis}_error"])
                     )
             base_roll.extend(
-                float(quat_to_euler_xyz(env.data.qpos[3:7])[2]) for env in envs
+                float(info.get("roll", 0.0)) for info in next_infos
             )
-            action_values = actions.detach().cpu().numpy()
             hip_x_action_saturated.extend(
                 (np.abs(action_values[:, (0, 3)]) > 0.95).reshape(-1).tolist()
             )
@@ -1371,6 +1519,8 @@ def train(cfg):
                 )
             next_arrays = _arrays_from_infos(next_infos)
             next_values = _critic_value(policy, next_arrays[4], device, cfg.normalize_value)
+            if backend is not None:
+                backend.record_transition(buffer, modes, next_infos, terminated, truncated)
             buffer.add_concurrent(
                 history, target, actor_obs, mirrored_obs, critic, actions, logprobs,
                 torch.as_tensor(rewards * cfg.reward_scale, device=device),
@@ -1395,29 +1545,52 @@ def train(cfg):
                         "return": float(episode_returns[index]),
                         "success": bool(truncated[index] and not terminated[index]),
                     })
-                _, next_infos[index] = env.reset()
+                if training_tracker is not None:
+                    training_tracker.add(
+                        task_labels[index], update, int(episode_lengths[index]),
+                        float(episode_returns[index]), bool(truncated[index] and not terminated[index]),
+                        estimated=bool(modes[index]),
+                    )
                 reset_indices.append(index)
                 episode_returns[index] = 0.0
                 episode_lengths[index] = 0
+            for index, (_, reset_info) in env_batch.reset(reset_indices).items():
+                next_infos[index] = reset_info
             if cfg.bootstrap_fixed_env_quota:
                 _rebalance_episode_modes(
                     modes, reset_indices, target_estimator_fraction,
-                    envs[0].rng, minimum_ground_truth_envs,
+                    mode_rng if mode_rng is not None else envs[0].rng, minimum_ground_truth_envs,
                 )
             else:
                 for index in reset_indices:
                     modes[index] = (
-                        envs[index].rng.random() < target_estimator_fraction
+                        (mode_rng if mode_rng is not None else envs[index].rng).random() < target_estimator_fraction
                     )
             infos = next_infos
             deployable, mirrored_np, history_np, target_np, critic_np = _arrays_from_infos(infos)
 
+        rollout_seconds = time.perf_counter() - rollout_started
+        candidate = training_tracker.candidate(update, cfg.training_episode_steps) if training_tracker else None
+        # Rank and save the actual sampling weights before auxiliary/PPO updates.
+        if candidate is not None:
+            score, statistics = candidate
+            key = round(float(progress), 8)
+            if key not in best_training or score > best_training[key]:
+                best_training[key] = score
+                selection = {"source": "rolling_training_estimated", "dr_progress": key,
+                             "score": score, "tasks": statistics, "sampling_update": update,
+                             "weights": "before auxiliary/PPO update; rolling episodes may span older policies"}
+                for name in ("mujoco_concurrent_best_train.pt", f"mujoco_concurrent_best_dr{int(round(key * 100)):03d}.pt"):
+                    _save(policy, optimizers, cfg, update, save_dir, level_index, name, selection)
+                print(f"[training best] update={update} dr={key:.2f} score={score}")
+        optimization_started = time.perf_counter()
         flat_history = buffer.estimator_history.reshape(-1, cfg.estimator_history_len, 26)
         flat_target = buffer.estimator_target.reshape(-1, 4)
-        policy.estimator.update_normalization(flat_history, flat_target)
+        if backend is None:
+            policy.estimator.update_normalization(flat_history, flat_target)
         indices = torch.arange(flat_history.shape[0], device=device)
         estimator_losses = []
-        for _ in range(cfg.estimator_update_epochs):
+        for _ in range(cfg.estimator_update_epochs if backend is None else 0):
             indices = indices[torch.randperm(indices.numel(), device=device)]
             for start in range(0, indices.numel(), cfg.estimator_minibatch_size):
                 selected = indices[start:start + cfg.estimator_minibatch_size]
@@ -1427,7 +1600,8 @@ def train(cfg):
                 torch.nn.utils.clip_grad_norm_(policy.estimator.parameters(), cfg.max_grad_norm)
                 optimizers["estimator"].step()
                 estimator_losses.append(float(loss.detach()))
-        estimator_mse = float(np.mean(estimator_losses))
+        estimator_mse = (float(np.mean(estimator_losses)) if backend is None
+                         else backend.before_ppo(policy, buffer, cfg, optimizers))
 
         buffer.compute_returns(cfg.gamma, cfg.gae_lambda)
         sample_weights, difficulty_stats = _rollout_difficulty_weights(
@@ -1451,7 +1625,12 @@ def train(cfg):
                 (
                     b_actor, b_mirror, b_critic, b_actions, old_logp,
                     adv, returns, old_values, batch_weights,
-                ) = batch
+                ) = batch[:9]
+                latent_context = None
+                if backend is not None:
+                    b_actor, b_mirror, latent_context = backend.prepare_minibatch(
+                        policy, reference, batch, cfg,
+                    )
                 dist = policy.dist(policy.normalize_actor_obs(b_actor), cfg.action_clip)
                 new_logp = dist.log_prob(b_actions).sum(-1)
                 ratio = (new_logp - old_logp).exp()
@@ -1473,17 +1652,23 @@ def train(cfg):
                 bounds = (torch.clamp(mean - cfg.action_clip, min=0).square() +
                           torch.clamp(-cfg.action_clip - mean, min=0).square()).sum(-1).mean()
                 with torch.no_grad():
-                    ref_mean = reference.actor(reference.normalize_actor_obs(b_actor))
+                    ref_obs = b_actor if latent_context is None else latent_context["reference_obs"]
+                    ref_mean = reference.actor(reference.normalize_actor_obs(ref_obs))
                 ref_loss = (mean - ref_mean).square().mean()
                 mirror_mean = policy.actor(policy.normalize_actor_obs(b_mirror))
                 mirror_mean = SRLMujocoConcurrentEnv.mirror_actions(mirror_mean)
                 sym_loss = (mean - mirror_mean).square().mean()
                 entropy = dist.entropy().sum(-1).mean()
-                if actor_enabled:
-                    actor_loss = (pg - cfg.ent_coef * entropy +
+                actor_loss = (pg - cfg.ent_coef * entropy +
                                   cfg.reference_policy_coef * ref_loss +
                                   cfg.actor_sym_loss_coef * sym_loss +
                                   cfg.bounds_loss_coef * bounds)
+                if backend is not None:
+                    backend.step_minibatch(
+                        policy, cfg, optimizers, actor_params, actor_loss,
+                        actor_enabled, latent_context, ppo_loss=pg,
+                    )
+                elif actor_enabled:
                     optimizers["actor"].zero_grad(set_to_none=True)
                     actor_loss.backward()
                     torch.nn.utils.clip_grad_norm_(actor_params, cfg.max_grad_norm)
@@ -1522,6 +1707,8 @@ def train(cfg):
             if cfg.target_kl is not None and epoch_kl > cfg.target_kl:
                 break
 
+        if backend is not None:
+            backend.after_ppo(policy, cfg)
         update_kl = float(np.mean(losses["kl"]))
         if actor_enabled:
             next_actor_lr = _adaptive_actor_learning_rate(
@@ -1650,6 +1837,22 @@ def train(cfg):
             f"reward_weighted/{name}": float(np.mean(values))
             for name, values in rollout_reward_components.items()
         })
+        metrics.update({
+            "time/rollout_seconds": rollout_seconds,
+            "time/environment_step_seconds": environment_seconds,
+            "time/optimization_seconds": time.perf_counter() - optimization_started,
+            "time/update_before_evaluation_seconds": time.perf_counter() - update_started,
+            "sampling/env_steps_per_second": cfg.rollout_steps * len(envs) / max(rollout_seconds, 1e-9),
+            "sampling/workers": env_batch.workers,
+            "checkpoint/training_candidate_ready": int(candidate is not None),
+        })
+        if candidate is not None:
+            score, statistics = candidate
+            for name, value in zip(("min_task_success", "mean_task_success", "min_normalized_length", "mean_reward_per_step"), score):
+                metrics[f"checkpoint/{name}"] = value
+            for task, statistics_for_task in statistics.items():
+                for name, value in statistics_for_task.items():
+                    metrics[f"checkpoint/{task}/{name}"] = value
         for axis, values in rollout_tracking_errors.items():
             metrics[f"tracking/{axis}_error_mean"] = float(np.mean(values))
             metrics[f"tracking/{axis}_abs_error_mean"] = float(np.mean(np.abs(values)))
@@ -1699,10 +1902,13 @@ def train(cfg):
                     f"vx_err={metrics[f'{prefix}/vx_abs_error_mean']:.3f} "
                     f"height_err={metrics[f'{prefix}/height_abs_error_mean']:.3f}"
                 )
+        if backend is not None:
+            metrics.update(backend.metrics())
         v2_train.base_train.log_wandb(wandb_run, metrics, step=update)
         _append_jsonl(training_history_path, {"update": update, **metrics})
 
-        if cfg.eval_during_training and update % cfg.eval_every_updates == 0:
+        if _evaluation_due(cfg, update, dr_level_index, dr_level_start):
+            evaluation_started = time.perf_counter()
             if cfg.evaluation_suite_enable or cfg.dr_curriculum_enable or cfg.mixed_task_enable:
                 suite = run_evaluation_suite(policy, cfg, progress)
             else:
@@ -1712,50 +1918,27 @@ def train(cfg):
                 evaluation_history_path,
                 {"update": update, "dr_progress": progress,
                  "dr_gate_condition": gate_condition,
-                 "dr_gate_conditions": list(gate_conditions), "results": suite},
+                 "dr_gate_conditions": list(gate_conditions), "results": suite,
+                 "seconds": time.perf_counter() - evaluation_started},
             )
             v2_train.base_train.log_wandb(
                 wandb_run, _flatten_evaluation_suite(suite), step=update
             )
 
-            full_est = suite["full_dr/est"]
-            supported_est = suite.get("full_dr_support/est", full_est)
-            support_zero_est = suite.get(
-                "full_dr_support_zero/est", supported_est
-            )
-            stability_conditions = (full_est, supported_est, support_zero_est)
-            if cfg.mixed_task_enable:
-                stability_conditions += (suite["stage3_full_dr/est"],)
-            stability_score = (
-                min(result["success"] for result in stability_conditions) * 1e6
-                + min(result["length"] for result in stability_conditions) * 100
-                + float(np.mean([
-                    result["return"] for result in stability_conditions
-                ]))
-            )
-            if stability_score > best_stability:
-                best_stability = stability_score
-                print("Saved best full-DR estimated stability checkpoint:", _save(
-                    policy, optimizers, cfg, update, save_dir, level_index,
-                    "mujoco_concurrent_best_stability.pt"))
-                _save(
-                    policy, optimizers, cfg, update, save_dir, level_index,
-                    "mujoco_concurrent_best_eval.pt",
-                )
-
-            gait_eligible = all(
-                result["success"] >= cfg.best_gait_min_success
-                and result["length"] >= cfg.best_gait_min_length
-                for result in stability_conditions
-            )
-            gait_conditions = ((full_est, suite["stage3_full_dr/est"])
-                               if cfg.mixed_task_enable else (full_est,))
-            gait_score = float(np.mean([_gait_score(result) for result in gait_conditions]))
-            if gait_eligible and gait_score > best_gait:
-                best_gait = gait_score
-                print("Saved best full-DR estimated gait checkpoint:", _save(
-                    policy, optimizers, cfg, update, save_dir, level_index,
-                    "mujoco_concurrent_best_gait.pt"))
+            if not cfg.three_task_enable:
+                stability_score, gait_eligible, gait_score = _legacy_evaluation_scores(cfg, suite)
+                if stability_score > best_stability:
+                    best_stability = stability_score
+                    print("Saved best full-DR estimated stability checkpoint:", _save(
+                        policy, optimizers, cfg, update, save_dir, level_index,
+                        "mujoco_concurrent_best_stability.pt"))
+                    _save(policy, optimizers, cfg, update, save_dir, level_index,
+                          "mujoco_concurrent_best_eval.pt")
+                if gait_eligible and gait_score > best_gait:
+                    best_gait = gait_score
+                    print("Saved best full-DR estimated gait checkpoint:", _save(
+                        policy, optimizers, cfg, update, save_dir, level_index,
+                        "mujoco_concurrent_best_gait.pt"))
 
             if (cfg.domain_randomization_enable and cfg.dr_curriculum_enable
                     and dr_level_index < len(dr_levels) - 1):
@@ -1788,35 +1971,43 @@ def train(cfg):
                         cfg, levels, level_index, max_bootstrap_probability
                     )
                     print(f"DR promoted: {old_progress:.2f} -> {progress:.2f}")
-                    for index, env in enumerate(envs):
-                        env.set_dr_progress(progress)
-                        _, infos[index] = env.reset()
+                    env_batch.set_dr_progress(progress)
+                    resets = env_batch.reset()
+                    infos = [resets[i][1] for i in range(len(envs))]
                     episode_returns.fill(0.0)
                     episode_lengths.fill(0)
                     gt_lengths.clear(); est_lengths.clear()
                     gt_returns.clear(); est_returns.clear()
+                    if training_tracker is not None:
+                        training_tracker.reset()
+                        for episodes in task_episode_windows.values():
+                            episodes.clear()
                     if cfg.bootstrap_fixed_env_quota:
                         modes = _initial_episode_modes(
                             len(envs), target_estimator_fraction,
-                            envs[0].rng, minimum_ground_truth_envs,
+                            mode_rng if mode_rng is not None else envs[0].rng, minimum_ground_truth_envs,
                         )
                     else:
                         modes = np.asarray([
-                            env.rng.random() < target_estimator_fraction
+                            (mode_rng if mode_rng is not None else env.rng).random() < target_estimator_fraction
                             for env in envs
                         ], dtype=bool)
         if update % cfg.save_every == 0:
-            print("Saved:", _save(policy, optimizers, cfg, update, save_dir, level_index))
+            print("Saved:", _save(policy, optimizers, cfg, update, save_dir, level_index,
+                                  selection=({"source": "periodic", "dr_progress": float(progress)}
+                                             if cfg.three_task_enable else None)))
 
     print("Saved final:", _save(policy, optimizers, cfg, cfg.total_updates,
-                                save_dir, level_index, "mujoco_concurrent_final.pt"))
+                                save_dir, level_index, "mujoco_concurrent_final.pt",
+                                {"source": "final", "dr_progress": float(progress)}
+                                if cfg.three_task_enable else None))
     if wandb_run is not None:
         wandb_run.finish()
 
 
-def _load_config(path):
+def _load_config(path, config_class=ConcurrentPPOConfig):
     values = v2_train._load_yaml_defaults(path)
-    known = {field.name for field in fields(ConcurrentPPOConfig)}
+    known = {field.name for field in fields(config_class)}
     unknown = sorted(set(values) - known)
     if unknown:
         raise ValueError(f"Unknown YAML config keys: {unknown}")
@@ -1824,6 +2015,7 @@ def _load_config(path):
         "default_dof_pos", "kp", "kd", "effort_limits",
         "estimator_hidden_sizes", "bootstrap_levels", "dr_curriculum_levels",
         "initial_pose_root_height_range",
+        "three_task_fractions", "unsupported_inplace_initial_height_range",
         "inplace_startup_scenario_probabilities",
         "inplace_startup_initial_height_range",
         "inplace_startup_height_hold_time_range",
@@ -1840,11 +2032,11 @@ def _load_config(path):
     ):
         if key in values and values[key] is not None:
             values[key] = tuple(values[key])
-    return ConcurrentPPOConfig(**values)
+    return config_class(**values)
 
 
 def _apply_cli_overrides(cfg, entries):
-    known = {field.name for field in fields(ConcurrentPPOConfig)}
+    known = {field.name for field in fields(type(cfg))}
     for entry in entries or ():
         if "=" not in entry:
             raise ValueError(f"Invalid --set value {entry!r}; expected NAME=VALUE")
@@ -1871,10 +2063,31 @@ def _apply_cli_overrides(cfg, entries):
         setattr(cfg, key, value)
 
 
-def parse_args():
+def _config_from_checkpoint(path, config_class=ConcurrentPPOConfig):
+    saved = safe_torch_load(path, map_location="cpu")
+    if not isinstance(saved.get("config"), dict):
+        raise ValueError("--config-from-checkpoint requires a MuJoCo checkpoint with a saved config")
+    cfg = config_class(**saved["config"])
+    progress = (saved.get("checkpoint_selection") or {}).get("dr_progress")
+    if progress is not None and cfg.dr_curriculum_enable:
+        matches = [i for i, value in enumerate(cfg.dr_curriculum_levels) if np.isclose(value, progress)]
+        if matches:
+            cfg.dr_curriculum_initial_level = matches[0]
+    return cfg
+
+
+def parse_args(argv=None, default_config="cfg/mujoco_concurrent_finetune.yaml", *, latent_task_options=False):
     parser = argparse.ArgumentParser(description="Concurrent Actor/Estimator PPO fine-tuning in MuJoCo")
-    parser.add_argument("--config", default="cfg/mujoco_concurrent_finetune.yaml")
+    parser.add_argument("--config", default=default_config)
     parser.add_argument("--checkpoint")
+    parser.add_argument("--config-from-checkpoint", action="store_true",
+                        help="Inherit the checkpoint config instead of YAML defaults; --set still applies")
+    parser.add_argument("--three-tasks", action="store_true",
+                        help="Enable balanced tasks, per-update training best and EST-only DR gates")
+    if latent_task_options:
+        parser.add_argument("--mixed-startup-stage3", action="store_true",
+                            help="Use 50%% supported-unloading and 50%% normal stage3 environments; --set still applies")
+    parser.add_argument("--env-workers", type=int)
     parser.add_argument("--xml")
     parser.add_argument("--device")
     parser.add_argument("--updates", type=int)
@@ -1885,16 +2098,21 @@ def parse_args():
         metavar="NAME=VALUE", help="override one flattened YAML config value",
     )
     parser.add_argument("--eval-only", action="store_true")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def main():
     args = parse_args()
-    cfg = _load_config(args.config)
+    if args.config_from_checkpoint and not args.checkpoint:
+        raise ValueError("--config-from-checkpoint requires --checkpoint")
+    cfg = _config_from_checkpoint(args.checkpoint) if args.config_from_checkpoint else _load_config(args.config)
+    if args.three_tasks:
+        cfg.three_task_enable = cfg.mixed_task_enable = True
     overrides = {
         "checkpoint_path": args.checkpoint, "xml_path": args.xml,
         "device": args.device, "total_updates": args.updates,
         "num_envs": args.num_envs, "seed": args.seed,
+        "env_workers": args.env_workers,
     }
     for key, value in overrides.items():
         if value is not None:

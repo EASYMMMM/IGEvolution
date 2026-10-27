@@ -43,6 +43,21 @@ training:
   mixed_task_enable: false
   mixed_task_inplace_fraction: 0.5
   mixed_task_action_scale: 0.5
+  # Opt-in balanced workflow: supported startup / stage3 / unsupported inplace.
+  # Also selects rolling-training bests and EST-only current-DR gate evaluation.
+  three_task_enable: false
+  three_task_fractions: [0.30, 0.35, 0.35]
+  unsupported_inplace_target_height: 1.0
+  unsupported_inplace_initial_height_range: [0.93, 1.05]
+  # 0 = serial; positive = persistent spawn workers (not one worker per step).
+  env_workers: 0
+  env_worker_threads: 1
+  env_worker_timeout: 120.0
+  best_training_window: 30
+  best_training_min_episodes: 10
+  best_training_max_age_updates: 100
+  three_task_gate_min_success: 0.8
+  three_task_gate_min_length: 4500.0
   # Optional per-episode scale for both task groups; null keeps legacy behavior.
   episode_action_scale_range: null
 
