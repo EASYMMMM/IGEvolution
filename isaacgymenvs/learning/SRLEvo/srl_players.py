@@ -1024,6 +1024,9 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
         config['obs_num_humanoid'] =[self.env.get_humanoid_obs_size(),]
         config['obs_num_srl'] =  [self.env.get_srl_obs_size(),]
         config['priv_obs_num_srl'] = (self.env.get_srl_priv_obs_size(),)
+        config['actor_command_mask_size'] = getattr(
+            self.env, 'get_srl_actor_command_mask_size', lambda: 0
+        )()
         return config
 
     def _amp_debug(self, info):

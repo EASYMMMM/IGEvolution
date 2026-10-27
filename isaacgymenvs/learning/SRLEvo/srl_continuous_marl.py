@@ -105,6 +105,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             teacher_net_config['priv_obs_num_srl'] = (teacher_obs_size,)
             teacher_net_config['obs_num_srl'] = (teacher_obs_size,)
             teacher_net_config['actions_num_srl'] = teacher_action_size
+            teacher_net_config['actor_command_mask_size'] = 0
             self.model_teacher_srl = self.network.build(teacher_net_config, role='srl')
         finally:
             self.network.network_builder.params = original_builder_params
@@ -1186,6 +1187,9 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         config['obs_num_humanoid'] = (self.vec_env.env.get_humanoid_obs_size(),)
         config['obs_num_srl'] = (self.vec_env.env.get_srl_obs_size(),)
         config['priv_obs_num_srl'] = (self.vec_env.env.get_srl_priv_obs_size(),)
+        config['actor_command_mask_size'] = getattr(
+            self.vec_env.env, 'get_srl_actor_command_mask_size', lambda: 0
+        )()
 
         self.actions_num_humanoid = config['actions_num_humanoid']
         self.actions_num_srl = config['actions_num_srl']

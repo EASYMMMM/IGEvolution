@@ -112,6 +112,13 @@ class SRL_Real_HRI_Base(VecTask):
         self.srl_action_filter_order = self.cfg["env"].get("srl_action_filter_order", 2)
         self.srl_dof_num = self.srl_actions_num + self.srl_free_actions_num
         self.HMI_obs_enable = self.cfg["env"].get("HMI_obs_enable", True)
+        self.srl_hmi_control = self.cfg["env"].get("srl_hmi_control", False)
+        if self.srl_hmi_control:
+            if not self.HMI_obs_enable or self.srl_command_num != 3:
+                raise ValueError("HMI control requires HMI observations and three command slots.")
+            if 7 not in self.srl_policy_obs_ids_list:
+                raise ValueError("HMI control requires the policy heading-error slot (full index 7).")
+            self._srl_policy_yaw_id = self.srl_policy_obs_ids_list.index(7)
 
         # --- reward ---
         self.alive_reward_scale = self.cfg["env"]["alive_reward_scale"]
@@ -466,6 +473,11 @@ class SRL_Real_HRI_Base(VecTask):
     
     def get_srl_obs_size(self):
         return self.srl_policy_obs_num*self.srl_obs_frame_stack + self.srl_command_num
+
+    def get_srl_actor_command_mask_size(self):
+        # Keep command values in shared observations for both critics. Only the
+        # student's actor MLP masks these slots, after observation normalization.
+        return self.srl_command_num if self.srl_hmi_control else 0
 
     def get_srl_full_obs_size(self):
         return self.srl_full_obs_num*self.srl_obs_frame_stack + self.srl_command_num
@@ -1147,6 +1159,10 @@ class SRL_Real_HRI_Base(VecTask):
         srl_full_obs = srl_obs
         srl_policy_obs = torch.index_select(srl_full_obs, dim=1, index=self.srl_policy_obs_ids)
         srl_policy_obs_mirrored = torch.index_select(srl_obs_mirrored, dim=1, index=self.srl_policy_obs_ids)
+        if self.srl_hmi_control:
+            # index_select allocated independent policy frames: reward/reset and
+            # teacher frames retain their trajectory-based heading errors.
+            self._set_hmi_policy_heading(srl_policy_obs, srl_policy_obs_mirrored, env_ids)
         if teacher_srl_obs.shape[1] != self.teacher_srl_full_obs_num:
             raise RuntimeError(
                 f"Teacher SRL observation layout changed: expected {self.teacher_srl_full_obs_num} "
@@ -1294,6 +1310,17 @@ class SRL_Real_HRI_Base(VecTask):
             self.potentials[env_ids] = potentials
             self.prev_potentials[env_ids] = prev_potentials
         return
+
+    def _set_hmi_policy_heading(self, policy_obs, mirrored_policy_obs, env_ids=None):
+        human_rot = self._root_states[:, 3:7]
+        srl_rot = self.srl_root_states[:, 3:7]
+        if env_ids is not None:
+            human_rot = human_rot[env_ids]
+            srl_rot = srl_rot[env_ids]
+        delta = quat_to_euler_ypr(human_rot)[:, 0] - quat_to_euler_ypr(srl_rot)[:, 0]
+        heading_error = torch.atan2(torch.sin(delta), torch.cos(delta))
+        policy_obs[:, self._srl_policy_yaw_id] = heading_error
+        mirrored_policy_obs[:, self._srl_policy_yaw_id] = -heading_error
 
     def _compute_env_obs(self, env_ids=None):
         if (env_ids is None):

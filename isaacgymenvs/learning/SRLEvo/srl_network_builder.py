@@ -277,6 +277,9 @@ class SRLBuilder(network_builder.A2CBuilder):
             self.value_size = kwargs.pop('value_size', 1) # 获取价值输出的大小，默认为1
             self.num_seqs  = kwargs.pop('num_seqs', 1)
             priv_obs_shape = kwargs.pop('priv_obs_num_srl', None)
+            self.actor_command_mask_size = int(kwargs.pop('actor_command_mask_size', 0))
+            if not 0 <= self.actor_command_mask_size <= input_shape[0]:
+                raise ValueError("Invalid actor command mask size.")
 
             NetworkBuilder.BaseNetwork.__init__(self)
             self.load(params) # 载入参数设置
@@ -365,7 +368,14 @@ class SRLBuilder(network_builder.A2CBuilder):
                 priv_obs = obs
 
 
-            a_out = self.actor_mlp(obs)
+            # ModelSRLContinuous has already normalized obs. Mask only this
+            # actor copy, so old checkpoint statistics cannot restore commands
+            # and neither local nor centralized critic loses task information.
+            actor_obs = obs
+            if self.actor_command_mask_size:
+                actor_obs = obs.clone()
+                actor_obs[..., -self.actor_command_mask_size:] = 0.0
+            a_out = self.actor_mlp(actor_obs)
             c_out = self.critic_mlp(priv_obs)
                         
             value = self.value_act(self.value(c_out))

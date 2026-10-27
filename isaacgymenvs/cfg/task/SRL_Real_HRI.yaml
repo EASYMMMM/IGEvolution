@@ -74,6 +74,9 @@ env:
   srl_policy_obs_remove_ids: [0, 1, 2, 3]  # root_h and local_root_vel
   srl_obs_frame_stack: 5  
   srl_command_num: 3
+  # Stage 4: actor follows pelvis heading and receives zero command channels
+  # after normalization. Critics, teacher and rewards keep real task commands.
+  srl_hmi_control: False
   # Teacher uses the exact Real Bot V2 policy interface: (30 - 4) * 5 + 3 = 133.
   teacher_srl_full_obs_num: 30
   teacher_srl_policy_obs_remove_ids: [0, 1, 2, 3]
