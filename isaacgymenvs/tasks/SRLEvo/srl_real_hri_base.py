@@ -1564,12 +1564,11 @@ class SRL_Real_HRI_Base(VecTask):
 
         return peak_cost, thermal_cost, power_cost
 
-    def render(self):
+    def render(self, mode="rgb_array"):
         if self.viewer and self.camera_follow:
             self._update_camera()
 
-        super().render()
-        return
+        return super().render(mode=mode)
 
     def _build_upper_body_ids_tensor(self, env_ptr, actor_handle):
         # get id of upper body 

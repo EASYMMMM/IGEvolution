@@ -101,6 +101,7 @@ def launch_rlg_hydra(cfg: DictConfig):
     from isaacgymenvs.learning.SRLEvo import srl_continuous,srl_models,srl_players,srl_continuous_marl
     from isaacgymenvs.learning.SRLEvo import srl_network_builder
     from isaacgymenvs.learning.SRLEvo import srl_bot_continuous
+    from isaacgymenvs.utils.video_recording import FirstEnvFirstEpisodeRecorder
     import isaacgymenvs
 
 
@@ -110,6 +111,19 @@ def launch_rlg_hydra(cfg: DictConfig):
     # ensure checkpoints can be specified as relative paths
     if cfg.checkpoint:
         cfg.checkpoint = to_absolute_path(cfg.checkpoint)
+
+    if cfg.record_video:
+        if not cfg.test:
+            raise ValueError("record_video=True is only supported with test=True.")
+        if not cfg.checkpoint:
+            raise ValueError("record_video=True requires a checkpoint path.")
+        if cfg.headless:
+            raise ValueError(
+                "record_video=True requires headless=False because the current "
+                "Isaac Gym recorder captures the viewer."
+            )
+        if cfg.capture_video:
+            raise ValueError("Use either record_video=True or capture_video=True, not both.")
 
     cfg_dict = omegaconf_to_dict(cfg)
     print('cfg_dict:')
@@ -139,7 +153,15 @@ def launch_rlg_hydra(cfg: DictConfig):
             cfg,
             **kwargs,
         )
-        if cfg.capture_video:
+        if cfg.record_video:
+            checkpoint_stem = os.path.splitext(os.path.basename(cfg.checkpoint))[0]
+            video_path = os.path.join(
+                to_absolute_path(os.path.join('runs', 'video')),
+                checkpoint_stem + '.mp4',
+            )
+            envs.is_vector_env = True
+            envs = FirstEnvFirstEpisodeRecorder(envs, video_path)
+        elif cfg.capture_video:
             envs.is_vector_env = True
             envs = gym.wrappers.RecordVideo(
                 envs,

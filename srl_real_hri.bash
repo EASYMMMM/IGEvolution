@@ -105,5 +105,5 @@ python SRL_Evo_train.py test=True task=SRL_Real_HRI  num_envs=4 task.env.srl_max
        checkpoint=runs/SRL_Real_HRI_v2_stage3_19-20-10-40/nn/SRL_Real_HRI_v2_stage3_19-20-10-46.pth    \
        task.env.train_stage=4  task.env.enableDebugVis=True num_envs=1\
        task.env.episodeLength=4000    force_render=True task.env.cameraFollow=True  task.env.srl_free_actions_num=5  \
-       task.env.asset.assetFileName="mjcf/srl_real_hri/srl_real_hri_v1_HXYK_175_mesh.xml"
+       task.env.asset.assetFileName="mjcf/srl_real_hri/srl_real_hri_v2_HXYK_175_mesh.xml"
 

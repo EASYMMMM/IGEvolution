@@ -52,6 +52,9 @@ wandb_logcode_dir: ''
 capture_video: False
 capture_video_freq: 10
 capture_video_len: 500
+# Test-only recording of env 0's first complete episode. The output is
+# runs/video/<checkpoint_stem>.mp4.
+record_video: False
 force_render: False
 
 # disables rendering
@@ -72,4 +75,3 @@ hydra:
   output_subdir: null
   run:
     dir: .
-

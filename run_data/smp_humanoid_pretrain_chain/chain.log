@@ -1,7 +1,0 @@
-2026-10-13 20:25:18 +08 Chain monitor started; waiting for stage 1 PID 736327
-2026-10-13 20:25:54 +08 Chain monitor started; waiting for stage 1 PID 736327
-2026-10-13 21:40:27 +08 Stage 1 process exited; validating successful completion
-2026-10-13 21:40:28 +08 Stage 1 checkpoint validated: /home/joemeng/SRL/IGEvolution/isaacgymenvs/runs/Humanoid_175_Pretrain_s1_smp_13-20-08-10/nn/Humanoid_175_Pretrain_s1_smp_13-20-08-14.pth
-2026-10-13 21:40:28 +08 Starting stage2; console log: /home/joemeng/SRL/IGEvolution/run_data/smp_humanoid_pretrain_chain/stage2_console.log
-2026-10-13 21:40:29 +08 stage2 exited with code 1
-2026-10-13 21:40:30 +08 ERROR: Stage 2 training command failed
