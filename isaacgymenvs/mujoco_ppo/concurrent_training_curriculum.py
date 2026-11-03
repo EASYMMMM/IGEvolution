@@ -21,14 +21,17 @@ def allocate_tasks(count, fractions):
 
 
 class TrainingBestTracker:
-    def __init__(self, window=30, minimum=10, max_age=100):
+    def __init__(self, window=30, minimum=10, max_age=100, tasks=TASKS):
         if minimum < 1 or window < minimum or max_age < 1:
             raise ValueError("Invalid training-best window, minimum or maximum age")
         self.window, self.minimum, self.max_age = int(window), int(minimum), int(max_age)
+        self.tasks = tuple(dict.fromkeys(tasks))
+        if not self.tasks:
+            raise ValueError("Training-best requires at least one task")
         self.reset()
 
     def reset(self):
-        self.episodes = {task: deque(maxlen=self.window) for task in TASKS}
+        self.episodes = {task: deque(maxlen=self.window) for task in self.tasks}
         self.generation = 0
         self.last_checked = 0
 
@@ -56,6 +59,8 @@ class TrainingBestTracker:
                 "episodes": len(fresh),
                 "success": float(np.mean([ep["success"] for ep in fresh])),
                 "normalized_length": float(np.mean([ep["length"] / horizon for ep in fresh])),
+                "mean_length": float(np.mean([ep["length"] for ep in fresh])),
+                "mean_return": float(np.mean([ep["return"] for ep in fresh])),
                 "reward_per_step": float(np.mean([ep["return"] / ep["length"] for ep in fresh])),
                 "first_completed_update": min(ep["update"] for ep in fresh),
                 "last_completed_update": max(ep["update"] for ep in fresh),

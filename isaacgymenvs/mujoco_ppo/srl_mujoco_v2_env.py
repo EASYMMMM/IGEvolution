@@ -166,6 +166,11 @@ class V2WalkEnvConfig:
     foot_impact_penalty_scale: float = 0.0
     foot_force_threshold_bw: float = 1.8
     foot_force_penalty_power: float = 2.0
+    # A positive impact weight enables both terms; zero disables both.
+    foot_landing_velocity_penalty_scale: float = 0.1
+    foot_landing_height: float = 0.05
+    foot_landing_safe_velocity: float = 0.8
+    foot_landing_contact_threshold_bw: float = 0.02
     randomize_initial_phase: bool = True
     initial_phase: Optional[int] = None
 
@@ -230,6 +235,7 @@ class SRLMujocoV2Env:
 
     def __init__(self, config: Optional[V2WalkEnvConfig] = None):
         self.cfg = config or V2WalkEnvConfig()
+        self._validate_foot_landing_config()
         if self.cfg.control_backend not in ("position_target", "torque_pd"):
             raise ValueError(f"Unsupported control_backend: {self.cfg.control_backend}")
 
@@ -337,6 +343,8 @@ class SRLMujocoV2Env:
         self.srl_tau2_ema = 0.0
         self.last_left_foot_force_max = 0.0
         self.last_right_foot_force_max = 0.0
+        self._landing_scratch = None
+        self._reset_foot_landing_metrics()
         self._srl_thermal_gamma = float(np.exp(-self.control_dt / self.cfg.srl_thermal_tau_s))
         self._srl_peak_decay = float(np.exp(-self.control_dt / self.cfg.srl_peak_window_tau_s))
         self.target_filter = SecondOrderLowPass(
@@ -404,6 +412,7 @@ class SRLMujocoV2Env:
         self.srl_tau2_ema = 0.0
         self.last_left_foot_force_max = 0.0
         self.last_right_foot_force_max = 0.0
+        self._reset_foot_landing_metrics()
         self.target_filter.reset(self.default_dof_pos)
         self.pd_target_change_clip_mask[:] = False
         self.pd_tracking_error_clip_mask[:] = False
@@ -483,10 +492,13 @@ class SRLMujocoV2Env:
 
         left_foot_force_max = 0.0
         right_foot_force_max = 0.0
+        self._reset_foot_landing_metrics()
 
         last_control_action = control_action
         for physics_step in range(self.cfg.decimation):
             self._before_physics_step(physics_step)
+            if self._foot_landing_enabled():
+                self._sample_foot_landing_penalty()
             if self.action_delay_physics_steps > 0:
                 self.delayed_target_queue.append(self.target_pos.copy())
                 self.delayed_control_action_queue.append(control_action.copy())
@@ -514,6 +526,8 @@ class SRLMujocoV2Env:
 
         self.last_left_foot_force_max = left_foot_force_max
         self.last_right_foot_force_max = right_foot_force_max
+        self.last_foot_landing_penalty /= self.cfg.decimation
+        self.last_foot_landing_active_fraction /= 2 * self.cfg.decimation
         self.rl_step_counter += 1
         self.phase_counter = (self.phase_counter + 1) % max(int(self.cfg.gait_period), 1)
 
@@ -1286,6 +1300,86 @@ class SRLMujocoV2Env:
                 right_force += normal_force
         return left_force, right_force
 
+    def _validate_foot_landing_config(self):
+        for name in ("foot_landing_velocity_penalty_scale", "foot_landing_safe_velocity",
+                     "foot_landing_contact_threshold_bw"):
+            value = float(getattr(self.cfg, name))
+            if not np.isfinite(value) or value < 0:
+                raise ValueError(name + " must be finite and nonnegative")
+        if not np.isfinite(self.cfg.foot_landing_height) or self.cfg.foot_landing_height <= 0:
+            raise ValueError("foot_landing_height must be finite and positive")
+
+    def _foot_landing_enabled(self):
+        return (self.cfg.foot_impact_penalty_scale > 0
+                and self.cfg.foot_landing_velocity_penalty_scale > 0)
+
+    def _reset_foot_landing_metrics(self):
+        self.last_foot_landing_penalty = 0.0
+        self.last_foot_landing_active_fraction = 0.0
+        self.last_foot_landing_downward_speed_max = 0.0
+
+    def _get_landing_foot_state(self):
+        # RK4 leaves derived fields at an internal stage. Rebuild only scratch
+        # kinematics at the actual pre-step state, without changing the plant.
+        if self._landing_scratch is None:
+            self._landing_scratch = mujoco.MjData(self.model)
+            self._landing_jacobian = np.zeros((3, self.model.nv))
+        scratch = self._landing_scratch
+        scratch.qpos[:] = self.data.qpos
+        scratch.qvel[:] = self.data.qvel
+        scratch.mocap_pos[:] = self.data.mocap_pos
+        scratch.mocap_quat[:] = self.data.mocap_quat
+        mujoco.mj_kinematics(self.model, scratch)
+        mujoco.mj_comPos(self.model, scratch)
+        if self.model.geom_type[self.floor_geom_id] != mujoco.mjtGeom.mjGEOM_PLANE:
+            raise ValueError("Foot landing reward requires a plane floor")
+        normal = scratch.geom_xmat[self.floor_geom_id].reshape(3, 3)[:, 2]
+        result = []
+        for geom in (self.left_foot_geom_id, self.right_foot_geom_id):
+            rotation = scratch.geom_xmat[geom].reshape(3, 3)
+            axis = rotation.T @ normal
+            size = self.model.geom_size[geom]
+            kind = self.model.geom_type[geom]
+            if kind == mujoco.mjtGeom.mjGEOM_ELLIPSOID:
+                offset = -(size * size * axis) / np.linalg.norm(size * axis)
+            elif kind == mujoco.mjtGeom.mjGEOM_SPHERE:
+                offset = -size[0] * axis
+            elif kind == mujoco.mjtGeom.mjGEOM_BOX:
+                offset = -size * np.sign(axis)
+            elif kind == mujoco.mjtGeom.mjGEOM_CAPSULE:
+                offset = -size[0] * axis
+                offset[2] -= size[1] * np.sign(axis[2])
+            elif kind == mujoco.mjtGeom.mjGEOM_CYLINDER:
+                offset = np.zeros(3)
+                radius = np.linalg.norm(axis[:2])
+                if radius > 1e-12:
+                    offset[:2] = -size[0] * axis[:2] / radius
+                offset[2] = -size[1] * np.sign(axis[2])
+            else:
+                raise ValueError("Unsupported foot contact geometry for landing reward")
+            point = scratch.geom_xpos[geom] + rotation @ offset
+            mujoco.mj_jac(self.model, scratch, self._landing_jacobian, None,
+                          point, int(self.model.geom_bodyid[geom]))
+            height = float(normal @ (point - scratch.geom_xpos[self.floor_geom_id]))
+            velocity = float(normal @ self._landing_jacobian @ scratch.qvel)
+            result.append((height, velocity))
+        return np.asarray(result)
+
+    def _sample_foot_landing_penalty(self):
+        state = self._get_landing_foot_state()
+        previous_force_bw = np.asarray(self._get_foot_contact_forces()) / max(self.body_weight, 1e-6)
+        height_weight = np.clip(1.0 - state[:, 0] / self.cfg.foot_landing_height, 0.0, 1.0)
+        # Previous-step force distinguishes an approaching swing foot from a
+        # loaded stance foot. Use pre-collision speed, not post-impact speed.
+        approaching = ((previous_force_bw < self.cfg.foot_landing_contact_threshold_bw)
+                       & (state[:, 0] >= 0.0))
+        excess = np.maximum(-state[:, 1] - self.cfg.foot_landing_safe_velocity, 0.0)
+        terms = height_weight * approaching * excess ** 2
+        self.last_foot_landing_penalty += float(terms.sum())
+        self.last_foot_landing_active_fraction += int(np.count_nonzero(terms > 0))
+        self.last_foot_landing_downward_speed_max = max(
+            self.last_foot_landing_downward_speed_max, float(np.maximum(-state[:, 1], 0).max()))
+
     def _compute_potential(self):
         torso_position = self.data.qpos[0:3].copy()
         to_target = self.target_point - torso_position
@@ -1451,6 +1545,7 @@ class SRLMujocoV2Env:
             left_foot_force_excess ** self.cfg.foot_force_penalty_power
             + right_foot_force_excess ** self.cfg.foot_force_penalty_power
         )
+        foot_landing_penalty = warmup * self.last_foot_landing_penalty if self._foot_landing_enabled() else 0.0
         motor_cost, peak_cost, thermal_cost, power_cost = self._motor_cost_terms()
 
         reward = (
@@ -1477,6 +1572,7 @@ class SRLMujocoV2Env:
             - self.cfg.base_ang_acc_penalty_scale * float(np.sum(base_ang_acc ** 2))
             - self.cfg.yaw_drift_penalty_scale * float(yaw_err * yaw_err)
             - self.cfg.foot_impact_penalty_scale * foot_impact_penalty
+            - self.cfg.foot_landing_velocity_penalty_scale * foot_landing_penalty
         )
 
         terminated = bool(root_h < self.cfg.termination_height)
@@ -1521,6 +1617,10 @@ class SRLMujocoV2Env:
             "penalty_base_ang_acc": float(np.sum(base_ang_acc ** 2)),
             "penalty_yaw_drift": float(yaw_err * yaw_err),
             "penalty_foot_impact": foot_impact_penalty,
+            "penalty_foot_landing_velocity": foot_landing_penalty,
+            "foot_landing_velocity_penalty_enabled": self._foot_landing_enabled(),
+            "foot_landing_active_fraction": self.last_foot_landing_active_fraction,
+            "foot_landing_downward_speed_max": self.last_foot_landing_downward_speed_max,
             "left_foot_force_max": float(self.last_left_foot_force_max),
             "right_foot_force_max": float(self.last_right_foot_force_max),
             "left_foot_force_bw": float(left_foot_force_bw),

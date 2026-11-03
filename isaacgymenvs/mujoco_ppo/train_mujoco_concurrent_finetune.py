@@ -568,6 +568,45 @@ def _save(policy, optimizers, cfg, update, save_dir, bootstrap_index, name=None,
     return path
 
 
+def _save_training_bests(policy, optimizers, cfg, update, save_dir, bootstrap_index,
+                         progress, candidates, best_scores):
+    """Keep task-balanced training bests separate by DR and actor input source."""
+    progress = round(float(progress), 8)
+    tag = f"{int(round(progress * 100)):03d}"
+    for mode in ("ground_truth", "estimated"):
+        candidate = candidates.get(mode)
+        if candidate is None:
+            continue
+        score, statistics = candidate
+        rankings = {
+            "train": score,
+            "reward": float(np.mean([s["mean_return"] for s in statistics.values()])),
+            "length": float(np.mean([s["mean_length"] for s in statistics.values()])),
+        }
+        for criterion, ranking in rankings.items():
+            key = (progress, mode, criterion)
+            if key in best_scores and ranking <= best_scores[key]:
+                continue
+            best_scores[key] = ranking
+            selection = {
+                "source": "rolling_training_" + mode, "actor_input_mode": mode,
+                "criterion": criterion, "dr_progress": progress, "score": ranking,
+                "tasks": statistics, "sampling_update": update,
+                "aggregation": "equal-weight task means; completed episode return and length",
+                "weights": "before auxiliary/PPO update; rolling episodes may span older policies",
+            }
+            names = []
+            if mode == "ground_truth":
+                names.append(f"mujoco_concurrent_best_{criterion}_gt_dr{tag}.pt")
+            # Prefer EST once available at this strength; GT keeps its own files.
+            if mode == "estimated" or (progress, "estimated", criterion) not in best_scores:
+                names.extend((f"mujoco_concurrent_best_{criterion}.pt",
+                              f"mujoco_concurrent_best_{'dr' if criterion == 'train' else criterion + '_dr'}{tag}.pt"))
+            for name in names:
+                _save(policy, optimizers, cfg, update, save_dir, bootstrap_index, name, selection)
+            print(f"[training best/{criterion}] update={update} dr={progress:.2f} input={mode} score={ranking}")
+
+
 _REWARD_COMPONENTS = (
     ("alive", "reward_alive", "alive_reward_scale", 1.0),
     ("progress", "reward_progress", "progress_reward_scale", 1.0),
@@ -594,6 +633,7 @@ _REWARD_COMPONENTS = (
     ("base_ang_acc", "penalty_base_ang_acc", "base_ang_acc_penalty_scale", -1.0),
     ("yaw_drift", "penalty_yaw_drift", "yaw_drift_penalty_scale", -1.0),
     ("foot_impact", "penalty_foot_impact", "foot_impact_penalty_scale", -1.0),
+    ("foot_landing_velocity", "penalty_foot_landing_velocity", "foot_landing_velocity_penalty_scale", -1.0),
     ("foot_lateral_velocity", "penalty_foot_lateral_velocity", "foot_lateral_velocity_penalty_scale", -1.0),
     ("foot_lateral_channel", "penalty_foot_lateral_channel", "foot_lateral_channel_penalty_scale", -1.0),
     ("hip_x_velocity", "penalty_hip_x_velocity", "hip_x_velocity_penalty_scale", -1.0),
@@ -921,6 +961,14 @@ def _curriculum_progress(update, warmup_updates, ramp_updates):
     ))
 
 
+def _apply_foot_impact_curriculum(env_cfg, cfg, progress):
+    env_cfg.foot_impact_penalty_scale = float(cfg.foot_impact_penalty_scale) * progress
+    env_cfg.foot_landing_velocity_penalty_scale = (
+        float(cfg.foot_landing_velocity_penalty_scale) * progress
+        if cfg.foot_impact_penalty_scale > 0 else 0.0
+    )
+
+
 def _startup_support_probability(cfg, update):
     if not cfg.startup_support_enable:
         return 0.0
@@ -1238,6 +1286,7 @@ def _train(cfg, env_batch, task_labels, backend=None):
     infos = [resets[i][1] for i in range(len(envs))]
     episode_returns = np.zeros(len(envs))
     episode_lengths = np.zeros(len(envs), dtype=np.int64)
+    episode_progress = np.full(len(envs), float(progress) if cfg.domain_randomization_enable else 0.)
     max_bootstrap_probability = (
         1.0 if progress >= 1.0
         else cfg.bootstrap_pre_full_dr_max_probability
@@ -1270,9 +1319,15 @@ def _train(cfg, env_batch, task_labels, backend=None):
     best_stability = -float("inf")
     best_gait = -float("inf")
     best_training = {}
-    training_tracker = TrainingBestTracker(
-        cfg.best_training_window, cfg.best_training_min_episodes, cfg.best_training_max_age_updates,
-    ) if cfg.three_task_enable else None
+    training_trackers = {
+        mode: TrainingBestTracker(
+            cfg.best_training_window, cfg.best_training_min_episodes,
+            cfg.best_training_max_age_updates, tasks=task_labels,
+        ) for mode in ("estimated", "ground_truth")
+    }
+    print(f"Training-best selection: tasks={tuple(dict.fromkeys(task_labels))}; "
+          f"window={cfg.best_training_window}, minimum={cfg.best_training_min_episodes} completed episodes "
+          "per task and input source; checked every update without extra evaluation")
     last_progress = float(progress)
     training_history_path = os.path.join(save_dir, cfg.training_history_filename)
     evaluation_history_path = os.path.join(save_dir, cfg.evaluation_history_filename)
@@ -1287,7 +1342,6 @@ def _train(cfg, env_batch, task_labels, backend=None):
     horizontal_force_probability_target = float(
         cfg.horizontal_force_perturbation_prob
     )
-    foot_impact_penalty_target = float(cfg.foot_impact_penalty_scale)
 
     for update in range(1, cfg.total_updates + 1):
         update_started = time.perf_counter()
@@ -1322,8 +1376,9 @@ def _train(cfg, env_batch, task_labels, backend=None):
                 (update - cfg.lateral_penalty_warmup_updates)
                 / max(cfg.lateral_penalty_ramp_updates, 1), 0.0, 1.0
             ))
-        if cfg.three_task_enable and not np.isclose(last_progress, progress):
-            training_tracker.reset()
+        if not np.isclose(last_progress, progress):
+            for tracker in training_trackers.values():
+                tracker.reset()
             for episodes in task_episode_windows.values():
                 episodes.clear()
         last_progress = float(progress)
@@ -1333,9 +1388,7 @@ def _train(cfg, env_batch, task_labels, backend=None):
             env.cfg.horizontal_force_perturbation_prob = (
                 horizontal_force_probability_target * horizontal_force_progress
             )
-            env.cfg.foot_impact_penalty_scale = (
-                foot_impact_penalty_target * foot_impact_progress
-            )
+            _apply_foot_impact_curriculum(env.cfg, cfg, foot_impact_progress)
             for name, target_scale in wobble_targets.items():
                 setattr(env.cfg, name, wobble_progress * target_scale)
             env.cfg.lateral_min_distance = float(
@@ -1409,6 +1462,7 @@ def _train(cfg, env_batch, task_labels, backend=None):
         dr_scenarios = []
         rollout_reward_components = defaultdict(list)
         rollout_tracking_errors = defaultdict(list)
+        landing_speeds, landing_active = [], []
         task_rollout_metrics = {
             task: defaultdict(list) for task in task_episode_windows
         }
@@ -1504,6 +1558,8 @@ def _train(cfg, env_batch, task_labels, backend=None):
                 for info in next_infos
             )
             for info in next_infos:
+                landing_speeds.append(float(info.get("foot_landing_downward_speed_max", 0.0)))
+                landing_active.append(float(info.get("foot_landing_active_fraction", 0.0)))
                 dr_scenarios.append(str(info.get("dr_scenario", "normal")))
                 force_ratio = max(
                     float(info.get("left_foot_force_bw", 0.0)),
@@ -1545,17 +1601,18 @@ def _train(cfg, env_batch, task_labels, backend=None):
                         "return": float(episode_returns[index]),
                         "success": bool(truncated[index] and not terminated[index]),
                     })
-                if training_tracker is not None:
-                    training_tracker.add(
+                if np.isclose(episode_progress[index], progress):
+                    mode_name = "estimated" if modes[index] else "ground_truth"
+                    training_trackers[mode_name].add(
                         task_labels[index], update, int(episode_lengths[index]),
                         float(episode_returns[index]), bool(truncated[index] and not terminated[index]),
-                        estimated=bool(modes[index]),
                     )
                 reset_indices.append(index)
                 episode_returns[index] = 0.0
                 episode_lengths[index] = 0
             for index, (_, reset_info) in env_batch.reset(reset_indices).items():
                 next_infos[index] = reset_info
+                episode_progress[index] = float(progress)
             if cfg.bootstrap_fixed_env_quota:
                 _rebalance_episode_modes(
                     modes, reset_indices, target_estimator_fraction,
@@ -1570,19 +1627,12 @@ def _train(cfg, env_batch, task_labels, backend=None):
             deployable, mirrored_np, history_np, target_np, critic_np = _arrays_from_infos(infos)
 
         rollout_seconds = time.perf_counter() - rollout_started
-        candidate = training_tracker.candidate(update, cfg.training_episode_steps) if training_tracker else None
+        candidates = {mode: tracker.candidate(update, cfg.training_episode_steps)
+                      for mode, tracker in training_trackers.items()}
+        candidate = candidates["estimated"] or candidates["ground_truth"]
         # Rank and save the actual sampling weights before auxiliary/PPO updates.
-        if candidate is not None:
-            score, statistics = candidate
-            key = round(float(progress), 8)
-            if key not in best_training or score > best_training[key]:
-                best_training[key] = score
-                selection = {"source": "rolling_training_estimated", "dr_progress": key,
-                             "score": score, "tasks": statistics, "sampling_update": update,
-                             "weights": "before auxiliary/PPO update; rolling episodes may span older policies"}
-                for name in ("mujoco_concurrent_best_train.pt", f"mujoco_concurrent_best_dr{int(round(key * 100)):03d}.pt"):
-                    _save(policy, optimizers, cfg, update, save_dir, level_index, name, selection)
-                print(f"[training best] update={update} dr={key:.2f} score={score}")
+        _save_training_bests(policy, optimizers, cfg, update, save_dir, level_index,
+                             progress, candidates, best_training)
         optimization_started = time.perf_counter()
         flat_history = buffer.estimator_history.reshape(-1, cfg.estimator_history_len, 26)
         flat_target = buffer.estimator_target.reshape(-1, 4)
@@ -1736,6 +1786,8 @@ def _train(cfg, env_batch, task_labels, backend=None):
             "train/lateral_penalty_progress": lateral_progress,
             "train/horizontal_force_curriculum_progress": horizontal_force_progress,
             "train/foot_impact_penalty_progress": foot_impact_progress,
+            "robustness/foot_landing_downward_speed_max": float(np.max(landing_speeds)),
+            "robustness/foot_landing_active_fraction": float(np.mean(landing_active)),
             "gait/foot_separation_mean": float(np.mean(foot_separations)),
             "gait/foot_separation_min": float(np.min(foot_separations)),
             "gait/narrow_step_fraction": float(
@@ -1848,6 +1900,9 @@ def _train(cfg, env_batch, task_labels, backend=None):
         })
         if candidate is not None:
             score, statistics = candidate
+            metrics["checkpoint/candidate_uses_estimate"] = int(candidates["estimated"] is not None)
+            metrics["checkpoint/mean_episode_return"] = float(np.mean([s["mean_return"] for s in statistics.values()]))
+            metrics["checkpoint/mean_episode_length"] = float(np.mean([s["mean_length"] for s in statistics.values()]))
             for name, value in zip(("min_task_success", "mean_task_success", "min_normalized_length", "mean_reward_per_step"), score):
                 metrics[f"checkpoint/{name}"] = value
             for task, statistics_for_task in statistics.items():
@@ -1976,12 +2031,13 @@ def _train(cfg, env_batch, task_labels, backend=None):
                     infos = [resets[i][1] for i in range(len(envs))]
                     episode_returns.fill(0.0)
                     episode_lengths.fill(0)
+                    episode_progress.fill(float(progress))
                     gt_lengths.clear(); est_lengths.clear()
                     gt_returns.clear(); est_returns.clear()
-                    if training_tracker is not None:
-                        training_tracker.reset()
-                        for episodes in task_episode_windows.values():
-                            episodes.clear()
+                    for tracker in training_trackers.values():
+                        tracker.reset()
+                    for episodes in task_episode_windows.values():
+                        episodes.clear()
                     if cfg.bootstrap_fixed_env_quota:
                         modes = _initial_episode_modes(
                             len(envs), target_estimator_fraction,
@@ -1994,13 +2050,11 @@ def _train(cfg, env_batch, task_labels, backend=None):
                         ], dtype=bool)
         if update % cfg.save_every == 0:
             print("Saved:", _save(policy, optimizers, cfg, update, save_dir, level_index,
-                                  selection=({"source": "periodic", "dr_progress": float(progress)}
-                                             if cfg.three_task_enable else None)))
+                                  selection={"source": "periodic", "dr_progress": float(progress)}))
 
     print("Saved final:", _save(policy, optimizers, cfg, cfg.total_updates,
                                 save_dir, level_index, "mujoco_concurrent_final.pt",
-                                {"source": "final", "dr_progress": float(progress)}
-                                if cfg.three_task_enable else None))
+                                {"source": "final", "dr_progress": float(progress)}))
     if wandb_run is not None:
         wandb_run.finish()
 

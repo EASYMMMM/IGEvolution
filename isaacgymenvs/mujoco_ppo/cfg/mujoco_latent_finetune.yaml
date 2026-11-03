@@ -71,6 +71,15 @@ control:
   observation_delay_enable: false
   sensor_uniform_noise_enable: false
 
+rewards:
+  # Master switch: 0 disables BOTH impact terms. Suggested enabled value: 0.02.
+  foot_impact_penalty_scale: 0.0
+  foot_force_threshold_bw: 1.5
+  foot_landing_velocity_penalty_scale: 0.1
+  foot_landing_height: 0.05
+  foot_landing_safe_velocity: 0.8
+  foot_landing_contact_threshold_bw: 0.02
+
 curriculum:
   task_training_stage: 3
   mixed_task_enable: false
