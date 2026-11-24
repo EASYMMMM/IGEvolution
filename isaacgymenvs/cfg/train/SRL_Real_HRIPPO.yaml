@@ -64,6 +64,26 @@ params:
     gamma: 0.99
     tau: 0.95
     learning_rate: 1e-4  # 5e-4  3e-5
+    # Optional isolated long-history adapter; legacy Actor remains 198D.
+    # See learning/SRLEvo/hmi_encoder/README.md before changing the layout.
+    hmi_encoder:
+      enabled: False
+      layout: srl39_zero_moments_v1
+      history_length: 64
+      channels: 32
+      dilations: [1, 2, 4, 8, 16, 32]
+      latent_dim: 15
+      horizons: [0, 8, 16]
+      horizon_weights: [1.0, 0.5, 0.25]
+      target_scale: [1.0, 1.0, 1.0]
+      auxiliary_coef: 1.0
+      learning_rate: 0.0003
+      humanoid_lr_scale: 0.3
+      microbatch_size: 2048
+      warmup_rollouts: 100
+      ramp_rollouts: 300
+      calibration_rollouts: 10
+      input_clip: 5.0
     lr_schedule: constant
     kl_threshold: 0.008 # 0.008
     entropy_coef: 0.005
@@ -162,6 +182,9 @@ gym:
       type: fixed
       value: 0
   # ===== Optimizer ===== 
+  GA_initial_eval_epoch: 700
+  RA_initial_eval_epoch: 700
+  final_eval_epoch: null  # Defaults: GA/RA 600, GA_v2 800, BO 1000.
   GA_population_size: 20
   GA_num_iterations: 10
   GA_mutation_rate: 0.1

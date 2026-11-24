@@ -5,30 +5,53 @@
 """
 
 import abc
+import math
 import numpy as np
 import random
 import wandb
-from skopt import Optimizer
-from skopt.space import Real, Integer
+
+
+def _log_active_run(info):
+    if wandb.run is not None:
+        wandb.log(info)
 
 
 # ================================================================
 # 基类：支持 param_space（real/int/fixed）
 # ================================================================
 class MorphologyOptimizer(abc.ABC):
-    def __init__(self, base_params, param_space, evaluate_fn):
+    def __init__(self, base_params, param_space, evaluate_fn, wandb_log):
         """
         base_params: 默认参数
         param_space: {param_name: ("real"/"int"/"fixed", low, high?) }
         evaluate_fn: SRLGym 的 design_evaluate() 或 design_evaluate_with_general_model()
         """
-        self.base_params = base_params
-        self.param_space = param_space
+        if set(base_params) != set(param_space):
+            raise ValueError("The base design and morphology space must have the same parameters.")
+        self.param_space = {}
+        for key, spec in param_space.items():
+            kind = spec[0]
+            if kind == "fixed":
+                self.param_space[key] = spec
+                continue
+            if kind not in ("real", "int"):
+                raise ValueError(f"Unknown param type for {key}: {kind}")
+            _, low, high = spec
+            if not (math.isfinite(low) and math.isfinite(high) and low <= high):
+                raise ValueError(f"Invalid range for {key}: {low}, {high}")
+            if kind == "int":
+                if low != int(low) or high != int(high):
+                    raise ValueError(f"Integer bounds required for {key}: {low}, {high}")
+                low, high = int(low), int(high)
+            self.param_space[key] = ("fixed", low) if low == high else (kind, low, high)
+
         self.param_names = list(base_params.keys())
+        self.base_params = {k: self.clip_param(k, v) for k, v in base_params.items()}
+        self.wandb_log = wandb_log
 
         self.evaluate_design_method = evaluate_fn
 
-        self.best_params = base_params.copy()
+        self.best_params = self.base_params.copy()
         self.best_score = float('-inf')
 
     # -------------------------------------------------------------
@@ -47,7 +70,7 @@ class MorphologyOptimizer(abc.ABC):
             return int(np.random.randint(low, high + 1))
 
         elif ptype == "fixed":
-            return self.base_params[key]
+            return spec[1]
 
         else:
             raise ValueError(f"Unknown param type: {ptype}")
@@ -66,7 +89,7 @@ class MorphologyOptimizer(abc.ABC):
             return int(np.clip(int(val), low, high))
 
         elif ptype == "fixed":
-            return self.base_params[key]
+            return spec[1]
 
         else:
             raise ValueError(f"Unknown param type: {ptype}")
@@ -75,10 +98,12 @@ class MorphologyOptimizer(abc.ABC):
     # 统一的 WandB logging
     # -------------------------------------------------------------
     def wandb_log_design(self, prefix, params, score, iteration):
+        if self.wandb_log is None:
+            return
         info_dict = {f"{prefix}/{k}": v for k, v in params.items()}
         info_dict[f"{prefix}/best_reward"] = score
         info_dict["iteration"] = iteration
-        wandb.log(info_dict)
+        self.wandb_log(info_dict)
 
     @abc.abstractmethod
     def optimize(self):
@@ -92,9 +117,11 @@ class GeneticAlgorithmOptimizer(MorphologyOptimizer):
     def __init__(
         self, base_params, param_space, evaluate_fn,
         population_size=20, mutation_rate=0.3, crossover_rate=0.7,
-        num_iterations=10, initial_eval_epoch=700
+        num_iterations=10, initial_eval_epoch=700, wandb_log=_log_active_run
     ):
-        super().__init__(base_params, param_space, evaluate_fn)
+        super().__init__(base_params, param_space, evaluate_fn, wandb_log)
+        if num_iterations < 1 or population_size < 1:
+            raise ValueError("GA requires a positive population size and iteration count.")
         self.population_size = population_size
         self.mutation_rate = mutation_rate
         self.crossover_rate = crossover_rate
@@ -223,48 +250,42 @@ class BayesianOptimizer(MorphologyOptimizer):
     def __init__(
         self, base_params, param_space, evaluate_fn,
         num_iterations=100, initial_eval_epoch=500,
-        n_initial_points=3, acq_func='EI'
+        n_initial_points=3, acq_func='EI', wandb_log=_log_active_run
     ):
-        super().__init__(base_params, param_space, evaluate_fn)
+        super().__init__(base_params, param_space, evaluate_fn, wandb_log)
+        if num_iterations < 1 or n_initial_points < 1:
+            raise ValueError("BO requires a positive iteration and initial point count.")
         self.num_iterations = num_iterations
         self.initial_eval_epoch = initial_eval_epoch
         self.n_initial_points = n_initial_points
 
         # BO 搜索空间
-        skopt_space = []
-        for k in self.param_names:
-            spec = param_space[k]
-            ptype = spec[0]
+        self.opt_space_keys = [k for k in self.param_names if self.param_space[k][0] != "fixed"]
+        self.optimizer = None
+        if self.opt_space_keys:
+            try:
+                from skopt import Optimizer
+                from skopt.space import Real, Integer
+            except ModuleNotFoundError as exc:
+                if exc.name != "skopt":
+                    raise
+                raise ImportError("Bayesian morphology search requires scikit-optimize.") from exc
 
-            if ptype == "real":
-                _, low, high = spec
-                skopt_space.append(Real(low, high, name=k))
-
-            elif ptype == "int":
-                _, low, high = spec
-                skopt_space.append(Integer(low, high, name=k))
-
-            elif ptype == "fixed":
-                # fixed 不加入搜索空间，由 BO 不优化
-                pass
-
-        self.optimizer = Optimizer(skopt_space, acq_func=acq_func, n_initial_points=n_initial_points)
-        self.opt_space_keys = [s.name for s in skopt_space]
-        self.fixed_keys = [k for k in self.param_names if param_space[k][0] == "fixed"]
+            dimensions = []
+            for key in self.opt_space_keys:
+                kind, low, high = self.param_space[key]
+                dimension = Real if kind == "real" else Integer
+                dimensions.append(dimension(low, high, name=key))
+            self.optimizer = Optimizer(dimensions, acq_func=acq_func, n_initial_points=n_initial_points)
 
         self.history = []
 
     # -------------------------------------------------------------
     def build_param_dict(self, x_list):
         """将 BO 产生的一维参数数组映射回 dict（补 fixed 参数）"""
-        d = {}
-        # real/int
+        d = self.base_params.copy()
         for key, val in zip(self.opt_space_keys, x_list):
-            d[key] = float(val)
-
-        # fixed
-        for key in self.fixed_keys:
-            d[key] = self.base_params[key]
+            d[key] = self.clip_param(key, val)
 
         return d
 
@@ -272,7 +293,7 @@ class BayesianOptimizer(MorphologyOptimizer):
     def optimize(self):
         for it in range(self.num_iterations):
 
-            if it == 0:
+            if it == 0 or self.optimizer is None:
                 x = [self.base_params[k] for k in self.opt_space_keys]
             else:
                 x = self.optimizer.ask()
@@ -282,7 +303,8 @@ class BayesianOptimizer(MorphologyOptimizer):
             kwarg = {"max_epoch": self.initial_eval_epoch} if it < self.n_initial_points else {}
             score = self.evaluate_design_method(params_dict, **kwarg)
 
-            self.optimizer.tell(x, -score)  # skopt 最小化
+            if self.optimizer is not None:
+                self.optimizer.tell(x, -score)  # skopt 最小化
 
             if score > self.best_score:
                 self.best_score = score
@@ -298,8 +320,11 @@ class BayesianOptimizer(MorphologyOptimizer):
 # Random Search
 # ================================================================
 class RandomOptimizer(MorphologyOptimizer):
-    def __init__(self, base_params, param_space, evaluate_fn, num_iterations=100, initial_eval_epoch=700):
-        super().__init__(base_params, param_space, evaluate_fn)
+    def __init__(self, base_params, param_space, evaluate_fn, num_iterations=100, initial_eval_epoch=700,
+                 wandb_log=_log_active_run):
+        super().__init__(base_params, param_space, evaluate_fn, wandb_log)
+        if num_iterations < 1:
+            raise ValueError("Random search requires a positive iteration count.")
         self.num_iterations = num_iterations
         self.initial_eval_epoch = initial_eval_epoch
         self.history = []

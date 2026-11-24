@@ -46,6 +46,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import scipy.io as sio
 from scipy.signal import butter, filtfilt
+from .hmi_encoder import create_runtime, check_checkpoint_mode
 
 def my_safe_load(filename, **kwargs):
     return torch_ext.safe_filesystem_op(torch.load, filename, **kwargs)
@@ -89,9 +90,10 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
         self.obs_num_srl = self.env.get_srl_obs_size()
         self.priv_obs_num_srl = self.env.get_srl_priv_obs_size()
 
+        self.hmi_encoder = create_runtime(config.get('hmi_encoder'), self.env, self.device, training=False)
         self.play_deterministic = config.get('play_deterministic', False)
 
-        if self._humanoid_checkpoint:
+        if self._humanoid_checkpoint and not params.get('load_path'):
             self._load_humanoid_checkpoint(self._humanoid_checkpoint)
         
         return
@@ -101,20 +103,16 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
         state = checkpoint.get('model')
         if state is None:
             raise KeyError(f"Humanoid checkpoint {fn} does not contain a 'model' state dict.")
-        input_weight = state.get('a2c_network.actor_mlp.0.weight')
-        output_weight = state.get('a2c_network.mu.weight')
-        if input_weight is None or tuple(input_weight.shape) != (512, 117):
-            raise RuntimeError("Player humanoid checkpoint must use a 117D input and 512-unit first layer.")
-        if output_weight is None or tuple(output_weight.shape) != (58, 256):
-            raise RuntimeError("Player humanoid checkpoint must output 58 muscle activations.")
+        # The player network already has this task's humanoid input/action sizes.
         self.model.load_state_dict(state)
         if self._normalize_amp_input:
             self._amp_input_mean_std.load_state_dict(checkpoint['amp_input_mean_std'])
-        print("=> loaded standalone muscle humanoid checkpoint '{}'".format(fn))
+        print("=> loaded standalone humanoid checkpoint '{}'".format(fn))
 
     def restore(self, fn):
         
-        checkpoint = my_load_checkpoint(fn,map_location='cuda:0')
+        checkpoint = my_load_checkpoint(fn, map_location=self.device)
+        check_checkpoint_mode(self.hmi_encoder, checkpoint)
         self.model.load_state_dict(checkpoint['model'])
         print("=> loaded humanoid checkpoint '{}' (iter {})".format(fn, checkpoint.get('iter', 0)))
         if self.normalize_input and 'running_mean_std' in checkpoint:
@@ -125,6 +123,11 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
             self.env.set_env_state(env_state)
 
         self.model_srl.load_state_dict(checkpoint['model_srl'])
+        if 'hmi_encoder' in checkpoint:
+            self.hmi_encoder = create_runtime(checkpoint['hmi_encoder']['config'], self.env, self.device, training=False)
+            self.hmi_encoder.load(checkpoint['hmi_encoder'], resume_optimizer=False)
+        elif self.hmi_encoder is not None:
+            raise ValueError('Inference with encoder enabled requires an encoder checkpoint; stage4 is a training initialization only')
         print("=> loaded srl checkpoint '{}' (iter {})".format(fn, checkpoint.get('iter', 0)))
 
         if self._normalize_amp_input:
@@ -160,10 +163,30 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
         return
     
     
+    def env_reset(self, env):
+        result = super().env_reset(env)
+        if getattr(self, 'hmi_encoder', None) is not None:
+            self.hmi_encoder.reset()
+        return result
+
+    def obs_to_torch(self, obs):
+        result = super().obs_to_torch(obs)
+        if isinstance(obs, dict) and 'srl_priv_extra_obs' in obs:
+            result['srl_priv_extra_obs'] = self.cast_obs(obs['srl_priv_extra_obs'])
+        return result
+
+    def _env_reset_done(self):
+        result, ids = super()._env_reset_done()
+        if getattr(self, 'hmi_encoder', None) is not None:
+            self.hmi_encoder.reset(ids)
+        return result, ids
+
     def get_action(self, obs_dict, is_deterministic = False):
         obs = obs_dict['obs']
+        extra = obs_dict['srl_priv_extra_obs']
         if self.has_batch_dimension == False:
             obs = unsqueeze_obs(obs)
+            extra = unsqueeze_obs(extra)
         self.model.eval() # humanoid policy
         self.model_srl.eval() # srl policy
         processed_obs = self._preproc_obs(obs)
@@ -171,7 +194,7 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
             raise ValueError
         humanoid_obs = processed_obs[:, :self.obs_num_humanoid]
         srl_obs = processed_obs[:, -self.obs_num_srl:]
-        priv_srl_obs = processed_obs[:, -self.priv_obs_num_srl:]
+        priv_srl_obs = torch.cat((extra, srl_obs), dim=-1)
         input_dict = {
             'is_train': False,
             'prev_actions': None, 
@@ -189,6 +212,9 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
  
         with torch.no_grad():
             res_dict = self.model(input_dict)
+            if self.hmi_encoder is not None:
+                self.hmi_encoder.observe(srl_obs)
+                srl_input_dict['actor_latent'] = self.hmi_encoder.payload()[0]
             res_dict_srl = self.model_srl(srl_input_dict)
         mu_humanoid = res_dict['mus']
         action_humanoid = res_dict['actions']
@@ -212,12 +238,30 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
         return applied_action
         
         
+    def _policy_output_sample(self, env, info, srl_action_dim):
+        if 'srl_debug_actions' in info:
+            return tuple(info[key] for key in (
+                'srl_debug_actions', 'srl_debug_pd_targets', 'srl_debug_torques', 'srl_debug_joint_pos'))
+
+        # Original SRL_HRI uses the final DOFs for the powered appendage and
+        # exposes the applied actions and measured positions in simulator tensors.
+        actions = env.actions[0, -srl_action_dim:]
+        dof_actions = torch.zeros_like(env.dof_force_tensor[:1])
+        dof_actions[0, -srl_action_dim:] = actions
+        targets = env._action_to_pd_targets(dof_actions)[0, -srl_action_dim:]
+        torques = env.torques if env._force_control else env.dof_force_tensor
+        return actions, targets, torques[0, -srl_action_dim:], info['dof_pos'][-srl_action_dim:]
+
     def run(self):
+        env = getattr(self.env, 'unwrapped', self.env)
+        if hasattr(env, 'collect_player_diagnostics'):
+            env.collect_player_diagnostics = True
         with torch.no_grad():
             csv_dir = os.path.join('run_data')
             os.makedirs(csv_dir, exist_ok=True)
             csv_path = os.path.join(csv_dir, 'srl_policy_outputs_env0.csv')
             srl_action_dim = self.env.get_srl_action_size()
+            control_dt = env.control_dt if hasattr(env, 'control_dt') else env.dt
             csv_header = ['episode', 'step', 'time_sec']
             csv_header += [f'action_{i}' for i in range(srl_action_dim)]
             csv_header += [f'pd_target_{i}' for i in range(srl_action_dim)]
@@ -296,11 +340,9 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                             action = self.get_action(obs_dict, is_determenistic)
 
                         obs_dict, r, done, info =  self.env_step(self.env, action)
-                        csv_row = [episode_count_env0 + 1, n, n * float(self.env.control_dt)]
-                        csv_row += info['srl_debug_actions'].detach().cpu().tolist()
-                        csv_row += info['srl_debug_pd_targets'].detach().cpu().tolist()
-                        csv_row += info['srl_debug_torques'].detach().cpu().tolist()
-                        csv_row += info['srl_debug_joint_pos'].detach().cpu().tolist()
+                        csv_row = [episode_count_env0 + 1, n, n * float(control_dt)]
+                        for values in self._policy_output_sample(env, info, srl_action_dim):
+                            csv_row.extend(values.detach().cpu().tolist())
                         csv_writer.writerow(csv_row)
                         cr += r
                         steps += 1
@@ -314,12 +356,17 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                             obs_np = np.array(obs[0, :])
                         self.obs_log.append(obs_np)
                         self.target_yaw_log.append(info['target_yaw'].cpu().numpy())
-                        self.load_cell_fd_log.append(info['load_cell_fd'].cpu().numpy())
-                        self.load_cell_log.append(info['load_cell'].cpu().numpy())
-                        self.srl_virtual_passive_pos_log.append(info['srl_virtual_passive_pos'].cpu().numpy())
-                        self.srl_virtual_load_cell_log.append(info['srl_virtual_load_cell'].cpu().numpy())
-                        self.srl_torques_log.append(info['srl_torques'].cpu().numpy())
-                        self.humanoid_torques_log.append(info['humanoid_torques'].cpu().numpy())
+                        if 'load_cell' in info:
+                            self.load_cell_fd_log.append(info['load_cell_fd'].cpu().numpy())
+                            self.load_cell_log.append(info['load_cell'].cpu().numpy())
+                        for key, log in (
+                            ('srl_virtual_passive_pos', self.srl_virtual_passive_pos_log),
+                            ('srl_virtual_load_cell', self.srl_virtual_load_cell_log),
+                            ('srl_torques', self.srl_torques_log),
+                            ('humanoid_torques', self.humanoid_torques_log),
+                        ):
+                            if key in info:
+                                log.append(info[key].cpu().numpy())
                         self._post_step(info)
                     
                         # 只记录第一个环境的动作
@@ -360,7 +407,9 @@ class SRLPlayerContinuous(common_player.CommonPlayer):
                             episode_data['done'].append(0)
 
                         # FIXME: 是否画图
-                        if done_count > 1000: # if done_count > 0:
+                        if (done_count > 1000 and 0 in done_indices and self.load_cell_log
+                                and self.srl_virtual_passive_pos_log and self.srl_virtual_load_cell_log
+                                and self.srl_torques_log and self.humanoid_torques_log):
                             if 0 in done_indices:
                                 # 转为 numpy 数组，shape: [T, D]
                                 target_yaw = []

@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # File units = meters
 mtllib factory_franka_finger_rubber_viz.mtl
 g Rubber
@@ -96574,8 +96573,3 @@ f 23092//26660 23086//26660 22198//26660
 o mesh449
 f 23092//26661 23085//26661 23084//26661 
 f 23084//26661 23086//26661 23092//26661 
-=======
-version https://git-lfs.github.com/spec/v1
-oid sha256:19d39951d59f852642a216bf0fce08ac828e398c3d1404527a5465e5001b7952
-size 3464952
->>>>>>> eb5aca09633c0ab8d5b5199dba4f42159ef175be

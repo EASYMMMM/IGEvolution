@@ -1,5 +1,5 @@
 export LD_LIBRARY_PATH=/home/zdh232/anaconda3/envs/Mrlgpu/lib
-export WANDB_API_KEY=95d44e5266d5325cb6a1b4dda1b8d100de903ace
+# Run wandb login before enabling online logging.
 export http_proxy=http://127.0.0.1:7890
 export https_proxy=http://127.0.0.1:7890
 # 测试SRL-Gym Random Optimization

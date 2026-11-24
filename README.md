@@ -1,5 +1,28 @@
 # IG Evolution
 
+## Real HRI V2 形态与控制联合优化
+
+从仓库根目录运行下面的短实验。它使用 0.30 m 的 V2 模型、第五阶段 HMI 编码器、16 个并行环境和随机种子 42。默认比较基准形态和一个随机形态。两者从同一份权重开始，人体和外肢体策略都参加训练。每回合上限为 2048 步，每个候选和最终训练的 `max_iterations` 均为 64。
+
+```bash
+bash run_srl_joint_smoke.sh
+```
+
+脚本默认读取 `run_data/v2_03dis_run1/stage_5_HMIEncoder/checkpoints/policy_best.pth`。检查点单独保存在训练机器上。若使用其他位置或环境，可指定 `SRL_SEED_POLICY=/绝对路径/权重.pth` 和 `SRL_PYTHON=/绝对路径/srlgym/bin/python`。
+
+复现 205 维策略的联通测试时，开启七个形态观测，并使用 768 步回合与 24 轮训练预算。外循环会按原框架的 AMP 回报条件更新通用策略。
+
+```bash
+bash run_srl_joint_smoke.sh task.env.design_param_obs=True task.env.episodeLength=768 \
+  train.gym.RA_initial_eval_epoch=24 max_iterations=24 train.gym.final_eval_epoch=24
+```
+
+搜索支持 `RA`、`GA`、`GA_v2` 和 `BO`。用 `train.gym.design_opt=GA` 或 `train.gym.design_opt=BO` 可以切换算法。遗传和贝叶斯搜索的可调参数见 `isaacgymenvs/cfg/train/SRL_Real_HRIPPO.yaml`。选择 BO 时，在训练环境中运行 `python -m pip install scikit-optimize==0.10.2`。
+
+评分沿用原实验的公式，对最近最多 20 个已完成回合取均值。AMP 回报低于 1500 时记为 −1。腿长改变关节间距、碰撞体和显示网格，连杆质量和惯量沿用 V2 的 CAD 数据。正式搜索时可调整候选数量、回合长度和训练预算。
+
+每次运行在独立的 `runs/<实验名>_Evo_*` 下写入 `evaluations.csv`（每个候选及最终训练的分项指标）、`<算法>_optimize_result.csv`（历代最优）、`mjcf/srl_real_hri_best_design.xml` 和 `nn/final_best_model.pth`。最终训练的完整环境与控制参数在 `logs/srl_real_hri_best_design/config.yaml`。
+
 ## 0. 常用命令
 - **添加虚拟环境路径：**
 
@@ -17,8 +40,6 @@
 - **登录wandb：**  
    `wandb login` 
    随后输出自己账户的API。   
-   仅在当前终端登录账号：  
-   `export WANDB_API_KEY=95d44e5266d5325cb6a1b4dda1b8d100de903ace`   
 
 - **解决Clash的网络问题：**    
   开启Clash后，可能会发生无法连接wandb：   
@@ -50,7 +71,7 @@
 conda activate rlgpu  
 cd isaacgymenvs  
 export LD_LIBRARY_PATH=/home/zdh/anaconda3/envs/rlgpu/lib  
-export WANDB_API_KEY=d9e147c0c0f29ad02ca38e65742ce8ce2bbd52ab  
+wandb login
 ```
 ## 1. 环境配置
 [Isaac Gym环境安装和四足机器人模型的训练-CSDN博客](https://blog.csdn.net/weixin_44061195/article/details/131830133?spm=1001.2101.3001.6650.2&utm_medium=distribute.pc_relevant.none-task-blog-2~default~YuanLiJiHua~Position-2-131830133-blog-124605383.235^v38^pc_relevant_sort&depth_1-utm_source=distribute.pc_relevant.none-task-blog-2~default~YuanLiJiHua~Position-2-131830133-blog-124605383.235^v38^pc_relevant_sort&utm_relevant_index=5)

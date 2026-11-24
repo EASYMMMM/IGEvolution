@@ -7,6 +7,8 @@ import torch
 from isaacgym import gymtorch
 from isaacgym import gymapi
 import math
+from isaacgymenvs.srl_mjcf_generator.generator.asset_paths import gym_asset_path
+from isaacgymenvs.srl_mjcf_generator.generator.real_hri_v2 import DESIGN_PARAM_NAMES
 from isaacgymenvs.utils.torch_jit_utils import quat_mul, to_torch, get_axis_params, calc_heading_quat_inv, \
      exp_map_to_quat, quat_to_tan_norm, my_quat_rotate, calc_heading_quat_inv, quat_rotate_inverse, quat_conjugate
 
@@ -248,7 +250,7 @@ class SRL_HRIBase(VecTask):
         self.rew_upper_buf = torch.zeros(           # 直立惩罚
             self.num_envs, device=self.device, dtype=torch.float)
         if self._design_param_obs:
-            design_param = self._get_design_param()
+            self._get_design_param()
 
         # self.observation_space
         self.obs_scales_tensor = torch.tensor([
@@ -269,15 +271,9 @@ class SRL_HRIBase(VecTask):
         return
     
     def _get_design_param(self,):
-        first_leg_lenth = self.cfg["env"]["design_params"]["first_leg_lenth"]
-        first_leg_size = self.cfg["env"]["design_params"]["first_leg_size"]
-        second_leg_lenth = self.cfg["env"]["design_params"]["second_leg_lenth"]
-        second_leg_size = self.cfg["env"]["design_params"]["second_leg_size"]
-        end_size = self.cfg["env"]["design_params"]["third_leg_size"]
-        self.design_param = torch.tensor([first_leg_lenth,first_leg_size,second_leg_lenth,second_leg_size,end_size],
-                                         device=self.device,
-                                         dtype = torch.float32,
-                                         )
+        params = self.cfg["env"]["design_params"]
+        self.design_param = torch.tensor([params[k] for k in DESIGN_PARAM_NAMES],
+                                         device=self.device, dtype=torch.float32)
         return self.design_param 
 
     def get_obs_size(self):
@@ -307,10 +303,11 @@ class SRL_HRIBase(VecTask):
         return self.humanoid_obs_num
     
     def get_srl_obs_size(self):
-        return self.srl_obs_num*self.srl_obs_frame_stack + self.srl_command_num
+        return (self.srl_obs_num * self.srl_obs_frame_stack + self.srl_command_num
+                + (len(DESIGN_PARAM_NAMES) if self._design_param_obs else 0))
 
     def get_srl_priv_obs_size(self):
-        return 12 + self.srl_obs_num*self.srl_obs_frame_stack + self.srl_command_num
+        return 12 + self.get_srl_obs_size()
 
     def create_sim(self):
         self.up_axis_idx = 2 # index of up axis: Y=1, Z=2
@@ -372,6 +369,7 @@ class SRL_HRIBase(VecTask):
             #asset_root = self.cfg["env"]["asset"].get("assetRoot", asset_root)
             asset_file = self.cfg["env"]["asset"].get("assetFileName", asset_file)
             print('Asset file name: '+asset_file)
+        asset_root, asset_file = gym_asset_path(asset_root, asset_file)
         asset_options = gymapi.AssetOptions()
         asset_options.angular_damping = 0.01
         asset_options.max_angular_velocity = 100.0
@@ -693,6 +691,10 @@ class SRL_HRIBase(VecTask):
                 - self.target_ang_vel_z,
                 self.target_pelvis_height,
             ), dim=-1)  # shape [num_envs, 3]
+            if self._design_param_obs:
+                shape = self.design_param.expand(srl_base_obs.shape[0], -1)
+                srl_base_obs = torch.cat((srl_base_obs, shape), dim=-1)
+                srl_base_mirrored_obs = torch.cat((srl_base_mirrored_obs, shape), dim=-1)
             srl_stacked_obs = torch.cat([srl_base_obs, task_params], dim=-1)
             srl_mirrored_stacked_obs = torch.cat([srl_base_mirrored_obs, mirrored_task_params], dim=-1)
             teacher_srl_stacked_obs = torch.cat([teacher_srl_base_obs, task_params], dim=-1)
@@ -731,6 +733,10 @@ class SRL_HRIBase(VecTask):
                 -self.target_ang_vel_z[env_ids],
                 self.target_pelvis_height[env_ids],
             ), dim=-1)  # shape [len(env_ids), 3]
+            if self._design_param_obs:
+                shape = self.design_param.expand(srl_base_obs.shape[0], -1)
+                srl_base_obs = torch.cat((srl_base_obs, shape), dim=-1)
+                srl_base_mirrored_obs = torch.cat((srl_base_mirrored_obs, shape), dim=-1)
             srl_stacked_obs = torch.cat([srl_base_obs, task_params], dim=-1)
             srl_mirrored_stacked_obs = torch.cat([srl_base_mirrored_obs, mirrored_task_params], dim=-1)
             teacher_srl_stacked_obs = torch.cat([teacher_srl_base_obs, task_params], dim=-1)
@@ -816,11 +822,6 @@ class SRL_HRIBase(VecTask):
         priv_extra_obs_mirrored = compute_priv_extra_observations_mirrored(root_states, dof_pos, dof_vel,
                                             key_body_pos, self._local_root_obs,)
         
-        if self._design_param_obs:
-            design_param = self.design_param
-            design_param = design_param.unsqueeze(0).repeat(obs.shape[0], 1)
-            obs = torch.cat([obs, design_param], dim=1)
-            obs_mirrored = torch.cat([obs_mirrored, design_param], dim=1)
         return humanoid_obs, srl_obs, srl_obs_mirrored, priv_extra_obs, priv_extra_obs_mirrored, teacher_srl_obs, potentials, prev_potentials,
 
     def _reset_actors(self, env_ids):

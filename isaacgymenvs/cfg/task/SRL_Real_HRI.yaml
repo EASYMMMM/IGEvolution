@@ -154,12 +154,13 @@ env:
 
   design_param_obs: False
   design_params:
-    mode: mode1
-    first_leg_lenth: 0.40
-    first_leg_size: 0.03
-    second_leg_lenth: 0.80
-    second_leg_size: 0.03
-    third_leg_size: 0.03
+    leg1_length: 0.671
+    leg2_length: 0.640
+    base_width: 0.095
+    base_distance: 0.60
+    enable_freejoint_z: 1
+    enable_freejoint_y: 1
+    enable_freejoint_x: 0
   # ------------ ------------
 
 sim:

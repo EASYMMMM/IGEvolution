@@ -12,7 +12,6 @@ import inspect
 import cloudpickle
 import wandb
 import traceback
-import time
 
 # ---------------------
 # Wandb Writer
@@ -119,33 +118,51 @@ class JobLedger():
 
     def add_job(self, cmd, args, kwargs):
         self.check_for_results()
-        data = CloudpickleWrapper((args, kwargs))
-        self._remote.send((cmd, data))
+        if self._remote.closed:
+            raise RuntimeError("Worker connection is closed.")
         jid = self._count_started
         self._outputs[jid] = None
         self._count_started += 1
+        try:
+            self._remote.send((cmd, CloudpickleWrapper((args, kwargs))))
+        except (BrokenPipeError, ConnectionResetError):
+            # An initialization error may already be waiting in the pipe.
+            self.check_for_results()
+            self._disconnect()
+        except Exception:
+            # An argument that failed to serialize never reached the worker.
+            del self._outputs[jid]
+            self._count_started -= 1
+            raise
         return Job(cmd, args, kwargs, jid, ledger=self)
+
+    def _disconnect(self):
+        self._remote.close()
+        for jid in range(self._count_finished, self._count_started):
+            if jid in self._outputs:
+                self._outputs[jid] = RuntimeError("Worker closed unexpectedly.")
+        self._count_finished = self._count_started
 
     def _add_result(self):
         try:
             data = self._remote.recv()
-            if self._count_finished in self._outputs:
-                self._outputs[self._count_finished] = data.x
-        except EOFError:
-            # worker crashed or was killed → mark as None
-            self._outputs[self._count_finished] = RuntimeError("Worker closed unexpectedly.")
-        finally:
-            self._count_finished += 1
+        except (EOFError, ConnectionResetError):
+            self._disconnect()
+            return
+        if self._count_finished in self._outputs:
+            self._outputs[self._count_finished] = data.x
+        self._count_finished += 1
 
     def get_results(self, job_id):
-        while self._count_finished <= job_id and not self._remote.closed:
-            self.check_for_results()
-
         if job_id not in self._outputs:
             raise ValueError(
                 f"Output of job {job_id} can't be found. Possibly removed from ledger."
             )
-
+        while self._count_finished <= job_id:
+            if self._remote.closed:
+                self._disconnect()
+            else:
+                self._add_result()  # Block until a result or EOF.
         return self._outputs[job_id]
 
     def delete_results(self, job_id):
@@ -154,17 +171,13 @@ class JobLedger():
             del self._outputs[job_id]
 
     def check_for_results(self):
-        if self._remote.closed:
-            return
-
-        # Drain all pending results
-        while True:
-            try:
-                if not self._remote.poll():
-                    break
-                self._add_result()
-            except (EOFError, BrokenPipeError):
-                break
+        while self._count_finished < self._count_started:
+            if self._remote.closed:
+                self._disconnect()
+                return
+            if not self._remote.poll():
+                return
+            self._add_result()
 
     def is_complete(self, job_id):
         self.check_for_results()
@@ -215,7 +228,12 @@ def _subproc_decorator(cls, ctx, daemon):
                       CloudpickleWrapper(kwargs))
             )
             self.proc.daemon = daemon
-            self.proc.start()
+            try:
+                self.proc.start()
+            finally:
+                # The child must be the sole owner of its endpoint so a native
+                # simulator crash wakes the parent waiting in recv().
+                self.child.close()
 
             self._ledger = JobLedger(self.remote)
 
@@ -227,15 +245,19 @@ def _subproc_decorator(cls, ctx, daemon):
             try:
                 if not self.remote.closed:
                     self.remote.send(('close', {}))
-                    self.remote.close()
-            except Exception:
+            except (BrokenPipeError, ConnectionResetError):
                 pass
+            finally:
+                self.remote.close()
 
             # Ensure subprocess exits
             self.proc.join(timeout=8.0)
             if self.proc.is_alive():
                 self.proc.terminate()
                 self.proc.join(timeout=3.0)
+                if self.proc.is_alive():
+                    self.proc.kill()
+                    self.proc.join()
 
             self._closed = True
 

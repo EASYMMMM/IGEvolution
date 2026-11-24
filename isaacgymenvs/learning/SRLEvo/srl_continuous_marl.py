@@ -36,6 +36,7 @@ from .mp_util import WandbWriter
 from collections import deque
 from .srl_network_builder import CentralCritic
 import torch.nn.functional as F
+from .hmi_encoder import create_runtime
 
 def my_safe_load(filename, **kwargs):
     return torch_ext.safe_filesystem_op(torch.load, filename, **kwargs)
@@ -184,7 +185,21 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         else:
             self.central_critic = None
 
+        self.hmi_encoder = create_runtime(config.get('hmi_encoder'), self.vec_env.env, self.ppo_device)
+        self._joint_restored = False
+        if self.hmi_encoder is not None:
+            if self.multi_gpu or self.is_rnn or not self.use_central_critic or self._srl_teacher_checkpoint:
+                raise ValueError('HMI encoder requires feedforward single-GPU PPO, central_critic=True and no DAgger teacher')
+            self.update_lr(self.last_lr)
         return
+
+    def update_lr(self, lr):
+        super().update_lr(lr)
+        if getattr(self, 'hmi_encoder', None) is not None:
+            for group in self.optimizer.param_groups:
+                group['lr'] = lr * self.hmi_encoder.config.humanoid_lr_scale
+            for group in self.optimizer_srl.param_groups:
+                group['lr'] = lr
 
     def init_tensors(self):
         # 初始化张量
@@ -236,9 +251,9 @@ class SRL_MultiAgent(common_agent.CommonAgent):
 
         self._build_amp_buffers() # 构建 AMP 缓冲区  
 
-        if self._humanoid_checkpoint :
+        if self._humanoid_checkpoint and not self._joint_restored:
             self._load_humanoid_network(self._humanoid_checkpoint)    
-        if self._hsrl_checkpoint :
+        if self._hsrl_checkpoint and not self._joint_restored:
             self._load_hsrl_checkpoint(self._hsrl_checkpoint)
         if self._srl_teacher_checkpoint :
             self._load_srl_teacher_checkpoint(self._srl_teacher_checkpoint)
@@ -254,25 +269,13 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             raise KeyError(f"Humanoid checkpoint {fn} does not contain a 'model' state dict.")
 
         checkpoint_state = checkpoint['model']
-        required_shapes = {
-            'running_mean_std.running_mean': (117,),
-            'a2c_network.actor_mlp.0.weight': (512, 117),
-            'a2c_network.actor_mlp.2.weight': (256, 512),
-            'a2c_network.mu.weight': (58, 256),
-            'a2c_network.sigma': (58,),
-            'a2c_network._disc_mlp.0.weight': (1024, 210),
-        }
-        for key, expected_shape in required_shapes.items():
-            if key not in checkpoint_state:
-                raise KeyError(f"Humanoid checkpoint is missing required tensor: {key}")
-            actual_shape = tuple(checkpoint_state[key].shape)
-            if actual_shape != expected_shape:
-                raise RuntimeError(
-                    f"Humanoid checkpoint tensor {key} has shape {actual_shape}; "
-                    f"expected {expected_shape}."
-                )
-
         target_state = self.model.state_dict()
+        required = ('running_mean_std.running_mean', 'a2c_network.actor_mlp.0.weight',
+                    'a2c_network.actor_mlp.2.weight', 'a2c_network.mu.weight',
+                    'a2c_network.sigma', 'a2c_network._disc_mlp.0.weight')
+        for key in required:
+            if key in target_state and key not in checkpoint_state:
+                raise KeyError(f"Humanoid checkpoint is missing required tensor: {key}")
         incompatible = [
             f"{key}: checkpoint={tuple(checkpoint_state[key].shape)}, "
             f"model={tuple(target_state[key].shape)}"
@@ -285,11 +288,13 @@ class SRL_MultiAgent(common_agent.CommonAgent):
                 + "\n  ".join(incompatible)
             )
         amp_stats = checkpoint.get('amp_input_mean_std')
-        if amp_stats is None or tuple(amp_stats['running_mean'].shape) != (210,):
-            raise RuntimeError("Humanoid checkpoint must contain 210D AMP normalization statistics.")
+        if self._normalize_amp_input:
+            expected = self._amp_input_mean_std.running_mean.shape
+            if amp_stats is None or amp_stats['running_mean'].shape != expected:
+                raise RuntimeError(f"Humanoid checkpoint must contain AMP statistics of shape {tuple(expected)}.")
 
         self.set_weights(checkpoint)
-        print('=> loaded 117D/58D muscle humanoid and 210D AMP statistics')
+        print(f'=> loaded humanoid policy from {fn}')
         return
 
     def set_eval(self):
@@ -344,6 +349,8 @@ class SRL_MultiAgent(common_agent.CommonAgent):
 
         with torch.no_grad():
             res_dict = self.model(humanoid_input_dict)
+            if self.hmi_encoder is not None:
+                srl_input_dict['actor_latent'] = self.hmi_encoder.payload()[0]
             res_dict_srl = self.model_srl(srl_input_dict)
             # if self.has_central_value:
             #     states = obs['states']
@@ -402,6 +409,8 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         epinfos = []
         update_list = self.update_list
 
+        if self.hmi_encoder is not None:
+            self.hmi_encoder.begin_rollout(self.horizon_length)
         for n in range(self.horizon_length):
             self.obs, done_env_ids = self._env_reset_done() # 重置环境
             total_obs = self.obs['obs']
@@ -413,6 +422,9 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             self.experience_buffer_srl.update_data('obses', n, srl_obs)
             self.experience_buffer_srl.update_data('priv_obses', n, priv_srl_obs)       
 
+            if self.hmi_encoder is not None:
+                self.hmi_encoder.observe(srl_obs, self.obs['obs_mirrored'], done_env_ids,
+                                         step=n, env=self.vec_env.env)
             res_dict, res_dict_srl = self.get_action_values(self.obs) # 获取动作值
             
             if self.mirror_loss: # 镜像损失
@@ -529,7 +541,9 @@ class SRL_MultiAgent(common_agent.CommonAgent):
             if (self.vec_env.env.viewer and (n == (self.horizon_length - 1))):
                 self._amp_debug(infos)
                 
-        # Central Critic        
+        if self.hmi_encoder is not None:
+            self.hmi_encoder.finish_rollout()
+        # Central Critic
         if self.use_central_critic:
             # 形状: [horizon, num_envs, dim]
             hum_obs = self.experience_buffer.tensor_dict['obses']         # humanoid obs
@@ -686,6 +700,8 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         if self._srl_teacher_checkpoint:
             dataset_dict['teacher_actions'] = batch_dict['teacher_actions']
 
+        if self.hmi_encoder is not None:
+            dataset_dict['hmi_sample_ids'] = torch.arange(obses.shape[0], device=obses.device)
         self.dataset_srl.update_values_dict(dataset_dict)
 
     def prepare_dataset(self, batch_dict, batch_dict_srl):
@@ -784,6 +800,10 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         train_info['update_time'] = update_time
         train_info['total_time'] = total_time
         self._record_train_batch_info(batch_dict, train_info) # 记录训练批次信息
+        if self.hmi_encoder is not None:
+            self.hmi_encoder.finish_update()
+            for key in ('hmi_alpha', *[f'hmi_loss_{h}' for h in self.hmi_encoder.config.horizons]):
+                self.writer.add_scalar('encoder/' + key, torch_ext.mean_list(train_info[key]), self.frame)
 
         return train_info
 
@@ -806,6 +826,9 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         return self.train_result
 
     def calc_gradients_srl(self, input_dict):
+        if self.hmi_encoder is not None:
+            from .hmi_encoder.training import update_srl
+            return update_srl(self, input_dict)
         value_preds_batch = input_dict['old_values']
         old_action_log_probs_batch = input_dict['old_logp_actions']
         advantage = input_dict['advantages']
@@ -1069,7 +1092,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         self.train_result = {
             'entropy': entropy,
             'kl': kl_dist,
-            'last_lr': self.last_lr, 
+            'last_lr': self.optimizer.param_groups[0]['lr'],
             'lr_mul': lr_mul, 
             'b_loss': b_loss
         }
@@ -1246,7 +1269,8 @@ class SRL_MultiAgent(common_agent.CommonAgent):
     def train(self):
         
         self.init_tensors()
-        self.last_mean_rewards = -100500
+        if not self._joint_restored:
+            self.last_mean_rewards = -100500
         start_time = time.time()
         total_time = 0
         rep_count = 0
@@ -1323,7 +1347,7 @@ class SRL_MultiAgent(common_agent.CommonAgent):
                     if (epoch_num % self.save_freq == 0):
                         self.save(self.model_output_file + "_" + str(epoch_num))
 
-                if epoch_num > self.max_epochs:
+                if epoch_num >= self.max_epochs:
                     self.save(self.model_output_file)
                     print('MAX EPOCHS NUM!')
                     self.writer.close()
@@ -1346,18 +1370,21 @@ class SRL_MultiAgent(common_agent.CommonAgent):
 
                 update_time = 0
          
-    def _load_hsrl_checkpoint(self, fn,):
-        # restore nn of humanoid & srl
-        print('=> loading hsrl checkpoint from {}'.format(fn))
-        checkpoint = my_load_checkpoint(fn,map_location=self.device)
-        self.model.load_state_dict(checkpoint['model'])
-        self.model_srl.load_state_dict(checkpoint['model_srl'])
-        
-        # Add central critic load
-        if self.use_central_critic and 'central_critic' in checkpoint:
-            self.central_critic.load_state_dict(checkpoint['central_critic'])
-            if 'central_critic_opt' in checkpoint:
-                self.central_critic_opt.load_state_dict(checkpoint['central_critic_opt'])
+    def _load_hsrl_checkpoint(self, fn):
+        checkpoint = my_load_checkpoint(fn, map_location=self.device)
+        self._load_joint_checkpoint(checkpoint)
+        print('=> loaded joint checkpoint {}'.format(fn))
+
+    def restore(self, fn, set_epoch=True):
+        # rl_games calls restore before init_tensors; prevent later hsrl loading
+        # from overwriting the restored joint policy/encoder.
+        checkpoint = my_load_checkpoint(fn, map_location=self.device)
+        self._load_joint_checkpoint(checkpoint, resume=True, set_epoch=set_epoch)
+        self._joint_restored = True
+
+    def _load_joint_checkpoint(self, checkpoint, resume=False, set_epoch=True):
+        from .hmi_encoder.checkpoint import load_joint_checkpoint
+        load_joint_checkpoint(self, checkpoint, resume=resume, set_epoch=set_epoch)
 
     def _load_srl_teacher_checkpoint(self, fn,):
         print('=> loading srl teacher checkpoint from {}'.format(fn))
@@ -1436,6 +1463,13 @@ class SRL_MultiAgent(common_agent.CommonAgent):
         if self.use_central_critic:
             state['central_critic'] = self.central_critic.state_dict()
             state['central_critic_opt'] = self.central_critic_opt.state_dict()
+        if self.hmi_encoder is not None:
+            state['hmi_encoder'] = self.hmi_encoder.checkpoint()
+        state['joint_update_counter'] = self.update_counter
+        state['joint_last_lr'] = self.last_lr
+        state['scaler_srl'] = self.scaler_srl.state_dict()
+        if self.use_central_critic:
+            state['central_critic_scaler'] = self.central_critic_scaler.state_dict()
         torch_ext.save_checkpoint(fn, state)
 
  

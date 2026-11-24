@@ -7,6 +7,7 @@ import torch
 from isaacgym import gymtorch
 from isaacgym import gymapi
 import math
+from isaacgymenvs.srl_mjcf_generator.generator.asset_paths import gym_asset_path
 from isaacgymenvs.utils.torch_jit_utils import quat_mul, to_torch, get_axis_params, calc_heading_quat_inv, \
      exp_map_to_quat, quat_to_tan_norm, my_quat_rotate, calc_heading_quat_inv, quat_rotate_inverse, quat_conjugate
 
@@ -15,6 +16,7 @@ from isaacgymenvs.learning.SRLEvo.srl_models import ModelSRLContinuous
 from isaacgymenvs.learning.SRLEvo.srl_network_builder import SRLBuilder 
 from isaacgymenvs.tasks.SRLEvo.traj_generator import SimpleCurveGenerator as TrajGenerator
 from isaacgymenvs.tasks.SRLEvo.muscle_model import TensorizedMuscleGroup
+from isaacgymenvs.srl_mjcf_generator.generator.real_hri_v2 import DESIGN_PARAM_NAMES
 
 DOF_BODY_IDS = [1, 2, 3, 4, 6, 7, 9, 10, 11, 12, 13, 14]
 DOF_OFFSETS = [0, 3, 6, 9, 10, 13, 14, 17, 18, 21, 24, 25, 28]
@@ -28,8 +30,11 @@ SRL_CONTACT_BODY_NAMES = ['SRL_root', 'right_knee_link', 'SRL_right_end', 'left_
 
 class SRL_Real_HRI_Base(VecTask):
 
+    design_param = None
+
     def __init__(self, config, rl_device, sim_device, graphics_device_id, headless, virtual_screen_capture, force_render):
         self.cfg = config
+        self.collect_player_diagnostics = False
 
         self._pd_control = self.cfg["env"]["pdControl"]
         self._force_control = self.cfg["env"]["forceControl"]
@@ -399,7 +404,11 @@ class SRL_Real_HRI_Base(VecTask):
         self.rew_upper_buf = torch.zeros(           # 直立惩罚
             self.num_envs, device=self.device, dtype=torch.float)
         if self._design_param_obs:
-            design_param = self._get_design_param()
+            params = self.cfg["env"]["design_params"]
+            self.design_param = torch.tensor(
+                [params[name] for name in DESIGN_PARAM_NAMES],
+                device=self.device, dtype=torch.float32,
+            )
 
         # self.observation_space
         self.obs_scales_tensor = torch.tensor([
@@ -433,18 +442,6 @@ class SRL_Real_HRI_Base(VecTask):
             
         return
     
-    def _get_design_param(self,):
-        first_leg_lenth = self.cfg["env"]["design_params"]["first_leg_lenth"]
-        first_leg_size = self.cfg["env"]["design_params"]["first_leg_size"]
-        second_leg_lenth = self.cfg["env"]["design_params"]["second_leg_lenth"]
-        second_leg_size = self.cfg["env"]["design_params"]["second_leg_size"]
-        end_size = self.cfg["env"]["design_params"]["third_leg_size"]
-        self.design_param = torch.tensor([first_leg_lenth,first_leg_size,second_leg_lenth,second_leg_size,end_size],
-                                         device=self.device,
-                                         dtype = torch.float32,
-                                         )
-        return self.design_param 
-
     def get_obs_size(self):
         obs_size = self.get_humanoid_obs_size() + self.get_srl_obs_size()
         return obs_size
@@ -472,7 +469,15 @@ class SRL_Real_HRI_Base(VecTask):
         return self.humanoid_obs_num
     
     def get_srl_obs_size(self):
-        return self.srl_policy_obs_num*self.srl_obs_frame_stack + self.srl_command_num
+        design_size = len(DESIGN_PARAM_NAMES) if self._design_param_obs else 0
+        return self.srl_policy_obs_num*self.srl_obs_frame_stack + design_size + self.srl_command_num
+
+    def _assemble_srl_policy_obs(self, history, commands):
+        # The HMI actor masks the last three command channels after normalization.
+        if self.design_param is None:
+            return torch.cat((history, commands), dim=-1)
+        design = self.design_param.expand(history.shape[0], -1)
+        return torch.cat((history, design, commands), dim=-1)
 
     def get_srl_actor_command_mask_size(self):
         # Keep command values in shared observations for both critics. Only the
@@ -610,6 +615,7 @@ class SRL_Real_HRI_Base(VecTask):
             #asset_root = self.cfg["env"]["asset"].get("assetRoot", asset_root)
             asset_file = self.cfg["env"]["asset"].get("assetFileName", asset_file)
             print('Asset file name: '+asset_file)
+        asset_root, asset_file = gym_asset_path(asset_root, asset_file)
         asset_options = gymapi.AssetOptions()
         asset_options.angular_damping = 0.01
         asset_options.max_angular_velocity = 100.0
@@ -1220,8 +1226,8 @@ class SRL_Real_HRI_Base(VecTask):
                 - self.target_ang_vel_z,
                 self.target_pelvis_height,
             ), dim=-1)  # shape [num_envs, 3]
-            srl_stacked_obs = torch.cat([srl_base_obs, task_params], dim=-1)
-            srl_mirrored_stacked_obs = torch.cat([srl_base_mirrored_obs, mirrored_task_params], dim=-1)
+            srl_stacked_obs = self._assemble_srl_policy_obs(srl_base_obs, task_params)
+            srl_mirrored_stacked_obs = self._assemble_srl_policy_obs(srl_base_mirrored_obs, mirrored_task_params)
             srl_full_stacked_obs = torch.cat([srl_full_base_obs, task_params], dim=-1)
             teacher_srl_stacked_obs = torch.cat([teacher_srl_base_obs, task_params], dim=-1)
 
@@ -1293,8 +1299,8 @@ class SRL_Real_HRI_Base(VecTask):
                 -self.target_ang_vel_z[env_ids],
                 self.target_pelvis_height[env_ids],
             ), dim=-1)  # shape [len(env_ids), 3]
-            srl_stacked_obs = torch.cat([srl_base_obs, task_params], dim=-1)
-            srl_mirrored_stacked_obs = torch.cat([srl_base_mirrored_obs, mirrored_task_params], dim=-1)
+            srl_stacked_obs = self._assemble_srl_policy_obs(srl_base_obs, task_params)
+            srl_mirrored_stacked_obs = self._assemble_srl_policy_obs(srl_base_mirrored_obs, mirrored_task_params)
             srl_full_stacked_obs = torch.cat([srl_full_base_obs, task_params], dim=-1)
             teacher_srl_stacked_obs = torch.cat([teacher_srl_base_obs, task_params], dim=-1)
 
@@ -1382,11 +1388,6 @@ class SRL_Real_HRI_Base(VecTask):
         priv_extra_obs_mirrored = compute_priv_extra_observations_mirrored(root_states, dof_pos, dof_vel,
                                             key_body_pos, self._local_root_obs,)
 
-        if self._design_param_obs:
-            design_param = self.design_param
-            design_param = design_param.unsqueeze(0).repeat(obs.shape[0], 1)
-            obs = torch.cat([obs, design_param], dim=1)
-            obs_mirrored = torch.cat([obs_mirrored, design_param], dim=1)
         return humanoid_obs, srl_obs, srl_obs_mirrored, priv_extra_obs, priv_extra_obs_mirrored, teacher_srl_obs, potentials, prev_potentials,
 
     def _reset_actors(self, env_ids):
@@ -1514,8 +1515,8 @@ class SRL_Real_HRI_Base(VecTask):
             self.virtual_load_cell_buf[:, 0:3], dim=1
         ).to(self.rl_device)
 
-        # plotting
-        if self.viewer != None:
+        # Playback exports diagnostics in both headless and viewer modes.
+        if self.viewer is not None or self.collect_player_diagnostics:
             self.extras["srl_torques"] = self.srl_applied_torques[0].to(self.rl_device)
             self.extras["root_pos"] = self._root_states[0, 0:3].to(self.rl_device)
             srl_end_body_pos = self._rigid_body_pos[0, self._srl_end_ids, :]

@@ -41,6 +41,7 @@ setup(
     include_package_data=True,
     python_requires=">=3.6",
     install_requires=INSTALL_REQUIRES,
+    extras_require={"bo": ["scikit-optimize==0.10.2"]},
     packages=find_packages("."),
     classifiers=["Natural Language :: English", "Programming Language :: Python :: 3.6, 3.7, 3.8"],
     zip_safe=False,

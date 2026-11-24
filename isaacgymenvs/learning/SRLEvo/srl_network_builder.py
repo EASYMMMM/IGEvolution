@@ -375,6 +375,9 @@ class SRLBuilder(network_builder.A2CBuilder):
             if self.actor_command_mask_size:
                 actor_obs = obs.clone()
                 actor_obs[..., -self.actor_command_mask_size:] = 0.0
+            if 'actor_latent' in obs_dict:
+                from .hmi_encoder.layout import inject_latent
+                actor_obs = inject_latent(actor_obs, obs_dict['actor_latent'])
             a_out = self.actor_mlp(actor_obs)
             c_out = self.critic_mlp(priv_obs)
                         

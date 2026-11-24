@@ -291,7 +291,7 @@ class SRLGym_process():
         from rl_games.algos_torch import model_builder
         from isaacgymenvs.learning import amp_continuous, amp_players, amp_models, amp_network_builder
         from isaacgymenvs.learning.SRLEvo import srl_continuous, srl_models, srl_players, srl_continuous_marl, srl_bot_continuous
-        from isaacgymenvs.learning.SRLEvo import srl_network_builder, srl_gym
+        from isaacgymenvs.learning.SRLEvo import srl_network_builder
 
         # AMP
         runner.algo_factory.register_builder('amp_continuous',
